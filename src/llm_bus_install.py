@@ -166,6 +166,24 @@ def _group_has_handler(group: object, kind: str) -> bool:
     )
 
 
+def _restore_claude_permission(
+    current: dict[str, object], original: dict[str, object], path: Path
+) -> dict[str, object]:
+    restored = _update_claude_permission(current, path, install=False)
+    original_permissions = _object_at(original, "permissions", path)
+    original_allowed = cast("list[object]", original_permissions.get("allow", []))
+    if CLAUDE_ALLOW_RULE not in original_allowed:
+        return restored
+    current_permissions = _object_at(restored, "permissions", path)
+    current_allowed = cast("list[str]", current_permissions.get("allow", []))
+    current_allowed.insert(
+        min(original_allowed.index(CLAUDE_ALLOW_RULE), len(current_allowed)), CLAUDE_ALLOW_RULE
+    )
+    current_permissions["allow"] = current_allowed
+    restored["permissions"] = current_permissions
+    return restored
+
+
 def _restore_bus_entries(
     current: dict[str, object], original: dict[str, object], path: Path, kind: str
 ) -> dict[str, object]:
@@ -174,31 +192,22 @@ def _restore_bus_entries(
     original_hooks = _object_at(original, "hooks", path)
     for event in EVENTS:
         groups = list(cast("list[object]", hooks.get(event, [])))
-        for original_group in cast("list[object]", original_hooks.get(event, [])):
+        for position, original_group in enumerate(
+            cast("list[object]", original_hooks.get(event, []))
+        ):
             if not _group_has_handler(original_group, kind):
                 continue
             without_bus = _without_bus_handler(original_group, kind)
             if without_bus is not None and without_bus in groups:
                 groups[groups.index(without_bus)] = original_group
             else:
-                groups.append(original_group)
+                groups.insert(min(position, len(groups)), original_group)
         if groups:
             hooks[event] = groups
     if hooks:
         restored["hooks"] = hooks
     if kind == "claude":
-        permissions = original.get("permissions")
-        allowed: object = (
-            cast("dict[str, object]", permissions).get("allow", [])
-            if isinstance(permissions, dict)
-            else []
-        )
-        restored = _update_claude_permission(
-            restored,
-            path,
-            install=isinstance(allowed, list)
-            and CLAUDE_ALLOW_RULE in cast("list[object]", allowed),
-        )
+        restored = _restore_claude_permission(restored, original, path)
     return restored
 
 

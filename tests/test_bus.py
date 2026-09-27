@@ -591,3 +591,46 @@ def test_failed_uninstall_restores_original_matcher_and_event_coverage(
     monkeypatch.setattr("llm_bus.subprocess.run", fail_run)
     assert main(["uninstall"]) == 1
     assert json.loads(codex.read_text()) == original
+
+
+def test_failed_uninstall_restores_bus_entry_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    codex = tmp_path / ".codex" / "hooks.json"
+    claude = tmp_path / ".claude" / "settings.json"
+    codex.parent.mkdir()
+    claude.parent.mkdir()
+    codex_before = {
+        "hooks": {
+            "SessionStart": [
+                {"hooks": [{"type": "command", "command": "llm-bus hook codex"}]},
+                {"hooks": [{"type": "command", "command": "other"}]},
+            ]
+        }
+    }
+    claude_before = {
+        "hooks": {
+            "SessionStart": [
+                {"hooks": [{"type": "command", "command": "llm-bus hook claude"}]},
+                {"hooks": [{"type": "command", "command": "other"}]},
+            ]
+        },
+        "permissions": {"allow": ["Bash(llm-bus *)", "Bash(git *)"]},
+    }
+    codex.write_text(json.dumps(codex_before))
+    claude.write_text(json.dumps(claude_before))
+    monkeypatch.setattr("llm_bus.Path.home", lambda: tmp_path)
+
+    def fake_which(_name: str) -> str:
+        return "/usr/local/bin/uv"
+
+    monkeypatch.setattr("llm_bus.shutil.which", fake_which)
+
+    def fail_run(command: list[str], *, check: bool) -> subprocess.CompletedProcess[str]:
+        assert check
+        raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr("llm_bus.subprocess.run", fail_run)
+    assert main(["uninstall"]) == 1
+    assert json.loads(codex.read_text()) == codex_before
+    assert json.loads(claude.read_text()) == claude_before

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "clean-code-tools": {
+      "command": "uv",
+      "args": ["run", "--project", ".", "python", "tools/ci/launch_clean_code_mcp.py"]
+    }
+  }
+}

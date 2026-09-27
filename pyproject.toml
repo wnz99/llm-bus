@@ -1,0 +1,127 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "llm-bus"
+version = "0.1.0"
+description = "Durable communication bus for coding agents"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[project.scripts]
+llm-bus = "llm_bus:main"
+
+[dependency-groups]
+dev = [
+    "basedpyright==1.40.1",
+    "clean-code-tools-python==1.0.7",
+    "deptry==0.25.1",
+    "poethepoet==0.48.0",
+    "pylint==4.0.8",
+    "pytest==9.1.1",
+    "ruff==0.16.8",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/llm_bus.py", "src/llm_bus_store.py"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = [".venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = [
+    "A", "ARG", "ASYNC", "B", "C4", "C90", "DTZ", "E", "ERA", "F", "FBT", "FLY",
+    "FURB", "I", "ICN", "ISC", "N", "PERF", "PGH", "PIE", "PL", "PT", "PTH",
+    "RET", "RSE", "RUF", "S", "SIM", "SLOT", "T10", "T20", "TC", "TRY", "UP", "W",
+]
+ignore = [
+    "E501",
+    "ISC001",
+    "TRY003", # Validation errors carry actionable boundary messages.
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["PLR2004", "S101", "S603"]
+"tools/ci/launch_clean_code_mcp.py" = ["S606"]
+"src/llm_bus.py" = ["T201"] # Printing is the CLI and hook output boundary.
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.format]
+docstring-code-format = true
+line-ending = "lf"
+
+[tool.basedpyright]
+include = ["src", "tests", "tools/ci/launch_clean_code_mcp.py"]
+exclude = ["**/__pycache__", "**/.venv", "**/build", "**/dist"]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+extraPaths = ["src"]
+reportAny = "error"
+reportExplicitAny = "error"
+reportImplicitRelativeImport = "error"
+reportInvalidCast = "error"
+reportMissingImports = "error"
+reportMissingTypeStubs = "error"
+reportPrivateLocalImportUsage = "error"
+reportUnannotatedClassAttribute = "error"
+reportUninitializedInstanceVariable = "error"
+reportUnknownArgumentType = "error"
+reportUnknownMemberType = "error"
+reportUnknownVariableType = "error"
+reportUnusedImport = "error"
+reportUnusedVariable = "error"
+
+[tool.pytest.ini_options]
+addopts = ["-ra", "--strict-config", "--strict-markers", "--import-mode=importlib"]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.pylint.main]
+py-version = "3.12"
+jobs = 0
+recursive = true
+load-plugins = ["clean_code_tools_pylint"]
+ignore-paths = ["^.*/\\.venv/.*$", "^.*/build/.*$", "^.*/dist/.*$"]
+
+[tool.pylint."messages control"]
+disable = [
+    "missing-class-docstring",
+    "missing-function-docstring",
+    "missing-module-docstring",
+    "too-few-public-methods",
+]
+enable = [
+    "clean-code-boolean-flag-argument",
+    "clean-code-business-policy-literal",
+    "clean-code-commented-out-code",
+    "clean-code-noisy-comment",
+    "clean-code-output-argument-mutation",
+    "clean-code-redundant-comment",
+    "clean-code-todo-format",
+    "clean-code-train-wreck",
+]
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint.reports]
+score = false
+
+[tool.deptry]
+known_first_party = ["llm_bus", "llm_bus_store"]
+
+[tool.poe.tasks]
+format = "ruff format src tests tools/ci"
+format-check = "ruff format --check src tests tools/ci"
+lint = "ruff check src tests tools/ci"
+type-check = "basedpyright"
+pylint = "pylint src tools/ci"
+deptry = "deptry ."
+test = "pytest"
+build = "uv build"
+check.sequence = ["format-check", "lint", "type-check", "pylint", "deptry", "test"]

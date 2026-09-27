@@ -45,7 +45,6 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["PLR2004", "S101", "S603"]
-"tools/ci/launch_clean_code_mcp.py" = ["S606"]
 "src/llm_bus.py" = ["T201"] # Printing is the CLI and hook output boundary.
 
 [tool.ruff.lint.mccabe]
@@ -56,7 +55,7 @@ docstring-code-format = true
 line-ending = "lf"
 
 [tool.basedpyright]
-include = ["src", "tests", "tools/ci/launch_clean_code_mcp.py"]
+include = ["src", "tests"]
 exclude = ["**/__pycache__", "**/.venv", "**/build", "**/dist"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"

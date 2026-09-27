@@ -14,3 +14,5 @@ dist/
 .agents/
 .claude/
 .clean-code-tools/
+.mcp.json
+tools/ci/launch_clean_code_mcp.py

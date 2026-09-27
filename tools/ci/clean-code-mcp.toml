@@ -1,7 +1,0 @@
-# BEGIN clean-code-tools managed MCP
-[mcp_servers.clean-code-tools]
-command = "uv"
-args = ["run", "--project", ".", "python", "tools/ci/launch_clean_code_mcp.py"]
-cwd = "."
-env_vars = ["CLEAN_CODE_TOOLS_HOME"]
-# END clean-code-tools managed MCP

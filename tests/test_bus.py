@@ -216,6 +216,65 @@ def test_uninstall_removes_existing_matching_bus_settings(tmp_path: Path) -> Non
     assert json.loads(claude.read_text()) == {}
 
 
+def test_optional_bus_hook_fields_are_normalized_and_removed(tmp_path: Path) -> None:
+    codex = tmp_path / ".codex" / "hooks.json"
+    claude = tmp_path / ".claude" / "settings.json"
+    codex.parent.mkdir()
+    claude.parent.mkdir()
+    codex.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "matcher": "startup",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "llm-bus hook codex",
+                                    "timeout": 30,
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        )
+    )
+    claude.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "UserPromptSubmit": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "llm-bus hook claude",
+                                    "async": True,
+                                },
+                                {"type": "command", "command": "other"},
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
+    )
+    configure_hosts(tmp_path, install=True)
+    assert codex.read_text().count("llm-bus hook codex") == len(
+        ("SessionStart", "UserPromptSubmit")
+    )
+    assert claude.read_text().count("llm-bus hook claude") == len(
+        ("SessionStart", "UserPromptSubmit")
+    )
+    configure_hosts(tmp_path, install=False)
+    assert json.loads(codex.read_text()) == {}
+    assert json.loads(claude.read_text()) == {
+        "hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "other"}]}]}
+    }
+
+
 def test_install_rejects_invalid_second_file_before_writing_first(tmp_path: Path) -> None:
     codex = tmp_path / ".codex" / "hooks.json"
     claude = tmp_path / ".claude" / "settings.json"
@@ -511,7 +570,7 @@ def test_failed_uninstall_restores_original_matcher_and_event_coverage(
                 {
                     "matcher": "startup",
                     "hooks": [
-                        {"type": "command", "command": "llm-bus hook codex"},
+                        {"type": "command", "command": "llm-bus hook codex", "timeout": 30},
                         {"type": "command", "command": "other"},
                     ],
                 }

@@ -20,6 +20,15 @@ def _hook_group(kind: str) -> dict[str, object]:
     return {"hooks": [{"type": "command", "command": f"llm-bus hook {kind}"}]}
 
 
+def _is_bus_handler(handler: object, kind: str) -> bool:
+    if not isinstance(handler, dict):
+        return False
+    configured = cast("dict[str, object]", handler)
+    return (
+        configured.get("type") == "command" and configured.get("command") == f"llm-bus hook {kind}"
+    )
+
+
 def _without_bus_handler(group: object, kind: str) -> object | None:
     if not isinstance(group, dict):
         return group
@@ -27,8 +36,9 @@ def _without_bus_handler(group: object, kind: str) -> object | None:
     handlers = configured.get("hooks")
     if not isinstance(handlers, list):
         return configured
-    own_handler = cast("list[object]", _hook_group(kind)["hooks"])[0]
-    retained = [handler for handler in cast("list[object]", handlers) if handler != own_handler]
+    retained = [
+        handler for handler in cast("list[object]", handlers) if not _is_bus_handler(handler, kind)
+    ]
     if not retained:
         return None
     return {**configured, "hooks": retained}
@@ -147,11 +157,13 @@ def snapshot_host_settings(home: Path) -> SettingsSnapshot:
     return snapshots
 
 
-def _group_has_handler(group: object, handler: object) -> bool:
+def _group_has_handler(group: object, kind: str) -> bool:
     if not isinstance(group, dict):
         return False
     handlers = cast("dict[str, object]", group).get("hooks")
-    return isinstance(handlers, list) and handler in cast("list[object]", handlers)
+    return isinstance(handlers, list) and any(
+        _is_bus_handler(handler, kind) for handler in cast("list[object]", handlers)
+    )
 
 
 def _restore_bus_entries(
@@ -163,8 +175,7 @@ def _restore_bus_entries(
     for event in EVENTS:
         groups = list(cast("list[object]", hooks.get(event, [])))
         for original_group in cast("list[object]", original_hooks.get(event, [])):
-            own_handler = cast("list[object]", _hook_group(kind)["hooks"])[0]
-            if not _group_has_handler(original_group, own_handler):
+            if not _group_has_handler(original_group, kind):
                 continue
             without_bus = _without_bus_handler(original_group, kind)
             if without_bus is not None and without_bus in groups:

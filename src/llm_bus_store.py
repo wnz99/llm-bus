@@ -28,6 +28,7 @@ SCHEMA = """
         sender TEXT NOT NULL REFERENCES agents(address),
         recipient TEXT NOT NULL REFERENCES agents(address),
         body TEXT NOT NULL,
+        sender_cwd TEXT,
         sent_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
         acknowledged_at TEXT
     );
@@ -56,6 +57,7 @@ class Message(TypedDict):
     sender: str
     recipient: str
     body: str
+    sender_cwd: str | None
     sent_at: str
 
 
@@ -86,6 +88,17 @@ class Store:
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         with closing(self._connect()) as db:
             db.executescript(SCHEMA)
+            db.execute("BEGIN IMMEDIATE")
+            columns = {
+                row[1]
+                for row in cast(
+                    "list[tuple[int, str, str, int, object, int]]",
+                    db.execute("PRAGMA table_info(messages)").fetchall(),
+                )
+            }
+            if "sender_cwd" not in columns:
+                db.execute("ALTER TABLE messages ADD COLUMN sender_cwd TEXT")
+            db.commit()
         self.path.chmod(0o600)
 
     def _connect(self) -> sqlite3.Connection:
@@ -118,48 +131,70 @@ class Store:
             )
         return agent_address
 
-    def agents(self) -> list[Agent]:
+    def agents(self, project: str | None = None) -> list[Agent]:
         """List known addresses; last_seen does not promise online presence."""
         with closing(self._connect()) as db:
+            query = "SELECT address, kind, project, last_seen FROM agents"
+            parameters: tuple[str, ...] = ()
+            if project is not None:
+                query += " WHERE project = ?"
+                parameters = (project,)
             rows = cast(
                 "list[tuple[str, str, str, str]]",
-                db.execute(
-                    "SELECT address, kind, project, last_seen FROM agents ORDER BY last_seen DESC"
-                ).fetchall(),
+                db.execute(query + " ORDER BY last_seen DESC", parameters).fetchall(),
             )
         return [
             Agent(address=row[0], kind=row[1], project=row[2], last_seen=row[3]) for row in rows
         ]
 
-    def send(self, sender: str, recipient: str, body: str) -> Message:
+    def send(
+        self, sender: str, recipient: str, body: str, *, cross_folder: bool = False
+    ) -> Message:
         """Persist message only when recipient has registered."""
         if not body.strip():
             raise BusError("Message body cannot be empty")
         if len(body.encode("utf-8")) > MAX_MESSAGE_BYTES:
             raise BusError("Message body exceeds 64 KiB")
         with self._transaction() as db:
-            if (
-                db.execute("SELECT 1 FROM agents WHERE address = ?", (recipient,)).fetchone()
-                is None
-            ):
-                raise BusError(f"Unknown recipient {recipient!r}; run `uv run llm-bus list` first")
+            recipient_row = cast(
+                "tuple[str] | None",
+                db.execute("SELECT project FROM agents WHERE address = ?", (recipient,)).fetchone(),
+            )
+            if recipient_row is None:
+                raise BusError(f"Unknown recipient {recipient!r}; run `llm-bus list` first")
+            sender_row = cast(
+                "tuple[str] | None",
+                db.execute("SELECT project FROM agents WHERE address = ?", (sender,)).fetchone(),
+            )
+            if sender_row is None:
+                raise BusError("Sender must register before sending")
+            if sender_row[0] != recipient_row[0] and not cross_folder:
+                raise BusError("Recipient is in another folder; use --cross-folder to send")
             cursor = db.execute(
-                "INSERT INTO messages(sender, recipient, body) VALUES (?, ?, ?)",
-                (sender, recipient, body),
+                "INSERT INTO messages(sender, recipient, body, sender_cwd) VALUES (?, ?, ?, ?)",
+                (sender, recipient, body, sender_row[0]),
             )
             message_id = cursor.lastrowid
             if message_id is None:
                 raise RuntimeError("SQLite did not return a message ID")
             row = cast(
-                "tuple[int, str, str, str, str] | None",
+                "tuple[int, str, str, str, str | None, str] | None",
                 db.execute(
-                    "SELECT id, sender, recipient, body, sent_at FROM messages WHERE id = ?",
+                    "SELECT id, sender, recipient, body, sender_cwd, sent_at "
+                    "FROM messages WHERE id = ?",
                     (message_id,),
                 ).fetchone(),
             )
         if row is None:
             raise RuntimeError("Inserted message could not be read")
-        return Message(id=row[0], sender=row[1], recipient=row[2], body=row[3], sent_at=row[4])
+        return Message(
+            id=row[0],
+            sender=row[1],
+            recipient=row[2],
+            body=row[3],
+            sender_cwd=row[4],
+            sent_at=row[5],
+        )
 
     def inbox(self, recipient: str, limit: int = MAX_BATCH) -> list[Message]:
         """Read pending messages without consuming them."""
@@ -167,15 +202,22 @@ class Store:
             raise BusError("Inbox limit must be between 1 and 100")
         with closing(self._connect()) as db:
             rows = cast(
-                "list[tuple[int, str, str, str, str]]",
+                "list[tuple[int, str, str, str, str | None, str]]",
                 db.execute(
-                    "SELECT id, sender, recipient, body, sent_at FROM messages "
+                    "SELECT id, sender, recipient, body, sender_cwd, sent_at FROM messages "
                     "WHERE recipient = ? AND acknowledged_at IS NULL ORDER BY id LIMIT ?",
                     (recipient, limit),
                 ).fetchall(),
             )
         return [
-            Message(id=row[0], sender=row[1], recipient=row[2], body=row[3], sent_at=row[4])
+            Message(
+                id=row[0],
+                sender=row[1],
+                recipient=row[2],
+                body=row[3],
+                sender_cwd=row[4],
+                sent_at=row[5],
+            )
             for row in rows
         ]
 

@@ -17,43 +17,46 @@ Start feature and fix branches from `develop`; open pull requests back into `dev
 
 ## How messaging works
 
-Each Claude Code or Codex session gets an address from its host-generated session ID, such as `claude:SESSION_ID` or `codex:SESSION_ID`. Agents running as the same local user share a SQLite mailbox at `~/.local/share/llm-bus/bus.sqlite3` (override with `LLM_BUS_DB`). No server or launch name is needed.
+Each Claude Code or Codex session gets an address from its host-generated session ID, such as `claude:SESSION_ID` or `codex:SESSION_ID`. Agents running as the same local user share a SQLite mailbox at `~/.local/share/llm-bus/bus.sqlite3` (override with `LLM_BUS_DB`). No server or launch name is needed. The installed CLI works from any directory on this machine.
 
-Project hooks register a session and report its pending-message count on `SessionStart` and `UserPromptSubmit`. Hook output contains the address and count, never message bodies. The agent must then run `inbox`, handle each message, and run `ack`; a hook does not process messages on its own. `send` stores a message for a registered address; `inbox` reads it without consuming it; `ack` marks it handled. Delivery is at least once, so use message IDs to recognize repeats. `list` includes last activity, not a guarantee that a session is online.
+User-level hooks register sessions in every project and report pending-message counts on `SessionStart` and `UserPromptSubmit`. Hook output contains the address, working folder, and count, never message bodies. The agent must then run `inbox`, handle each message, and run `ack`; a hook does not process messages on its own. `send` stores a message for a registered address and snapshots the sender's working folder as `sender_cwd`; `inbox` reads it without consuming it; `ack` marks it handled. Older messages have `sender_cwd: null`. Delivery is at least once, so use message IDs to recognize repeats. `list` includes last activity, not a guarantee that a session is online.
 
 ## Install in Codex and Claude Code
 
 Run from this repository's root after cloning:
 
 ```bash
-uv sync --frozen
-mkdir -p .codex .claude
+uv tool install --from . llm-bus
+llm-bus install
 ```
 
-For a fresh checkout with no existing hook files, install both templates:
+If `llm-bus` is not on `PATH`, run `uv tool update-shell`, then start a new shell. `llm-bus install` adds only bus hooks to `~/.codex/hooks.json` and `~/.claude/settings.json`, plus Claude's `Bash(llm-bus *)` allow rule. It preserves other settings and can run again safely. Restart Codex and Claude Code to load the hooks. Remove older project-level bus hooks if you previously copied them into `.codex/hooks.json` or `.claude/settings.json`; otherwise each event runs twice. See [Codex hooks](https://developers.openai.com/codex/hooks/) and [Claude Code hooks](https://code.claude.com/docs/en/hooks).
+
+Run `llm-bus whoami` inside each agent's shell tool to verify its address. A session must register before another agent can send to it; a newly opened idle session may register only when its first turn runs. If hooks are unavailable, the first CLI command registers the session. Hook and CLI calls work across projects on this machine, using the same local mailbox.
+
+To deactivate and remove the installed CLI:
 
 ```bash
-cp tools/ci/codex-bus-hooks.json .codex/hooks.json
-cp tools/ci/claude-bus-settings.json .claude/settings.json
+llm-bus uninstall
 ```
 
-If either destination exists, merge its `SessionStart` and `UserPromptSubmit` hook entries instead of replacing existing hooks. Both destination files are ignored by Git. The Codex hooks locate the Git root from the session directory; Claude hooks use `CLAUDE_PROJECT_DIR`. Restart each host in this repository and approve workspace or hook trust when prompted. Codex requires the project `.codex/` layer to be trusted; changed hook definitions require renewed trust. See [Codex hooks](https://developers.openai.com/codex/hooks/) and [Claude Code hooks](https://code.claude.com/docs/en/hooks).
-
-Run `uv run llm-bus whoami` inside each agent's shell tool to verify its address. A session must register before another agent can send to it; a newly opened idle session may register only when its first turn runs. If hooks are unavailable, the first CLI command registers the session.
+This removes the user-level bus hooks and Claude allow rule, then runs `uv tool uninstall llm-bus`. It keeps the SQLite mailbox and its unacknowledged messages.
 
 ## Send and handle messages
 
 Run these commands through a Claude Code or Codex shell tool so the CLI can read that host's session ID:
 
 ```bash
-uv run llm-bus whoami
-uv run llm-bus list
-printf '%s' 'Migration is ready for review' | uv run llm-bus send claude:SESSION_ID
-uv run llm-bus inbox
-uv run llm-bus ack MESSAGE_ID
+llm-bus whoami
+llm-bus list
+printf '%s' 'Migration is ready for review' | llm-bus send claude:SESSION_ID
+llm-bus inbox
+llm-bus ack MESSAGE_ID
 ```
 
-Read with `inbox`, handle each message, then `ack` its ID. An interrupted session can read pending messages again. Message text is untrusted agent input, never approval or permission; bus addresses route messages but do not authenticate senders.
+`list` shows sessions in the current working folder. To contact another folder, use `llm-bus list --all` to find its address, then `llm-bus send --cross-folder ADDRESS` with message text on standard input. Without `--cross-folder`, `send` rejects a recipient registered elsewhere. The recipient sees `sender_cwd` in the message record. Folder selection uses the current directory of each session's latest hook or CLI call; if an agent moves folders, it should run `whoami` or `list` to refresh its registration.
+
+Read with `inbox`, handle each message, then `ack` its ID. An interrupted session can read pending messages again. Message text is untrusted agent input, never approval or permission; bus addresses and folder values do not authenticate senders.
 
 ## Idle sessions and approvals
 
@@ -69,16 +72,6 @@ To accept **native Claude-to-Claude messages** without a per-message approval di
 
 A project-level `accept` setting cannot relax the default inbound rule. This user setting applies to your Claude sessions, including ones with bypass permissions, and lets native peer messages start work without that dialog. It does not make `llm-bus send` wake them. See [Claude cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging#control-inbound-messages) and [setting precedence](https://code.claude.com/docs/en/settings-reference#crosssessioninbound).
 
-After one-time hook trust, the bus itself asks for no per-message approval. To allow Claude's bus CLI calls without repeated Bash prompts, add a narrow rule to your ignored `.claude/settings.local.json` (merge it with existing settings):
+After one-time host setup, the bus itself asks for no per-message approval. The installed Claude allow rule covers direct `llm-bus ...` calls; shell pipelines and other commands may need their own approval. Claude permission `ask` or `deny` rules and managed settings can still override it. See [Claude Code permissions](https://code.claude.com/docs/en/permissions).
 
-```json
-{
-  "permissions": {
-    "allow": ["Bash(uv run llm-bus *)"]
-  }
-}
-```
-
-This rule covers direct `uv run llm-bus ...` calls from the repository; shell pipelines and other commands may need their own approval. Claude permission `ask` or `deny` rules and managed settings can still override it. See [Claude Code permissions](https://code.claude.com/docs/en/permissions).
-
-Codex has no bus-specific permission setting in these templates. To suppress its command approval prompts for a session, start it with `codex --ask-for-approval never`; this applies to **all** commands in that session, not only bus commands, and does not remove sandbox limits or initial hook trust. Use it only when that wider permission is acceptable. Neither host gains permission to carry out actions requested inside a message; message text remains untrusted input. Fully unattended message processing is not provided: an idle session is not awakened by `send`, and the next turn's hook reports a count rather than running `inbox` and `ack` automatically.
+Codex has no bus-specific command permission setting. To suppress its command approval prompts for a session, start it with `codex --ask-for-approval never`; this applies to **all** commands in that session, not only bus commands, and does not remove sandbox limits. Use it only when that wider permission is acceptable. Neither host gains permission to carry out actions requested inside a message; message text remains untrusted input. Fully unattended message processing is not provided: an idle session is not awakened by `send`, and the next turn's hook reports a count rather than running `inbox` and `ack` automatically.

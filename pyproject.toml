@@ -24,7 +24,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/llm_bus.py", "src/llm_bus_store.py"]
+packages = ["src/llm_bus.py", "src/llm_bus_install.py", "src/llm_bus_store.py"]
 
 [tool.ruff]
 target-version = "py312"
@@ -112,7 +112,7 @@ max-line-length = 100
 score = false
 
 [tool.deptry]
-known_first_party = ["llm_bus", "llm_bus_store"]
+known_first_party = ["llm_bus", "llm_bus_install", "llm_bus_store"]
 
 [tool.poe.tasks]
 format = "ruff format src tests tools/ci"

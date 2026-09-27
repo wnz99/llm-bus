@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import io
 import json
+import sqlite3
+import subprocess
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from llm_bus import host_identity, main
+from llm_bus_install import configure_hosts
 from llm_bus_store import BusError, Store
 
 if TYPE_CHECKING:
@@ -23,6 +26,7 @@ def test_messages_survive_reopen_until_recipient_acknowledges(tmp_path: Path) ->
     claude = store.register("claude", "claude-session", "/project")
 
     sent = store.send(codex, claude, "Review migration")
+    assert sent["sender_cwd"] == "/project"
     reopened = Store(path)
     assert reopened.inbox(claude) == [sent]
     assert reopened.inbox(claude) == [sent]
@@ -44,6 +48,35 @@ def test_unknown_recipient_and_oversized_message_are_rejected(tmp_path: Path) ->
     with pytest.raises(BusError, match="64 KiB"):
         store.send(sender, recipient, "x" * 65537)
     assert store.inbox(recipient) == []
+
+
+def test_folder_scope_requires_explicit_cross_folder_send(tmp_path: Path) -> None:
+    store = Store(tmp_path / "bus.sqlite3")
+    sender = store.register("codex", "one", "/one")
+    same = store.register("claude", "two", "/one")
+    other = store.register("claude", "three", "/other")
+    assert {peer["address"] for peer in store.agents("/one")} == {sender, same}
+    assert len(store.agents()) == 3
+    with pytest.raises(BusError, match="--cross-folder"):
+        store.send(sender, other, "hello")
+    sent = store.send(sender, other, "hello", cross_folder=True)
+    assert sent["sender_cwd"] == "/one"
+    store.register("codex", "one", "/new-location")
+    assert store.inbox(other)[0]["sender_cwd"] == "/one"
+
+
+def test_existing_database_gets_nullable_sender_folder(tmp_path: Path) -> None:
+    path = tmp_path / "bus.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.executescript(
+            "CREATE TABLE agents (address TEXT PRIMARY KEY, kind TEXT, project TEXT, last_seen TEXT);"
+            "CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, recipient TEXT, "
+            "body TEXT, sent_at TEXT, acknowledged_at TEXT);"
+            "INSERT INTO agents VALUES ('codex:one', 'codex', '/one', 'now');"
+            "INSERT INTO agents VALUES ('claude:two', 'claude', '/one', 'now');"
+            "INSERT INTO messages VALUES (1, 'codex:one', 'claude:two', 'old', 'now', NULL);"
+        )
+    assert Store(path).inbox("claude:two")[0]["sender_cwd"] is None
 
 
 def test_mixed_acknowledgement_batch_rolls_back(tmp_path: Path) -> None:
@@ -75,19 +108,27 @@ def test_codex_hook_registers_and_reports_pending_without_message_text(
     monkeypatch.setenv("LLM_BUS_DB", str(path))
     monkeypatch.setattr(
         "sys.stdin",
-        io.StringIO(json.dumps({"session_id": "thread-1", "hook_event_name": "SessionStart"})),
+        io.StringIO(
+            json.dumps(
+                {"session_id": "thread-1", "hook_event_name": "SessionStart", "cwd": "/project"}
+            )
+        ),
     )
     assert main(["hook", "codex"]) == 0
     output = cast("dict[str, dict[str, str]]", json.loads(capsys.readouterr().out))
     assert "codex:thread-1" in output["hookSpecificOutput"]["additionalContext"]
-    assert "uv run llm-bus inbox" in output["hookSpecificOutput"]["additionalContext"]
+    assert "llm-bus inbox" in output["hookSpecificOutput"]["additionalContext"]
 
     store = Store(path)
     claude = store.register("claude", "session-2", "/project")
     store.send(claude, "codex:thread-1", "Untrusted message body")
     monkeypatch.setattr(
         "sys.stdin",
-        io.StringIO(json.dumps({"session_id": "thread-1", "hook_event_name": "UserPromptSubmit"})),
+        io.StringIO(
+            json.dumps(
+                {"session_id": "thread-1", "hook_event_name": "UserPromptSubmit", "cwd": "/project"}
+            )
+        ),
     )
     assert main(["hook", "codex"]) == 0
     notice = cast("dict[str, dict[str, str]]", json.loads(capsys.readouterr().out))[
@@ -111,9 +152,122 @@ def test_claude_hook_uses_same_session_address(
     assert main(["hook", "claude"]) == 0
     notice = capsys.readouterr().out
     assert "claude:claude-session" in notice
-    assert "uv run llm-bus inbox" in notice
+    assert "llm-bus inbox" in notice
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "claude-session")
     monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
     monkeypatch.delenv("CODEX_SESSION_ID", raising=False)
     assert main(["whoami"]) == 0
     assert json.loads(capsys.readouterr().out) == {"address": "claude:claude-session"}
+
+
+def test_install_and_uninstall_preserve_other_host_settings(tmp_path: Path) -> None:
+    codex = tmp_path / ".codex" / "hooks.json"
+    claude = tmp_path / ".claude" / "settings.json"
+    codex.parent.mkdir()
+    claude.parent.mkdir()
+    codex.write_text(json.dumps({"hooks": {"SessionStart": [{"hooks": [{"command": "other"}]}]}}))
+    claude.write_text(json.dumps({"model": "sonnet", "permissions": {"allow": ["Bash(git *)"]}}))
+    configure_hosts(tmp_path, install=True)
+    once = (codex.read_text(), claude.read_text())
+    configure_hosts(tmp_path, install=True)
+    assert once == (codex.read_text(), claude.read_text())
+    assert "llm-bus hook codex" in codex.read_text()
+    assert "llm-bus hook claude" in claude.read_text()
+    assert "Bash(llm-bus *)" in claude.read_text()
+    configure_hosts(tmp_path, install=False)
+    assert json.loads(codex.read_text()) == {
+        "hooks": {"SessionStart": [{"hooks": [{"command": "other"}]}]}
+    }
+    assert json.loads(claude.read_text()) == {
+        "model": "sonnet",
+        "permissions": {"allow": ["Bash(git *)"]},
+    }
+
+
+def test_install_rejects_invalid_second_file_before_writing_first(tmp_path: Path) -> None:
+    codex = tmp_path / ".codex" / "hooks.json"
+    claude = tmp_path / ".claude" / "settings.json"
+    codex.parent.mkdir()
+    claude.parent.mkdir()
+    codex.write_text("{}")
+    claude.write_text('{"hooks": []}')
+    with pytest.raises(BusError, match="hooks must be a JSON object"):
+        configure_hosts(tmp_path, install=True)
+    assert codex.read_text() == "{}"
+
+
+def test_uninstall_removes_bus_handler_from_shared_group(tmp_path: Path) -> None:
+    codex = tmp_path / ".codex" / "hooks.json"
+    codex.parent.mkdir()
+    codex.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "hooks": [
+                                {"type": "command", "command": "llm-bus hook codex"},
+                                {"type": "command", "command": "other"},
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
+    )
+    configure_hosts(tmp_path, install=False)
+    assert json.loads(codex.read_text())["hooks"]["SessionStart"] == [
+        {"hooks": [{"type": "command", "command": "other"}]}
+    ]
+
+
+def test_cli_filters_peers_and_requires_cross_folder_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    monkeypatch.setenv("LLM_BUS_DB", str(tmp_path / "bus.sqlite3"))
+    monkeypatch.setenv("CODEX_THREAD_ID", "codex-one")
+    monkeypatch.chdir(first)
+    assert main(["whoami"]) == 0
+    capsys.readouterr()
+    monkeypatch.delenv("CODEX_THREAD_ID")
+    monkeypatch.delenv("CODEX_SESSION_ID", raising=False)
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "claude-two")
+    monkeypatch.chdir(second)
+    assert main(["whoami"]) == 0
+    capsys.readouterr()
+    assert main(["list"]) == 0
+    assert len(cast("list[object]", json.loads(capsys.readouterr().out))) == 1
+    assert main(["list", "--all"]) == 0
+    assert len(cast("list[object]", json.loads(capsys.readouterr().out))) == 2
+    assert main(["send", "codex:codex-one", "--body", "hello"]) == 1
+    assert "--cross-folder" in capsys.readouterr().err
+    assert main(["send", "codex:codex-one", "--body", "hello", "--cross-folder"]) == 0
+    assert json.loads(capsys.readouterr().out)["sender_cwd"] == str(second)
+
+
+def test_uninstall_removes_hooks_then_uv_tool(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    configure_hosts(tmp_path, install=True)
+    monkeypatch.setattr("llm_bus.Path.home", lambda: tmp_path)
+
+    def fake_which(_name: str) -> str:
+        return "/usr/local/bin/uv"
+
+    monkeypatch.setattr("llm_bus.shutil.which", fake_which)
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], *, check: bool) -> subprocess.CompletedProcess[str]:
+        assert check
+        calls.append(command)
+        assert "llm-bus hook codex" not in (tmp_path / ".codex/hooks.json").read_text()
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("llm_bus.subprocess.run", fake_run)
+    assert main(["uninstall"]) == 0
+    assert json.loads(capsys.readouterr().out)["installed"] is False
+    assert calls == [["/usr/local/bin/uv", "tool", "uninstall", "llm-bus"]]

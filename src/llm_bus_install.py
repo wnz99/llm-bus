@@ -110,13 +110,15 @@ def _update_claude_permission(
     return updated
 
 
-def _atomic_write(path: Path, content: bytes, mode: int) -> None:
+def _atomic_write(path: Path, content: bytes, mode: int, expected: bytes | None) -> None:
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
         os.fchmod(descriptor, mode)
         with os.fdopen(descriptor, "wb") as file:
             file.write(content)
+        if _current_bytes(path) != expected:
+            raise BusError(f"Settings changed while updating {path}")
         Path(temporary).replace(path)
     finally:
         if Path(temporary).exists():
@@ -129,7 +131,7 @@ def _write_settings(
     if _current_bytes(path) != expected:
         raise BusError(f"Settings changed while updating {path}")
     content = (json.dumps(settings, indent=2) + "\n").encode()
-    _atomic_write(path, content, mode)
+    _atomic_write(path, content, mode, expected)
     return content
 
 
@@ -145,14 +147,66 @@ def snapshot_host_settings(home: Path) -> SettingsSnapshot:
     return snapshots
 
 
-def _restore_written(snapshot: tuple[Path, bytes | None, int], written: bytes) -> None:
+def _had_bus_hook(settings: dict[str, object], kind: str, event: str) -> bool:
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        return False
+    groups = cast("dict[str, object]", hooks).get(event)
+    if not isinstance(groups, list):
+        return False
+    own_handler = cast("list[object]", _hook_group(kind)["hooks"])[0]
+    return any(_group_has_handler(group, own_handler) for group in cast("list[object]", groups))
+
+
+def _group_has_handler(group: object, handler: object) -> bool:
+    if not isinstance(group, dict):
+        return False
+    handlers = cast("dict[str, object]", group).get("hooks")
+    return isinstance(handlers, list) and handler in cast("list[object]", handlers)
+
+
+def _restore_bus_entries(
+    current: dict[str, object], original: dict[str, object], path: Path, kind: str
+) -> dict[str, object]:
+    restored = _update_hooks(current, path, kind, install=False)
+    hooks = _object_at(restored, "hooks", path)
+    for event in EVENTS:
+        if _had_bus_hook(original, kind, event):
+            groups = cast("list[object]", hooks.get(event, []))
+            hooks[event] = [*groups, _hook_group(kind)]
+    if hooks:
+        restored["hooks"] = hooks
+    if kind == "claude":
+        permissions = original.get("permissions")
+        allowed: object = (
+            cast("dict[str, object]", permissions).get("allow", [])
+            if isinstance(permissions, dict)
+            else []
+        )
+        restored = _update_claude_permission(
+            restored,
+            path,
+            install=isinstance(allowed, list)
+            and CLAUDE_ALLOW_RULE in cast("list[object]", allowed),
+        )
+    return restored
+
+
+def _restore_written(snapshot: tuple[Path, bytes | None, int], written: bytes, kind: str) -> None:
     path, content, mode = snapshot
-    if _current_bytes(path) != written:
+    current = _current_bytes(path)
+    if current != written:
+        restored = _restore_bus_entries(
+            _parse_settings(path, current), _parse_settings(path, content), path, kind
+        )
+        if restored != _parse_settings(path, current):
+            current_mode = stat.S_IMODE(path.stat().st_mode) if current is not None else 0o600
+            _write_settings(path, restored, current, current_mode)
         return
     if content is None:
         path.unlink(missing_ok=True)
     else:
-        _atomic_write(path, content, mode)
+        _atomic_write(path, content, mode, written)
 
 
 def configure_hosts(home: Path, *, install: bool) -> list[Path]:
@@ -167,18 +221,18 @@ def configure_hosts(home: Path, *, install: bool) -> list[Path]:
     codex_settings = _update_hooks(codex_settings, codex_path, "codex", install=install)
     claude_settings = _update_hooks(claude_settings, claude_path, "claude", install=install)
     claude_settings = _update_claude_permission(claude_settings, claude_path, install=install)
-    written: list[tuple[tuple[Path, bytes | None, int], bytes]] = []
+    written: list[tuple[tuple[Path, bytes | None, int], bytes, str]] = []
     try:
         if json.dumps(codex_settings, sort_keys=True) != codex_before:
             content = _write_settings(codex_path, codex_settings, snapshots[0][1], snapshots[0][2])
-            written.append((snapshots[0], content))
+            written.append((snapshots[0], content, "codex"))
         if json.dumps(claude_settings, sort_keys=True) != claude_before:
             content = _write_settings(
                 claude_path, claude_settings, snapshots[1][1], snapshots[1][2]
             )
-            written.append((snapshots[1], content))
+            written.append((snapshots[1], content, "claude"))
     except (BusError, OSError):
-        for snapshot, content in reversed(written):
-            _restore_written(snapshot, content)
+        for snapshot, content, kind in reversed(written):
+            _restore_written(snapshot, content, kind)
         raise
     return [codex_path, claude_path]

@@ -3,14 +3,14 @@
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "uv run --project . llm-bus hook codex" }
+          { "type": "command", "command": "uv run --project \"$(git rev-parse --show-toplevel)\" llm-bus hook codex" }
         ]
       }
     ],
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "uv run --project . llm-bus hook codex" }
+          { "type": "command", "command": "uv run --project \"$(git rev-parse --show-toplevel)\" llm-bus hook codex" }
         ]
       }
     ]

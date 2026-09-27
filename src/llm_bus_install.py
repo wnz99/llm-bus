@@ -195,6 +195,24 @@ def _restore_claude_permission(
     return restored
 
 
+def _restore_hook_groups(
+    current_groups: list[object], original_groups: list[object], kind: str
+) -> list[object]:
+    groups = list(current_groups)
+    restored_positions: set[int] = set()
+    for position, original_group in enumerate(original_groups):
+        if not _group_has_handler(original_group, kind):
+            continue
+        without_bus = _without_bus_handler(original_group, kind)
+        if without_bus is not None and without_bus in groups:
+            groups[groups.index(without_bus)] = original_group
+            restored_positions.add(position)
+    for position, original_group in enumerate(original_groups):
+        if _group_has_handler(original_group, kind) and position not in restored_positions:
+            groups.insert(_insertion_index(groups, original_groups, position), original_group)
+    return groups
+
+
 def _restore_bus_entries(
     current: dict[str, object], original: dict[str, object], path: Path, kind: str
 ) -> dict[str, object]:
@@ -202,16 +220,11 @@ def _restore_bus_entries(
     hooks = _object_at(restored, "hooks", path)
     original_hooks = _object_at(original, "hooks", path)
     for event in EVENTS:
-        groups = list(cast("list[object]", hooks.get(event, [])))
-        original_groups = cast("list[object]", original_hooks.get(event, []))
-        for position, original_group in enumerate(original_groups):
-            if not _group_has_handler(original_group, kind):
-                continue
-            without_bus = _without_bus_handler(original_group, kind)
-            if without_bus is not None and without_bus in groups:
-                groups[groups.index(without_bus)] = original_group
-            else:
-                groups.insert(_insertion_index(groups, original_groups, position), original_group)
+        groups = _restore_hook_groups(
+            cast("list[object]", hooks.get(event, [])),
+            cast("list[object]", original_hooks.get(event, [])),
+            kind,
+        )
         if groups:
             hooks[event] = groups
     if hooks:

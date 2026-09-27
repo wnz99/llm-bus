@@ -687,3 +687,41 @@ def test_failed_uninstall_keeps_bus_order_with_concurrent_insertions(
         "hooks": {"SessionStart": [concurrent, first, claude_bus, last]},
         "permissions": {"allow": ["Bash(ls *)", "Bash(git *)", "Bash(llm-bus *)", "Bash(uv *)"]},
     }
+
+
+def test_failed_uninstall_restores_standalone_before_shared_bus_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    codex = tmp_path / ".codex" / "hooks.json"
+    codex.parent.mkdir()
+    standalone = {"hooks": [{"type": "command", "command": "llm-bus hook codex", "timeout": 1}]}
+    shared = {
+        "hooks": [
+            {"type": "command", "command": "llm-bus hook codex", "timeout": 2},
+            {"type": "command", "command": "other"},
+        ]
+    }
+    shared_without_bus = {"hooks": [{"type": "command", "command": "other"}]}
+    tail = {"hooks": [{"type": "command", "command": "tail"}]}
+    concurrent = {"hooks": [{"type": "command", "command": "concurrent"}]}
+    codex.write_text(json.dumps({"hooks": {"SessionStart": [standalone, shared, tail]}}))
+    monkeypatch.setattr("llm_bus.Path.home", lambda: tmp_path)
+
+    def fake_which(_name: str) -> str:
+        return "/usr/local/bin/uv"
+
+    def fail_after_host_change(
+        command: list[str], *, check: bool
+    ) -> subprocess.CompletedProcess[str]:
+        assert check
+        codex.write_text(
+            json.dumps({"hooks": {"SessionStart": [concurrent, shared_without_bus, tail]}})
+        )
+        raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr("llm_bus.shutil.which", fake_which)
+    monkeypatch.setattr("llm_bus.subprocess.run", fail_after_host_change)
+    assert main(["uninstall"]) == 1
+    assert json.loads(codex.read_text()) == {
+        "hooks": {"SessionStart": [concurrent, standalone, shared, tail]}
+    }

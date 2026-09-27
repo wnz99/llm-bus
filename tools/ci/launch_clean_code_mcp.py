@@ -39,7 +39,8 @@ def require_file(path: Path, *, description: str) -> None:
 def missing_runtime_message(path: Path, *, description: str) -> str:
     return (
         f"Clean Code Tools {description} not found at {path}. "
-        "Install the pinned external runtime before starting Codex; see README.md."
+        "Install the external runtime at that path or set CLEAN_CODE_TOOLS_HOME "
+        "to its installation directory before starting the host."
     )
 
 

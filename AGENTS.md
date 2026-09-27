@@ -9,5 +9,5 @@
 - Cut ordinary work branches from `develop` and target pull requests into `develop`.
 - Promote only `develop` into `staging`, then only `staging` into `main`, using pull requests from this repository. An exception needs explicit approval.
 - Merge with a merge commit, preserving individual commits. Do not squash or rebase shared branches.
-- Delete a source branch after its pull request merges. Remove its local worktree and branch only after checking for uncommitted or unpushed work.
+- Delete temporary feature or fix branches after their pull requests merge. Keep the permanent `develop` and `staging` branches after promotion. Remove a temporary branch's local worktree and branch only after checking for uncommitted or unpushed work.
 - A merge into `main` does not itself deploy anything.

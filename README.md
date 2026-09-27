@@ -13,7 +13,7 @@ Application modules belong directly in `src/`; tests belong in `tests/`. `poe ch
 
 ## Branch workflow
 
-Start feature and fix branches from `develop`; open pull requests back into `develop`. Promote tested commits through `develop` to `staging`, then `staging` to `main`, using one pull request for each promotion. Merge with a merge commit and delete the source branch after merge. The `Repository / quality` check runs the Python gate and rejects pull requests that skip this branch order. See [AGENTS.md](AGENTS.md) for the contributor rules. No deployment is attached to these branches yet.
+Start feature and fix branches from `develop`; open pull requests back into `develop`. Promote tested commits through `develop` to `staging`, then `staging` to `main`, using one pull request for each promotion. Merge with a merge commit. Delete temporary feature or fix branches after merge; retain `develop` and `staging` for later promotions. The `Repository / quality` check runs the Python gate and rejects pull requests that skip this branch order. See [AGENTS.md](AGENTS.md) for the contributor rules. No deployment is attached to these branches yet.
 
 ## How messaging works
 

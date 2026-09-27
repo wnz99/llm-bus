@@ -190,6 +190,32 @@ def test_install_and_uninstall_preserve_other_host_settings(tmp_path: Path) -> N
     }
 
 
+def test_uninstall_removes_existing_matching_bus_settings(tmp_path: Path) -> None:
+    codex = tmp_path / ".codex" / "hooks.json"
+    claude = tmp_path / ".claude" / "settings.json"
+    codex.parent.mkdir()
+    claude.parent.mkdir()
+    codex.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "matcher": "startup",
+                            "hooks": [{"type": "command", "command": "llm-bus hook codex"}],
+                        }
+                    ]
+                }
+            }
+        )
+    )
+    claude.write_text(json.dumps({"permissions": {"allow": ["Bash(llm-bus *)"]}}))
+    configure_hosts(tmp_path, install=True)
+    configure_hosts(tmp_path, install=False)
+    assert json.loads(codex.read_text()) == {}
+    assert json.loads(claude.read_text()) == {}
+
+
 def test_install_rejects_invalid_second_file_before_writing_first(tmp_path: Path) -> None:
     codex = tmp_path / ".codex" / "hooks.json"
     claude = tmp_path / ".claude" / "settings.json"
@@ -398,6 +424,16 @@ def test_uninstall_removes_hooks_then_uv_tool(
     assert main(["uninstall"]) == 0
     assert json.loads(capsys.readouterr().out)["installed"] is False
     assert calls == [["/usr/local/bin/uv", "tool", "uninstall", "llm-bus"]]
+
+
+def test_install_reports_codex_hook_trust_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("llm_bus.Path.home", lambda: tmp_path)
+    assert main(["install"]) == 0
+    result = cast("dict[str, object]", json.loads(capsys.readouterr().out))
+    assert result["installed"] is True
+    assert "/hooks" in cast("str", result["codex_next_step"])
 
 
 def test_failed_uninstall_restores_exact_host_settings(

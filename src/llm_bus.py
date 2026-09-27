@@ -108,7 +108,13 @@ def _configure_host_hooks(*, install: bool) -> None:
         except (OSError, subprocess.CalledProcessError):
             restore_bus_settings(snapshots)
             raise
-    print(json.dumps({"installed": install, "settings": [str(path) for path in paths]}))
+    result: dict[str, object] = {
+        "installed": install,
+        "settings": [str(path) for path in paths],
+    }
+    if install:
+        result["codex_next_step"] = "Restart Codex, then review and trust llm-bus hooks in /hooks"
+    print(json.dumps(result))
 
 
 def main(argv: Sequence[str] | None = None) -> int:

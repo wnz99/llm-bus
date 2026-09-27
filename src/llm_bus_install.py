@@ -34,14 +34,18 @@ def _without_bus_handler(group: object, kind: str) -> object | None:
     return {**configured, "hooks": retained}
 
 
-def _read_settings(path: Path) -> dict[str, object]:
+def _current_bytes(path: Path) -> bytes | None:
     if path.is_symlink():
         raise BusError(f"Settings symlink is unsupported; edit its target explicitly: {path}")
-    if not path.exists():
+    return path.read_bytes() if path.exists() else None
+
+
+def _parse_settings(path: Path, content: bytes | None) -> dict[str, object]:
+    if content is None:
         return {}
     try:
-        data = cast("object", json.loads(path.read_text()))
-    except json.JSONDecodeError as error:
+        data = cast("object", json.loads(content))
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
         raise BusError(f"Invalid JSON in {path}: {error}") from error
     if not isinstance(data, dict):
         raise BusError(f"Settings file must contain a JSON object: {path}")
@@ -119,32 +123,36 @@ def _atomic_write(path: Path, content: bytes, mode: int) -> None:
             Path(temporary).unlink()
 
 
-def _write_settings(path: Path, settings: dict[str, object]) -> None:
-    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
+def _write_settings(
+    path: Path, settings: dict[str, object], expected: bytes | None, mode: int
+) -> bytes:
+    if _current_bytes(path) != expected:
+        raise BusError(f"Settings changed while updating {path}")
     content = (json.dumps(settings, indent=2) + "\n").encode()
     _atomic_write(path, content, mode)
+    return content
 
 
 def snapshot_host_settings(home: Path) -> SettingsSnapshot:
-    """Capture exact settings bytes for uninstall rollback."""
+    """Capture both host settings from one validated read per file."""
     paths = (home / ".codex" / "hooks.json", home / ".claude" / "settings.json")
     snapshots: SettingsSnapshot = []
     for path in paths:
-        _read_settings(path)
-        if path.exists():
-            snapshots.append((path, path.read_bytes(), stat.S_IMODE(path.stat().st_mode)))
-        else:
-            snapshots.append((path, None, 0o600))
+        content = _current_bytes(path)
+        _parse_settings(path, content)
+        mode = stat.S_IMODE(path.stat().st_mode) if content is not None else 0o600
+        snapshots.append((path, content, mode))
     return snapshots
 
 
-def restore_host_settings(snapshots: SettingsSnapshot) -> None:
-    """Restore exact config files after failed tool removal."""
-    for path, content, mode in snapshots:
-        if content is None:
-            path.unlink(missing_ok=True)
-        else:
-            _atomic_write(path, content, mode)
+def _restore_written(snapshot: tuple[Path, bytes | None, int], written: bytes) -> None:
+    path, content, mode = snapshot
+    if _current_bytes(path) != written:
+        return
+    if content is None:
+        path.unlink(missing_ok=True)
+    else:
+        _atomic_write(path, content, mode)
 
 
 def configure_hosts(home: Path, *, install: bool) -> list[Path]:
@@ -152,19 +160,25 @@ def configure_hosts(home: Path, *, install: bool) -> list[Path]:
     codex_path = home / ".codex" / "hooks.json"
     claude_path = home / ".claude" / "settings.json"
     snapshots = snapshot_host_settings(home)
-    codex_settings = _read_settings(codex_path)
-    claude_settings = _read_settings(claude_path)
+    codex_settings = _parse_settings(codex_path, snapshots[0][1])
+    claude_settings = _parse_settings(claude_path, snapshots[1][1])
     codex_before = json.dumps(codex_settings, sort_keys=True)
     claude_before = json.dumps(claude_settings, sort_keys=True)
     codex_settings = _update_hooks(codex_settings, codex_path, "codex", install=install)
     claude_settings = _update_hooks(claude_settings, claude_path, "claude", install=install)
     claude_settings = _update_claude_permission(claude_settings, claude_path, install=install)
+    written: list[tuple[tuple[Path, bytes | None, int], bytes]] = []
     try:
         if json.dumps(codex_settings, sort_keys=True) != codex_before:
-            _write_settings(codex_path, codex_settings)
+            content = _write_settings(codex_path, codex_settings, snapshots[0][1], snapshots[0][2])
+            written.append((snapshots[0], content))
         if json.dumps(claude_settings, sort_keys=True) != claude_before:
-            _write_settings(claude_path, claude_settings)
-    except OSError:
-        restore_host_settings(snapshots)
+            content = _write_settings(
+                claude_path, claude_settings, snapshots[1][1], snapshots[1][2]
+            )
+            written.append((snapshots[1], content))
+    except (BusError, OSError):
+        for snapshot, content in reversed(written):
+            _restore_written(snapshot, content)
         raise
     return [codex_path, claude_path]

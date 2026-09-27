@@ -243,6 +243,29 @@ def test_failed_second_settings_write_restores_both_files(
     ] == before
 
 
+def test_install_detects_concurrent_settings_change_without_losing_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    codex = tmp_path / ".codex" / "hooks.json"
+    claude = tmp_path / ".claude" / "settings.json"
+    codex.parent.mkdir()
+    claude.parent.mkdir()
+    codex.write_text("{}")
+    claude.write_text("{}")
+
+    def update_claude_after_codex_write(path: Path, content: bytes, mode: int) -> None:
+        path.write_bytes(content)
+        path.chmod(mode)
+        if path == codex:
+            claude.write_text('{"concurrentHostSetting": "preserved"}')
+
+    monkeypatch.setattr("llm_bus_install._atomic_write", update_claude_after_codex_write)
+    with pytest.raises(BusError, match="Settings changed while updating"):
+        configure_hosts(tmp_path, install=True)
+    assert codex.read_text() == "{}"
+    assert json.loads(claude.read_text()) == {"concurrentHostSetting": "preserved"}
+
+
 def test_uninstall_removes_bus_handler_from_shared_group(tmp_path: Path) -> None:
     codex = tmp_path / ".codex" / "hooks.json"
     codex.parent.mkdir()
@@ -355,3 +378,30 @@ def test_uninstall_without_uv_keeps_host_settings(
     assert main(["uninstall"]) == 1
     assert "uv is required" in capsys.readouterr().err
     assert [path.read_bytes() for path in paths] == before
+
+
+def test_failed_uninstall_preserves_concurrent_host_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    codex, claude = configure_hosts(tmp_path, install=True)
+    monkeypatch.setattr("llm_bus.Path.home", lambda: tmp_path)
+
+    def fake_which(_name: str) -> str:
+        return "/usr/local/bin/uv"
+
+    def fail_after_host_change(
+        command: list[str], *, check: bool
+    ) -> subprocess.CompletedProcess[str]:
+        assert check
+        settings = cast("dict[str, object]", json.loads(claude.read_text()))
+        settings["concurrentHostSetting"] = "preserved"
+        claude.write_text(json.dumps(settings))
+        raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr("llm_bus.shutil.which", fake_which)
+    monkeypatch.setattr("llm_bus.subprocess.run", fail_after_host_change)
+    assert main(["uninstall"]) == 1
+    capsys.readouterr()
+    assert "llm-bus hook codex" in codex.read_text()
+    assert "llm-bus hook claude" in claude.read_text()
+    assert json.loads(claude.read_text())["concurrentHostSetting"] == "preserved"

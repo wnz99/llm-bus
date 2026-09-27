@@ -462,3 +462,37 @@ def test_failed_uninstall_preserves_concurrent_host_change(
     assert "llm-bus hook codex" in codex.read_text()
     assert "llm-bus hook claude" in claude.read_text()
     assert json.loads(claude.read_text())["concurrentHostSetting"] == "preserved"
+
+
+def test_failed_uninstall_restores_original_matcher_and_event_coverage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    codex = tmp_path / ".codex" / "hooks.json"
+    codex.parent.mkdir()
+    original = {
+        "hooks": {
+            "SessionStart": [
+                {
+                    "matcher": "startup",
+                    "hooks": [
+                        {"type": "command", "command": "llm-bus hook codex"},
+                        {"type": "command", "command": "other"},
+                    ],
+                }
+            ]
+        }
+    }
+    codex.write_text(json.dumps(original))
+    monkeypatch.setattr("llm_bus.Path.home", lambda: tmp_path)
+
+    def fake_which(_name: str) -> str:
+        return "/usr/local/bin/uv"
+
+    def fail_run(command: list[str], *, check: bool) -> subprocess.CompletedProcess[str]:
+        assert check
+        raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr("llm_bus.shutil.which", fake_which)
+    monkeypatch.setattr("llm_bus.subprocess.run", fail_run)
+    assert main(["uninstall"]) == 1
+    assert json.loads(codex.read_text()) == original

@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from llm_bus_install import configure_hosts
+from llm_bus_install import configure_hosts, restore_bus_settings, snapshot_host_settings
 from llm_bus_store import BusError, SenderContext, Store, default_path
 
 CLAUDE_SESSION_ENV = "CLAUDE_CODE_SESSION_ID"
@@ -101,11 +101,12 @@ def _configure_host_hooks(*, install: bool) -> None:
         uv = shutil.which("uv")
         if uv is None:
             raise BusError("uv is required to uninstall the llm-bus tool")
-        paths = configure_hosts(home, install=False)
+        snapshots = snapshot_host_settings(home)
+        paths = configure_hosts(home, install=False, snapshots=snapshots)
         try:
             subprocess.run([uv, "tool", "uninstall", "llm-bus"], check=True)  # noqa: S603
         except (OSError, subprocess.CalledProcessError):
-            configure_hosts(home, install=True)
+            restore_bus_settings(snapshots)
             raise
     print(json.dumps({"installed": install, "settings": [str(path) for path in paths]}))
 

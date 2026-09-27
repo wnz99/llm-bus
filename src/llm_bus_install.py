@@ -147,17 +147,6 @@ def snapshot_host_settings(home: Path) -> SettingsSnapshot:
     return snapshots
 
 
-def _had_bus_hook(settings: dict[str, object], kind: str, event: str) -> bool:
-    hooks = settings.get("hooks")
-    if not isinstance(hooks, dict):
-        return False
-    groups = cast("dict[str, object]", hooks).get(event)
-    if not isinstance(groups, list):
-        return False
-    own_handler = cast("list[object]", _hook_group(kind)["hooks"])[0]
-    return any(_group_has_handler(group, own_handler) for group in cast("list[object]", groups))
-
-
 def _group_has_handler(group: object, handler: object) -> bool:
     if not isinstance(group, dict):
         return False
@@ -170,10 +159,20 @@ def _restore_bus_entries(
 ) -> dict[str, object]:
     restored = _update_hooks(current, path, kind, install=False)
     hooks = _object_at(restored, "hooks", path)
+    original_hooks = _object_at(original, "hooks", path)
     for event in EVENTS:
-        if _had_bus_hook(original, kind, event):
-            groups = cast("list[object]", hooks.get(event, []))
-            hooks[event] = [*groups, _hook_group(kind)]
+        groups = list(cast("list[object]", hooks.get(event, [])))
+        for original_group in cast("list[object]", original_hooks.get(event, [])):
+            own_handler = cast("list[object]", _hook_group(kind)["hooks"])[0]
+            if not _group_has_handler(original_group, own_handler):
+                continue
+            without_bus = _without_bus_handler(original_group, kind)
+            if without_bus is not None and without_bus in groups:
+                groups[groups.index(without_bus)] = original_group
+            else:
+                groups.append(original_group)
+        if groups:
+            hooks[event] = groups
     if hooks:
         restored["hooks"] = hooks
     if kind == "claude":
@@ -190,6 +189,19 @@ def _restore_bus_entries(
             and CLAUDE_ALLOW_RULE in cast("list[object]", allowed),
         )
     return restored
+
+
+def restore_bus_settings(snapshots: SettingsSnapshot) -> None:
+    """Restore prior bus hooks into current settings after failed tool removal."""
+    for index, (path, original_content, _) in enumerate(snapshots):
+        current_content = _current_bytes(path)
+        current = _parse_settings(path, current_content)
+        original = _parse_settings(path, original_content)
+        kind = "codex" if index == 0 else "claude"
+        restored = _restore_bus_entries(current, original, path, kind)
+        if restored != current:
+            mode = stat.S_IMODE(path.stat().st_mode) if current_content is not None else 0o600
+            _write_settings(path, restored, current_content, mode)
 
 
 def _restore_written(snapshot: tuple[Path, bytes | None, int], written: bytes, kind: str) -> None:
@@ -209,11 +221,14 @@ def _restore_written(snapshot: tuple[Path, bytes | None, int], written: bytes, k
         _atomic_write(path, content, mode, written)
 
 
-def configure_hosts(home: Path, *, install: bool) -> list[Path]:
+def configure_hosts(
+    home: Path, *, install: bool, snapshots: SettingsSnapshot | None = None
+) -> list[Path]:
     """Merge or remove bus-owned hooks in both user settings files."""
     codex_path = home / ".codex" / "hooks.json"
     claude_path = home / ".claude" / "settings.json"
-    snapshots = snapshot_host_settings(home)
+    if snapshots is None:
+        snapshots = snapshot_host_settings(home)
     codex_settings = _parse_settings(codex_path, snapshots[0][1])
     claude_settings = _parse_settings(claude_path, snapshots[1][1])
     codex_before = json.dumps(codex_settings, sort_keys=True)

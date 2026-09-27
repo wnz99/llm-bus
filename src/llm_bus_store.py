@@ -7,7 +7,7 @@ import re
 import sqlite3
 from contextlib import closing, contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import TYPE_CHECKING, NamedTuple, TypedDict, cast
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -59,6 +59,14 @@ class Message(TypedDict):
     body: str
     sender_cwd: str | None
     sent_at: str
+
+
+class SenderContext(NamedTuple):
+    """Invocation identity and folder used together for an atomic send."""
+
+    kind: str
+    session_id: str
+    project: str
 
 
 def default_path() -> Path:
@@ -120,15 +128,19 @@ class Store:
 
     def register(self, kind: str, session_id: str, project: str) -> str:
         """Upsert session address without deleting its pending messages."""
-        agent_address = address(kind, session_id)
         with self._transaction() as db:
-            db.execute(
-                "INSERT INTO agents(address, kind, project, last_seen) "
-                "VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) "
-                "ON CONFLICT(address) DO UPDATE SET project = excluded.project, "
-                "last_seen = excluded.last_seen",
-                (agent_address, kind, project),
-            )
+            return self._upsert_agent(db, kind, session_id, project)
+
+    @staticmethod
+    def _upsert_agent(db: sqlite3.Connection, kind: str, session_id: str, project: str) -> str:
+        agent_address = address(kind, session_id)
+        db.execute(
+            "INSERT INTO agents(address, kind, project, last_seen) "
+            "VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) "
+            "ON CONFLICT(address) DO UPDATE SET project = excluded.project, "
+            "last_seen = excluded.last_seen",
+            (agent_address, kind, project),
+        )
         return agent_address
 
     def agents(self, project: str | None = None) -> list[Agent]:
@@ -148,31 +160,33 @@ class Store:
         ]
 
     def send(
-        self, sender: str, recipient: str, body: str, *, cross_folder: bool = False
+        self,
+        sender_context: SenderContext,
+        recipient: str,
+        body: str,
+        *,
+        cross_folder: bool = False,
     ) -> Message:
-        """Persist message only when recipient has registered."""
+        """Atomically register sender, check folder, and persist message."""
         if not body.strip():
             raise BusError("Message body cannot be empty")
         if len(body.encode("utf-8")) > MAX_MESSAGE_BYTES:
             raise BusError("Message body exceeds 64 KiB")
         with self._transaction() as db:
+            sender = self._upsert_agent(
+                db, sender_context.kind, sender_context.session_id, sender_context.project
+            )
             recipient_row = cast(
                 "tuple[str] | None",
                 db.execute("SELECT project FROM agents WHERE address = ?", (recipient,)).fetchone(),
             )
             if recipient_row is None:
                 raise BusError(f"Unknown recipient {recipient!r}; run `llm-bus list` first")
-            sender_row = cast(
-                "tuple[str] | None",
-                db.execute("SELECT project FROM agents WHERE address = ?", (sender,)).fetchone(),
-            )
-            if sender_row is None:
-                raise BusError("Sender must register before sending")
-            if sender_row[0] != recipient_row[0] and not cross_folder:
+            if sender_context.project != recipient_row[0] and not cross_folder:
                 raise BusError("Recipient is in another folder; use --cross-folder to send")
             cursor = db.execute(
                 "INSERT INTO messages(sender, recipient, body, sender_cwd) VALUES (?, ?, ?, ?)",
-                (sender, recipient, body, sender_row[0]),
+                (sender, recipient, body, sender_context.project),
             )
             message_id = cursor.lastrowid
             if message_id is None:

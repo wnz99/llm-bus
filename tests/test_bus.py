@@ -13,7 +13,7 @@ import pytest
 
 from llm_bus import host_identity, main
 from llm_bus_install import configure_hosts
-from llm_bus_store import BusError, Store
+from llm_bus_store import BusError, SenderContext, Store
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -26,7 +26,9 @@ def test_messages_survive_reopen_until_recipient_acknowledges(tmp_path: Path) ->
     codex = store.register("codex", "codex-session", "/project")
     claude = store.register("claude", "claude-session", "/project")
 
-    sent = store.send(codex, claude, "Review migration")
+    sent = store.send(
+        SenderContext("codex", "codex-session", "/project"), claude, "Review migration"
+    )
     assert sent["sender_cwd"] == "/project"
     reopened = Store(path)
     assert reopened.inbox(claude) == [sent]
@@ -42,12 +44,11 @@ def test_messages_survive_reopen_until_recipient_acknowledges(tmp_path: Path) ->
 def test_unknown_recipient_and_oversized_message_are_rejected(tmp_path: Path) -> None:
     """Typos and unbounded payloads cannot silently fill mailbox."""
     store = Store(tmp_path / "bus.sqlite3")
-    sender = store.register("claude", "one", "/project")
     recipient = store.register("codex", "two", "/project")
     with pytest.raises(BusError, match="Unknown recipient"):
-        store.send(sender, "codex:missing", "hello")
+        store.send(SenderContext("claude", "one", "/project"), "codex:missing", "hello")
     with pytest.raises(BusError, match="64 KiB"):
-        store.send(sender, recipient, "x" * 65537)
+        store.send(SenderContext("claude", "one", "/project"), recipient, "x" * 65537)
     assert store.inbox(recipient) == []
 
 
@@ -58,9 +59,11 @@ def test_folder_scope_requires_explicit_cross_folder_send(tmp_path: Path) -> Non
     other = store.register("claude", "three", "/other")
     assert {peer["address"] for peer in store.agents("/one")} == {sender, same}
     assert len(store.agents()) == 3
+    # A concurrent hook can register the same sender in another folder before send begins.
+    store.register("codex", "one", "/other")
     with pytest.raises(BusError, match="--cross-folder"):
-        store.send(sender, other, "hello")
-    sent = store.send(sender, other, "hello", cross_folder=True)
+        store.send(SenderContext("codex", "one", "/one"), other, "hello")
+    sent = store.send(SenderContext("codex", "one", "/one"), other, "hello", cross_folder=True)
     assert sent["sender_cwd"] == "/one"
     store.register("codex", "one", "/new-location")
     assert store.inbox(other)[0]["sender_cwd"] == "/one"
@@ -83,11 +86,10 @@ def test_existing_database_gets_nullable_sender_folder(tmp_path: Path) -> None:
 def test_mixed_acknowledgement_batch_rolls_back(tmp_path: Path) -> None:
     """A foreign message ID cannot consume an earlier valid item in the same batch."""
     store = Store(tmp_path / "bus.sqlite3")
-    sender = store.register("claude", "one", "/project")
     first = store.register("codex", "first", "/project")
     second = store.register("codex", "second", "/project")
-    own_message = store.send(sender, first, "one")
-    foreign_message = store.send(sender, second, "two")
+    own_message = store.send(SenderContext("claude", "one", "/project"), first, "one")
+    foreign_message = store.send(SenderContext("claude", "one", "/project"), second, "two")
     with pytest.raises(BusError, match="do not belong"):
         store.acknowledge(first, [own_message["id"], foreign_message["id"]])
     assert store.inbox(first) == [own_message]
@@ -121,8 +123,11 @@ def test_codex_hook_registers_and_reports_pending_without_message_text(
     assert "llm-bus inbox" in output["hookSpecificOutput"]["additionalContext"]
 
     store = Store(path)
-    claude = store.register("claude", "session-2", "/project")
-    store.send(claude, "codex:thread-1", "Untrusted message body")
+    store.send(
+        SenderContext("claude", "session-2", "/project"),
+        "codex:thread-1",
+        "Untrusted message body",
+    )
     monkeypatch.setattr(
         "sys.stdin",
         io.StringIO(

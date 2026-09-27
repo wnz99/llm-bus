@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from llm_bus_install import configure_hosts, restore_host_settings, snapshot_host_settings
-from llm_bus_store import BusError, Store, default_path
+from llm_bus_store import BusError, SenderContext, Store, default_path
 
 CLAUDE_SESSION_ENV = "CLAUDE_CODE_SESSION_ID"
 CODEX_THREAD_ENV = "CODEX_THREAD_ID"
@@ -125,28 +125,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         kind, session_id = host_identity(dict(os.environ))
         project = str(Path.cwd().resolve())
-        agent_address = store.register(kind, session_id, project)
-        if command == "whoami":
-            result: object = {"address": agent_address}
-        elif command == "list":
-            result = store.agents(None if args["all"] else project)
-        elif command == "send":
+        if command == "send":
             configured_body = args["body"]
             body = cast("str", configured_body) if configured_body is not None else sys.stdin.read()
-            result = store.send(
-                agent_address,
+            result: object = store.send(
+                SenderContext(kind, session_id, project),
                 cast("str", args["to"]),
                 body,
                 cross_folder=cast("bool", args["cross_folder"]),
             )
-        elif command == "inbox":
-            result = store.inbox(agent_address, cast("int", args["limit"]))
-        elif command == "ack":
-            result = {
-                "acknowledged": store.acknowledge(agent_address, cast("list[int]", args["ids"]))
-            }
         else:
-            raise RuntimeError("Unreachable command")
+            agent_address = store.register(kind, session_id, project)
+            result = _registered_command(store, command, args, agent_address, project)
         print(json.dumps(result))
     except (
         BusError,
@@ -158,6 +148,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"llm-bus: {error}", file=sys.stderr)
         return 1
     return 0
+
+
+def _registered_command(
+    store: Store, command: object, args: dict[str, object], agent_address: str, project: str
+) -> object:
+    if command == "whoami":
+        result: object = {"address": agent_address}
+    elif command == "list":
+        result = store.agents(None if args["all"] else project)
+    elif command == "inbox":
+        result = store.inbox(agent_address, cast("int", args["limit"]))
+    elif command == "ack":
+        result = {"acknowledged": store.acknowledge(agent_address, cast("list[int]", args["ids"]))}
+    else:
+        raise RuntimeError("Unreachable command")
+    return result
 
 
 if __name__ == "__main__":

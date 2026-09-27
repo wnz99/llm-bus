@@ -196,6 +196,18 @@ def test_install_rejects_invalid_second_file_before_writing_first(tmp_path: Path
     assert codex.read_text() == "{}"
 
 
+def test_install_rejects_symlinked_settings_without_replacing_link(tmp_path: Path) -> None:
+    target = tmp_path / "managed-hooks.json"
+    target.write_text("{}")
+    codex = tmp_path / ".codex" / "hooks.json"
+    codex.parent.mkdir()
+    codex.symlink_to(target)
+    with pytest.raises(BusError, match="symlink is unsupported"):
+        configure_hosts(tmp_path, install=True)
+    assert codex.is_symlink()
+    assert target.read_text() == "{}"
+
+
 def test_uninstall_removes_bus_handler_from_shared_group(tmp_path: Path) -> None:
     codex = tmp_path / ".codex" / "hooks.json"
     codex.parent.mkdir()
@@ -271,3 +283,40 @@ def test_uninstall_removes_hooks_then_uv_tool(
     assert main(["uninstall"]) == 0
     assert json.loads(capsys.readouterr().out)["installed"] is False
     assert calls == [["/usr/local/bin/uv", "tool", "uninstall", "llm-bus"]]
+
+
+def test_failed_uninstall_restores_exact_host_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    paths = configure_hosts(tmp_path, install=True)
+    before = [path.read_bytes() for path in paths]
+    monkeypatch.setattr("llm_bus.Path.home", lambda: tmp_path)
+
+    def fake_which(_name: str) -> str:
+        return "/usr/local/bin/uv"
+
+    def fail_run(command: list[str], *, check: bool) -> subprocess.CompletedProcess[str]:
+        assert check
+        raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr("llm_bus.shutil.which", fake_which)
+    monkeypatch.setattr("llm_bus.subprocess.run", fail_run)
+    assert main(["uninstall"]) == 1
+    assert "returned non-zero" in capsys.readouterr().err
+    assert [path.read_bytes() for path in paths] == before
+
+
+def test_uninstall_without_uv_keeps_host_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    paths = configure_hosts(tmp_path, install=True)
+    before = [path.read_bytes() for path in paths]
+    monkeypatch.setattr("llm_bus.Path.home", lambda: tmp_path)
+
+    def missing_uv(_name: str) -> None:
+        return None
+
+    monkeypatch.setattr("llm_bus.shutil.which", missing_uv)
+    assert main(["uninstall"]) == 1
+    assert "uv is required" in capsys.readouterr().err
+    assert [path.read_bytes() for path in paths] == before

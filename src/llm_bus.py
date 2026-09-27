@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from llm_bus_install import configure_hosts
+from llm_bus_install import configure_hosts, restore_host_settings, snapshot_host_settings
 from llm_bus_store import BusError, Store, default_path
 
 CLAUDE_SESSION_ENV = "CLAUDE_CODE_SESSION_ID"
@@ -94,12 +94,20 @@ def _hook(store: Store, kind: str) -> None:
 
 
 def _configure_host_hooks(*, install: bool) -> None:
-    paths = configure_hosts(Path.home(), install=install)
-    if not install:
+    home = Path.home()
+    if install:
+        paths = configure_hosts(home, install=True)
+    else:
         uv = shutil.which("uv")
         if uv is None:
             raise BusError("uv is required to uninstall the llm-bus tool")
-        subprocess.run([uv, "tool", "uninstall", "llm-bus"], check=True)  # noqa: S603
+        snapshots = snapshot_host_settings(home)
+        try:
+            paths = configure_hosts(home, install=False)
+            subprocess.run([uv, "tool", "uninstall", "llm-bus"], check=True)  # noqa: S603
+        except (BusError, OSError, subprocess.CalledProcessError):
+            restore_host_settings(snapshots)
+            raise
     print(json.dumps({"installed": install, "settings": [str(path) for path in paths]}))
 
 

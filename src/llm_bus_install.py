@@ -13,6 +13,7 @@ from llm_bus_store import BusError
 
 EVENTS = ("SessionStart", "UserPromptSubmit")
 CLAUDE_ALLOW_RULE = "Bash(llm-bus *)"
+type SettingsSnapshot = list[tuple[Path, bytes | None, int]]
 
 
 def _hook_group(kind: str) -> dict[str, object]:
@@ -34,6 +35,8 @@ def _without_bus_handler(group: object, kind: str) -> object | None:
 
 
 def _read_settings(path: Path) -> dict[str, object]:
+    if path.is_symlink():
+        raise BusError(f"Settings symlink is unsupported; edit its target explicitly: {path}")
     if not path.exists():
         return {}
     try:
@@ -103,19 +106,45 @@ def _update_claude_permission(
     return updated
 
 
-def _write_settings(path: Path, settings: dict[str, object]) -> None:
+def _atomic_write(path: Path, content: bytes, mode: int) -> None:
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    original_mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
-        os.fchmod(descriptor, original_mode)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as file:
-            json.dump(settings, file, indent=2)
-            file.write("\n")
+        os.fchmod(descriptor, mode)
+        with os.fdopen(descriptor, "wb") as file:
+            file.write(content)
         Path(temporary).replace(path)
     finally:
         if Path(temporary).exists():
             Path(temporary).unlink()
+
+
+def _write_settings(path: Path, settings: dict[str, object]) -> None:
+    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
+    content = (json.dumps(settings, indent=2) + "\n").encode()
+    _atomic_write(path, content, mode)
+
+
+def snapshot_host_settings(home: Path) -> SettingsSnapshot:
+    """Capture exact settings bytes for uninstall rollback."""
+    paths = (home / ".codex" / "hooks.json", home / ".claude" / "settings.json")
+    snapshots: SettingsSnapshot = []
+    for path in paths:
+        _read_settings(path)
+        if path.exists():
+            snapshots.append((path, path.read_bytes(), stat.S_IMODE(path.stat().st_mode)))
+        else:
+            snapshots.append((path, None, 0o600))
+    return snapshots
+
+
+def restore_host_settings(snapshots: SettingsSnapshot) -> None:
+    """Restore exact config files after failed tool removal."""
+    for path, content, mode in snapshots:
+        if content is None:
+            path.unlink(missing_ok=True)
+        else:
+            _atomic_write(path, content, mode)
 
 
 def configure_hosts(home: Path, *, install: bool) -> list[Path]:

@@ -151,7 +151,7 @@ def configure_hosts(home: Path, *, install: bool) -> list[Path]:
     """Merge or remove bus-owned hooks in both user settings files."""
     codex_path = home / ".codex" / "hooks.json"
     claude_path = home / ".claude" / "settings.json"
-
+    snapshots = snapshot_host_settings(home)
     codex_settings = _read_settings(codex_path)
     claude_settings = _read_settings(claude_path)
     codex_before = json.dumps(codex_settings, sort_keys=True)
@@ -159,8 +159,12 @@ def configure_hosts(home: Path, *, install: bool) -> list[Path]:
     codex_settings = _update_hooks(codex_settings, codex_path, "codex", install=install)
     claude_settings = _update_hooks(claude_settings, claude_path, "claude", install=install)
     claude_settings = _update_claude_permission(claude_settings, claude_path, install=install)
-    if json.dumps(codex_settings, sort_keys=True) != codex_before:
-        _write_settings(codex_path, codex_settings)
-    if json.dumps(claude_settings, sort_keys=True) != claude_before:
-        _write_settings(claude_path, claude_settings)
+    try:
+        if json.dumps(codex_settings, sort_keys=True) != codex_before:
+            _write_settings(codex_path, codex_settings)
+        if json.dumps(claude_settings, sort_keys=True) != claude_before:
+            _write_settings(claude_path, claude_settings)
+    except OSError:
+        restore_host_settings(snapshots)
+        raise
     return [codex_path, claude_path]

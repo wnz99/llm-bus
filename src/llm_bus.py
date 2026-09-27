@@ -102,10 +102,10 @@ def _configure_host_hooks(*, install: bool) -> None:
         if uv is None:
             raise BusError("uv is required to uninstall the llm-bus tool")
         snapshots = snapshot_host_settings(home)
+        paths = configure_hosts(home, install=False)
         try:
-            paths = configure_hosts(home, install=False)
             subprocess.run([uv, "tool", "uninstall", "llm-bus"], check=True)  # noqa: S603
-        except (BusError, OSError, subprocess.CalledProcessError):
+        except (OSError, subprocess.CalledProcessError):
             restore_host_settings(snapshots)
             raise
     print(json.dumps({"installed": install, "settings": [str(path) for path in paths]}))

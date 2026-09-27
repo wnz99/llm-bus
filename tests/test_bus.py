@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import sqlite3
+import stat
 import subprocess
 from typing import TYPE_CHECKING, cast
 
@@ -206,6 +207,35 @@ def test_install_rejects_symlinked_settings_without_replacing_link(tmp_path: Pat
         configure_hosts(tmp_path, install=True)
     assert codex.is_symlink()
     assert target.read_text() == "{}"
+
+
+def test_failed_second_settings_write_restores_both_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    codex = tmp_path / ".codex" / "hooks.json"
+    claude = tmp_path / ".claude" / "settings.json"
+    codex.parent.mkdir()
+    claude.parent.mkdir()
+    codex.write_text('{"hooks": {}}\n')
+    claude.write_text('{"model": "sonnet"}\n')
+    codex.chmod(0o640)
+    before = [(path.read_bytes(), stat.S_IMODE(path.stat().st_mode)) for path in (codex, claude)]
+    writes = 0
+
+    def fail_second_write(path: Path, content: bytes, mode: int) -> None:
+        nonlocal writes
+        writes += 1
+        if writes == 2:
+            raise OSError("simulated second write failure")
+        path.write_bytes(content)
+        path.chmod(mode)
+
+    monkeypatch.setattr("llm_bus_install._atomic_write", fail_second_write)
+    with pytest.raises(OSError, match="second write failure"):
+        configure_hosts(tmp_path, install=True)
+    assert [
+        (path.read_bytes(), stat.S_IMODE(path.stat().st_mode)) for path in (codex, claude)
+    ] == before
 
 
 def test_uninstall_removes_bus_handler_from_shared_group(tmp_path: Path) -> None:

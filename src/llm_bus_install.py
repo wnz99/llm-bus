@@ -166,6 +166,16 @@ def _group_has_handler(group: object, kind: str) -> bool:
     )
 
 
+def _insertion_index(current: list[object], original: list[object], position: int) -> int:
+    for predecessor in reversed(original[:position]):
+        if predecessor in current:
+            return current.index(predecessor) + 1
+    for successor in original[position + 1 :]:
+        if successor in current:
+            return current.index(successor)
+    return min(position, len(current))
+
+
 def _restore_claude_permission(
     current: dict[str, object], original: dict[str, object], path: Path
 ) -> dict[str, object]:
@@ -175,9 +185,10 @@ def _restore_claude_permission(
     if CLAUDE_ALLOW_RULE not in original_allowed:
         return restored
     current_permissions = _object_at(restored, "permissions", path)
-    current_allowed = cast("list[str]", current_permissions.get("allow", []))
+    current_allowed = cast("list[object]", current_permissions.get("allow", []))
+    original_position = original_allowed.index(CLAUDE_ALLOW_RULE)
     current_allowed.insert(
-        min(original_allowed.index(CLAUDE_ALLOW_RULE), len(current_allowed)), CLAUDE_ALLOW_RULE
+        _insertion_index(current_allowed, original_allowed, original_position), CLAUDE_ALLOW_RULE
     )
     current_permissions["allow"] = current_allowed
     restored["permissions"] = current_permissions
@@ -192,16 +203,15 @@ def _restore_bus_entries(
     original_hooks = _object_at(original, "hooks", path)
     for event in EVENTS:
         groups = list(cast("list[object]", hooks.get(event, [])))
-        for position, original_group in enumerate(
-            cast("list[object]", original_hooks.get(event, []))
-        ):
+        original_groups = cast("list[object]", original_hooks.get(event, []))
+        for position, original_group in enumerate(original_groups):
             if not _group_has_handler(original_group, kind):
                 continue
             without_bus = _without_bus_handler(original_group, kind)
             if without_bus is not None and without_bus in groups:
                 groups[groups.index(without_bus)] = original_group
             else:
-                groups.insert(min(position, len(groups)), original_group)
+                groups.insert(_insertion_index(groups, original_groups, position), original_group)
         if groups:
             hooks[event] = groups
     if hooks:

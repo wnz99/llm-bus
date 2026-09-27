@@ -634,3 +634,56 @@ def test_failed_uninstall_restores_bus_entry_order(
     assert main(["uninstall"]) == 1
     assert json.loads(codex.read_text()) == codex_before
     assert json.loads(claude.read_text()) == claude_before
+
+
+def test_failed_uninstall_keeps_bus_order_with_concurrent_insertions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    codex = tmp_path / ".codex" / "hooks.json"
+    claude = tmp_path / ".claude" / "settings.json"
+    codex.parent.mkdir()
+    claude.parent.mkdir()
+    codex_bus = {"hooks": [{"type": "command", "command": "llm-bus hook codex"}]}
+    claude_bus = {"hooks": [{"type": "command", "command": "llm-bus hook claude"}]}
+    first = {"hooks": [{"type": "command", "command": "first"}]}
+    last = {"hooks": [{"type": "command", "command": "last"}]}
+    concurrent = {"hooks": [{"type": "command", "command": "concurrent"}]}
+    codex.write_text(json.dumps({"hooks": {"SessionStart": [first, codex_bus, last]}}))
+    claude.write_text(
+        json.dumps(
+            {
+                "hooks": {"SessionStart": [first, claude_bus, last]},
+                "permissions": {"allow": ["Bash(git *)", "Bash(llm-bus *)", "Bash(uv *)"]},
+            }
+        )
+    )
+    monkeypatch.setattr("llm_bus.Path.home", lambda: tmp_path)
+
+    def fake_which(_name: str) -> str:
+        return "/usr/local/bin/uv"
+
+    def fail_after_host_change(
+        command: list[str], *, check: bool
+    ) -> subprocess.CompletedProcess[str]:
+        assert check
+        codex.write_text(json.dumps({"hooks": {"SessionStart": [concurrent, first, last]}}))
+        claude.write_text(
+            json.dumps(
+                {
+                    "hooks": {"SessionStart": [concurrent, first, last]},
+                    "permissions": {"allow": ["Bash(ls *)", "Bash(git *)", "Bash(uv *)"]},
+                }
+            )
+        )
+        raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr("llm_bus.shutil.which", fake_which)
+    monkeypatch.setattr("llm_bus.subprocess.run", fail_after_host_change)
+    assert main(["uninstall"]) == 1
+    assert json.loads(codex.read_text()) == {
+        "hooks": {"SessionStart": [concurrent, first, codex_bus, last]}
+    }
+    assert json.loads(claude.read_text()) == {
+        "hooks": {"SessionStart": [concurrent, first, claude_bus, last]},
+        "permissions": {"allow": ["Bash(ls *)", "Bash(git *)", "Bash(llm-bus *)", "Bash(uv *)"]},
+    }

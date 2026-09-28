@@ -1,0 +1,12 @@
+id = "llm-bus.history"
+name = "llm-bus History"
+version = "0.1.0"
+min_herdr_version = "0.9.1"
+description = "Read local llm-bus conversations in a terminal pane"
+platforms = ["linux", "macos"]
+
+[[panes]]
+id = "history"
+title = "llm-bus History"
+placement = "tab"
+command = ["python3", "viewer.py"]

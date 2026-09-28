@@ -55,11 +55,11 @@ docstring-code-format = true
 line-ending = "lf"
 
 [tool.basedpyright]
-include = ["src", "tests"]
+include = ["src", "tests", "plugins/herdr-history"]
 exclude = ["**/__pycache__", "**/.venv", "**/build", "**/dist"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
-extraPaths = ["src"]
+extraPaths = ["src", "plugins/herdr-history"]
 reportAny = "error"
 reportExplicitAny = "error"
 reportImplicitRelativeImport = "error"
@@ -78,7 +78,7 @@ reportUnusedVariable = "error"
 [tool.pytest.ini_options]
 addopts = ["-ra", "--strict-config", "--strict-markers", "--import-mode=importlib"]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "plugins/herdr-history"]
 
 [tool.pylint.main]
 py-version = "3.12"
@@ -115,9 +115,9 @@ score = false
 known_first_party = ["llm_bus", "llm_bus_install", "llm_bus_store"]
 
 [tool.poe.tasks]
-format = "ruff format src tests tools/ci"
-format-check = "ruff format --check src tests tools/ci"
-lint = "ruff check src tests tools/ci"
+format = "ruff format src tests tools/ci plugins/herdr-history"
+format-check = "ruff format --check src tests tools/ci plugins/herdr-history"
+lint = "ruff check src tests tools/ci plugins/herdr-history"
 type-check = "basedpyright"
 pylint = "pylint src tools/ci"
 deptry = "deptry ."

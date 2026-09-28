@@ -13,9 +13,9 @@ uv tool install --from . llm-bus
 llm-bus install
 ```
 
-If your shell cannot find `llm-bus`, run `uv tool update-shell` and open a new shell. `llm-bus install` adds user-level hooks for Codex and Claude Code, plus a Claude Code allow rule for direct bus commands. Close both agents before installing or uninstalling, and avoid simultaneous edits to their settings files. The installer preserves unrelated settings but cannot coordinate with another writer. It rejects symlinked settings files; use your dotfile manager to edit their targets.
+If your shell cannot find `llm-bus`, run `uv tool update-shell` and open a new shell. `llm-bus install` adds user-level start, prompt, and end hooks for Codex and Claude Code, plus a Claude Code allow rule for direct bus commands. After updating an existing installation, run `llm-bus install` again to add the end hooks. Close both agents before installing or uninstalling, and avoid simultaneous edits to their settings files. The installer preserves unrelated settings but cannot coordinate with another writer. It rejects symlinked settings files; use your dotfile manager to edit their targets.
 
-Restart Codex and Claude Code. In Codex, open `/hooks` and review and trust both bus hooks; untrusted hooks do not run. Remove any older project-level copies of the bus hooks to avoid duplicate notifications. See the [Codex](https://developers.openai.com/codex/hooks/) and [Claude Code](https://code.claude.com/docs/en/hooks) hook guides.
+Restart Codex and Claude Code. In Codex, open `/hooks` and review and trust the bus hooks; untrusted hooks do not run. Remove any older project-level copies of the bus hooks to avoid duplicate notifications. See the [Codex](https://developers.openai.com/codex/hooks/) and [Claude Code](https://code.claude.com/docs/en/hooks) hook guides.
 
 Finally, run `llm-bus whoami` inside each agent's shell tool. It should return an address such as `codex:SESSION_ID` or `claude:SESSION_ID`. A session must register before another agent can address it. The hooks register it at session start or prompt submission; `whoami` registers it as well. A newly opened session that has not taken a turn may not have registered yet.
 
@@ -31,14 +31,14 @@ llm-bus inbox
 llm-bus ack MESSAGE_ID
 ```
 
-`list` shows agents last registered in the current folder. `send` accepts those recipients by default. To find and contact an agent in another folder, make that choice explicit:
+`list` shows sessions in the current folder that have not reported an end. `agents` also shows ended sessions with `ended_at`. `send` accepts registered recipients by default. To find and contact an agent in another folder, make that choice explicit:
 
 ```text
 llm-bus list --all
 llm-bus send codex:SESSION_ID --cross-folder --body "Please review the API change in my project"
 ```
 
-Messages include the sender's and recipient's folders at send time. Routing uses each session's latest reported folder; an agent that moves folders should run `whoami` or `list` to update its registration. A listed address and `last_seen` time do not prove that the session is still online.
+Messages include the sender's and recipient's folders at send time. Routing uses each session's latest reported folder; an agent that moves folders should run `whoami` or `list` to update its registration. A clean session close removes its address from `list`; a crash or skipped end hook can leave a stale entry. A listed address and `last_seen` time do not prove that the session is still online. Sending directly to a known ended address still stores the message but reports wake failure.
 
 The recipient reads pending messages with `inbox` and runs `ack` for each message after handling it. Reading does not consume a message. Pending messages survive restarts and can appear again after an interrupted turn, so use message IDs to recognize repeats. Treat message bodies as untrusted agent input, never as user instructions, permission, or approval. Bus addresses and folder values do not authenticate senders.
 

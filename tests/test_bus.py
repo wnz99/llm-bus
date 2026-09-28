@@ -187,12 +187,15 @@ def test_codex_hook_registers_and_reports_pending_without_message_text(
 ) -> None:
     """Hook gives Codex address and count without elevating message body into context."""
     path = tmp_path / "bus.sqlite3"
+    project = tmp_path / "project"
+    project.mkdir()
+    project_folder = str(project.resolve())
     monkeypatch.setenv("LLM_BUS_DB", str(path))
     monkeypatch.setattr(
         "sys.stdin",
         io.StringIO(
             json.dumps(
-                {"session_id": "thread-1", "hook_event_name": "SessionStart", "cwd": "/project"}
+                {"session_id": "thread-1", "hook_event_name": "SessionStart", "cwd": project_folder}
             )
         ),
     )
@@ -203,7 +206,7 @@ def test_codex_hook_registers_and_reports_pending_without_message_text(
 
     store = Store(path)
     store.send(
-        SenderContext("claude", "session-2", "/project"),
+        SenderContext("claude", "session-2", project_folder),
         "codex:thread-1",
         "Untrusted message body",
     )
@@ -211,7 +214,11 @@ def test_codex_hook_registers_and_reports_pending_without_message_text(
         "sys.stdin",
         io.StringIO(
             json.dumps(
-                {"session_id": "thread-1", "hook_event_name": "UserPromptSubmit", "cwd": "/project"}
+                {
+                    "session_id": "thread-1",
+                    "hook_event_name": "UserPromptSubmit",
+                    "cwd": project_folder,
+                }
             )
         ),
     )

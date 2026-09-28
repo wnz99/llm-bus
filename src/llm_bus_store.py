@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sqlite3
+import subprocess
 import sys
 from contextlib import closing, contextmanager
 from pathlib import Path
@@ -18,11 +20,15 @@ MAX_MESSAGE_BYTES = 64 * 1024
 MAX_BATCH = 100
 DB_ENV = "LLM_BUS_DB"
 WINDOWS_DATA_ENV = "LOCALAPPDATA"
+GIT_SCOPE_ENV_OVERRIDES = frozenset(
+    {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"}  # pylint: disable=clean-code-business-policy-literal
+)
 SCHEMA = """
     CREATE TABLE IF NOT EXISTS agents (
         address TEXT PRIMARY KEY,
         kind TEXT NOT NULL,
         project TEXT NOT NULL,
+        scope TEXT NOT NULL,
         last_seen TEXT NOT NULL,
         ended_at TEXT
     );
@@ -102,6 +108,32 @@ def address(kind: str, session_id: str) -> str:
     return f"{kind}:{session_id}"
 
 
+def routing_scope(project: str) -> str:
+    """Use one identity for linked Git worktrees, otherwise the folder path."""
+    folder = Path(project).resolve()
+    git = shutil.which("git")
+    if git is None:
+        return str(folder)
+    environment = {
+        key: value for key, value in os.environ.items() if key not in GIT_SCOPE_ENV_OVERRIDES
+    }
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            [git, "-C", str(folder), "rev-parse", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+            env=environment,
+        )
+    except (OSError, subprocess.TimeoutExpired, UnicodeError):
+        return str(folder)
+    common_dir = result.stdout.strip()
+    if result.returncode or not common_dir:
+        return str(folder)
+    return f"git:{(folder / common_dir).resolve()}"
+
+
 class Store:
     """Durable messages; inbox reads leave items pending until acknowledged."""
 
@@ -122,6 +154,17 @@ class Store:
             }
             if "ended_at" not in agent_columns:
                 db.execute("ALTER TABLE agents ADD COLUMN ended_at TEXT")
+            if "scope" not in agent_columns:
+                db.execute("ALTER TABLE agents ADD COLUMN scope TEXT")
+                projects = cast(
+                    "list[tuple[str]]",
+                    db.execute("SELECT DISTINCT project FROM agents").fetchall(),
+                )
+                for (project,) in projects:
+                    db.execute(
+                        "UPDATE agents SET scope = ? WHERE project = ?",
+                        (routing_scope(project), project),
+                    )
             columns = {
                 row[1]
                 for row in cast(
@@ -161,18 +204,22 @@ class Store:
 
     def register(self, kind: str, session_id: str, project: str) -> str:
         """Upsert session address without deleting its pending messages."""
+        scope = routing_scope(project)
         with self._transaction() as db:
-            return self._upsert_agent(db, kind, session_id, project)
+            return self._upsert_agent(db, kind, session_id, project, scope)
 
     @staticmethod
-    def _upsert_agent(db: sqlite3.Connection, kind: str, session_id: str, project: str) -> str:
+    def _upsert_agent(
+        db: sqlite3.Connection, kind: str, session_id: str, project: str, scope: str
+    ) -> str:
         agent_address = address(kind, session_id)
         db.execute(
-            "INSERT INTO agents(address, kind, project, last_seen, ended_at) "
-            "VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL) "
+            "INSERT INTO agents(address, kind, project, scope, last_seen, ended_at) "
+            "VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL) "
             "ON CONFLICT(address) DO UPDATE SET project = excluded.project, "
+            "scope = excluded.scope, "
             "last_seen = excluded.last_seen, ended_at = NULL",
-            (agent_address, kind, project),
+            (agent_address, kind, project, scope),
         )
         return agent_address
 
@@ -190,8 +237,8 @@ class Store:
         clauses = ["ended_at IS NULL"]
         parameters: list[str] = []
         if project is not None:
-            clauses.append("project = ?")
-            parameters.append(project)
+            clauses.append("scope = ?")
+            parameters.append(routing_scope(project))
         return self._read_agents(clauses, parameters)
 
     def all_agents(self) -> list[Agent]:
@@ -236,18 +283,25 @@ class Store:
             raise BusError("Message body cannot be empty")
         if len(body.encode("utf-8")) > MAX_MESSAGE_BYTES:
             raise BusError("Message body exceeds 64 KiB")
+        sender_scope = routing_scope(sender_context.project)
         with self._transaction() as db:
             sender = self._upsert_agent(
-                db, sender_context.kind, sender_context.session_id, sender_context.project
+                db,
+                sender_context.kind,
+                sender_context.session_id,
+                sender_context.project,
+                sender_scope,
             )
             recipient_row = cast(
-                "tuple[str] | None",
-                db.execute("SELECT project FROM agents WHERE address = ?", (recipient,)).fetchone(),
+                "tuple[str, str] | None",
+                db.execute(
+                    "SELECT project, scope FROM agents WHERE address = ?", (recipient,)
+                ).fetchone(),
             )
             if recipient_row is None:
                 raise BusError(f"Unknown recipient {recipient!r}; run `llm-bus list` first")
-            if sender_context.project != recipient_row[0] and not cross_folder:
-                raise BusError("Recipient is in another folder; use --cross-folder to send")
+            if sender_scope != recipient_row[1] and not cross_folder:
+                raise BusError("Recipient is in another repository or folder; use --cross-folder")
             cursor = db.execute(
                 "INSERT INTO messages(sender, recipient, body, sender_cwd, recipient_cwd) "
                 "VALUES (?, ?, ?, ?, ?)",

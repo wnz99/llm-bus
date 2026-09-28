@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
 import sqlite3
 import stat
 import subprocess
@@ -73,6 +74,52 @@ def test_folder_scope_requires_explicit_cross_folder_send(tmp_path: Path) -> Non
     assert store.inbox(other)[0]["recipient_cwd"] == "/other"
 
 
+def test_linked_worktrees_share_routing_scope_but_keep_their_folders(tmp_path: Path) -> None:
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("Git is required for worktree routing")
+    repo = tmp_path / "repo"
+    worktree = tmp_path / "worktree"
+    unrelated = tmp_path / "unrelated"
+    subprocess.run([git, "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        [
+            git,
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "initial",
+        ],
+        check=True,
+    )
+    subprocess.run(
+        [git, "-C", str(repo), "worktree", "add", "-q", "--detach", str(worktree)],
+        check=True,
+    )
+    subprocess.run([git, "init", "-q", str(unrelated)], check=True)
+    nested = worktree / "nested"
+    nested.mkdir()
+
+    store = Store(tmp_path / "bus.sqlite3")
+    recipient = store.register("claude", "worktree", str(nested))
+    foreign = store.register("claude", "foreign", str(unrelated))
+    assert recipient in {agent["address"] for agent in store.agents(str(repo))}
+    assert foreign not in {agent["address"] for agent in store.agents(str(repo))}
+
+    sender = SenderContext("codex", "main", str(repo))
+    sent = store.send(sender, recipient, "same repository")
+    assert sent["sender_cwd"] == str(repo)
+    assert sent["recipient_cwd"] == str(nested)
+    with pytest.raises(BusError, match="--cross-folder"):
+        store.send(sender, foreign, "other repository")
+
+
 def test_existing_database_gets_nullable_sender_folder(tmp_path: Path) -> None:
     path = tmp_path / "bus.sqlite3"
     with sqlite3.connect(path) as db:
@@ -88,6 +135,54 @@ def test_existing_database_gets_nullable_sender_folder(tmp_path: Path) -> None:
     assert migrated.inbox("claude:two")[0]["sender_cwd"] is None
     assert migrated.inbox("claude:two")[0]["recipient_cwd"] is None
     assert migrated.all_agents()[0]["ended_at"] is None
+    assert len(migrated.agents("/one")) == 2
+
+
+def test_existing_git_worktree_agents_get_repository_scope(tmp_path: Path) -> None:
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("Git is required for worktree routing")
+    repo = tmp_path / "repo"
+    worktree = tmp_path / "worktree"
+    subprocess.run([git, "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        [
+            git,
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "initial",
+        ],
+        check=True,
+    )
+    subprocess.run(
+        [git, "-C", str(repo), "worktree", "add", "-q", "--detach", str(worktree)],
+        check=True,
+    )
+    path = tmp_path / "legacy.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "CREATE TABLE agents (address TEXT PRIMARY KEY, kind TEXT, project TEXT, "
+            "last_seen TEXT NOT NULL, ended_at TEXT)"
+        )
+        db.executemany(
+            "INSERT INTO agents VALUES (?, 'codex', ?, 'now', NULL)",
+            [("codex:main", str(repo)), ("codex:linked", str(worktree))],
+        )
+
+    migrated = Store(path)
+    assert {agent["address"] for agent in migrated.agents(str(repo))} == {
+        "codex:main",
+        "codex:linked",
+    }
+    sent = migrated.send(SenderContext("codex", "main", str(repo)), "codex:linked", "hello")
+    assert sent["recipient_cwd"] == str(worktree)
 
 
 def test_session_end_hides_peer_but_preserves_pending_message(tmp_path: Path) -> None:

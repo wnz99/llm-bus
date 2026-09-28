@@ -31,3 +31,18 @@ jobs:
       - run: uv python install 3.12
       - run: uv sync --frozen
       - run: uv run --frozen poe check
+
+  portability:
+    name: Portability / ${{ matrix.os }}
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      - run: uv run --frozen pytest

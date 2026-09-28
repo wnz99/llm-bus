@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import sys
 from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple, TypedDict, cast
@@ -16,6 +17,7 @@ SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 MAX_MESSAGE_BYTES = 64 * 1024
 MAX_BATCH = 100
 DB_ENV = "LLM_BUS_DB"
+WINDOWS_DATA_ENV = "LOCALAPPDATA"
 SCHEMA = """
     CREATE TABLE IF NOT EXISTS agents (
         address TEXT PRIMARY KEY,
@@ -29,6 +31,7 @@ SCHEMA = """
         recipient TEXT NOT NULL REFERENCES agents(address),
         body TEXT NOT NULL,
         sender_cwd TEXT,
+        recipient_cwd TEXT,
         sent_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
         acknowledged_at TEXT
     );
@@ -58,7 +61,14 @@ class Message(TypedDict):
     recipient: str
     body: str
     sender_cwd: str | None
+    recipient_cwd: str | None
     sent_at: str
+
+
+class HistoryMessage(Message):
+    """Stored message with delivery state for read-only history views."""
+
+    acknowledged_at: str | None
 
 
 class SenderContext(NamedTuple):
@@ -74,6 +84,10 @@ def default_path() -> Path:
     configured = os.environ.get(DB_ENV)
     if configured:
         return Path(configured).expanduser()
+    if sys.platform == "win32":
+        local_data = os.environ.get(WINDOWS_DATA_ENV)
+        base = Path(local_data) if local_data else Path.home() / "AppData" / "Local"
+        return base / "llm-bus" / "bus.sqlite3"
     return Path.home() / ".local" / "share" / "llm-bus" / "bus.sqlite3"
 
 
@@ -106,6 +120,14 @@ class Store:
             }
             if "sender_cwd" not in columns:
                 db.execute("ALTER TABLE messages ADD COLUMN sender_cwd TEXT")
+            if "recipient_cwd" not in columns:
+                db.execute("ALTER TABLE messages ADD COLUMN recipient_cwd TEXT")
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS messages_sender_folder ON messages(sender_cwd, id)"
+            )
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS msg_recipient_folder ON messages(recipient_cwd, id)"
+            )
             db.commit()
         self.path.chmod(0o600)
 
@@ -185,16 +207,17 @@ class Store:
             if sender_context.project != recipient_row[0] and not cross_folder:
                 raise BusError("Recipient is in another folder; use --cross-folder to send")
             cursor = db.execute(
-                "INSERT INTO messages(sender, recipient, body, sender_cwd) VALUES (?, ?, ?, ?)",
-                (sender, recipient, body, sender_context.project),
+                "INSERT INTO messages(sender, recipient, body, sender_cwd, recipient_cwd) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (sender, recipient, body, sender_context.project, recipient_row[0]),
             )
             message_id = cursor.lastrowid
             if message_id is None:
                 raise RuntimeError("SQLite did not return a message ID")
             row = cast(
-                "tuple[int, str, str, str, str | None, str] | None",
+                "tuple[int, str, str, str, str | None, str | None, str] | None",
                 db.execute(
-                    "SELECT id, sender, recipient, body, sender_cwd, sent_at "
+                    "SELECT id, sender, recipient, body, sender_cwd, recipient_cwd, sent_at "
                     "FROM messages WHERE id = ?",
                     (message_id,),
                 ).fetchone(),
@@ -207,7 +230,8 @@ class Store:
             recipient=row[2],
             body=row[3],
             sender_cwd=row[4],
-            sent_at=row[5],
+            recipient_cwd=row[5],
+            sent_at=row[6],
         )
 
     def inbox(self, recipient: str, limit: int = MAX_BATCH) -> list[Message]:
@@ -216,9 +240,10 @@ class Store:
             raise BusError("Inbox limit must be between 1 and 100")
         with closing(self._connect()) as db:
             rows = cast(
-                "list[tuple[int, str, str, str, str | None, str]]",
+                "list[tuple[int, str, str, str, str | None, str | None, str]]",
                 db.execute(
-                    "SELECT id, sender, recipient, body, sender_cwd, sent_at FROM messages "
+                    "SELECT id, sender, recipient, body, sender_cwd, recipient_cwd, sent_at "
+                    "FROM messages "
                     "WHERE recipient = ? AND acknowledged_at IS NULL ORDER BY id LIMIT ?",
                     (recipient, limit),
                 ).fetchall(),
@@ -230,7 +255,60 @@ class Store:
                 recipient=row[2],
                 body=row[3],
                 sender_cwd=row[4],
-                sent_at=row[5],
+                recipient_cwd=row[5],
+                sent_at=row[6],
+            )
+            for row in rows
+        ]
+
+    def history(
+        self,
+        *,
+        folder: str | None,
+        before: int | None = None,
+        after: int | None = None,
+        limit: int = MAX_BATCH,
+    ) -> list[HistoryMessage]:
+        """Read stored messages, newest page first or new items after a cursor."""
+        if not 1 <= limit <= MAX_BATCH:
+            raise BusError("History limit must be between 1 and 100")
+        if (before is not None and before < 1) or (after is not None and after < 0):
+            raise BusError("History cursors must be nonnegative message IDs")
+        if before is not None and after is not None:
+            raise BusError("Use either --before or --after, not both")
+        clauses: list[str] = []
+        parameters: list[str | int] = []
+        if folder is not None:
+            clauses.append("(sender_cwd = ? OR recipient_cwd = ?)")
+            parameters.extend((folder, folder))
+        if before is not None:
+            clauses.append("id < ?")
+            parameters.append(before)
+        if after is not None:
+            clauses.append("id > ?")
+            parameters.append(after)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        order = "ASC" if after is not None else "DESC"
+        parameters.append(limit)
+        with closing(self._connect()) as db:
+            rows = cast(
+                "list[tuple[int, str, str, str, str | None, str | None, str, str | None]]",
+                db.execute(
+                    "SELECT id, sender, recipient, body, sender_cwd, recipient_cwd, "  # noqa: S608
+                    f"sent_at, acknowledged_at FROM messages{where} ORDER BY id {order} LIMIT ?",
+                    parameters,
+                ).fetchall(),
+            )
+        return [
+            HistoryMessage(
+                id=row[0],
+                sender=row[1],
+                recipient=row[2],
+                body=row[3],
+                sender_cwd=row[4],
+                recipient_cwd=row[5],
+                sent_at=row[6],
+                acknowledged_at=row[7],
             )
             for row in rows
         ]

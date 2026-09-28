@@ -31,7 +31,7 @@ llm-bus inbox
 llm-bus ack MESSAGE_ID
 ```
 
-`list` shows sessions in the current Git repository, including its linked worktrees, that have not reported an end. Outside Git, it uses the current folder. `agents` also shows ended sessions with `ended_at`. `send` accepts registered recipients in the same repository or folder by default. To contact an agent in another repository, make that choice explicit:
+`list` shows sessions in the current Git repository, including its linked worktrees, that have not reported an end. Outside Git, it uses the current folder. `agents` also shows ended sessions with `ended_at`. `send` accepts registered recipients in the same repository or folder by default. To contact an agent in another repository or folder, make that choice explicit:
 
 ```text
 llm-bus list --all

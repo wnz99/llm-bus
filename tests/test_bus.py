@@ -74,7 +74,9 @@ def test_folder_scope_requires_explicit_cross_folder_send(tmp_path: Path) -> Non
     assert store.inbox(other)[0]["recipient_cwd"] == "/other"
 
 
-def test_linked_worktrees_share_routing_scope_but_keep_their_folders(tmp_path: Path) -> None:
+def test_linked_worktrees_share_routing_scope_but_keep_their_folders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     git = shutil.which("git")
     if git is None:
         pytest.skip("Git is required for worktree routing")
@@ -105,6 +107,7 @@ def test_linked_worktrees_share_routing_scope_but_keep_their_folders(tmp_path: P
     subprocess.run([git, "init", "-q", str(unrelated)], check=True)
     nested = worktree / "nested"
     nested.mkdir()
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(worktree))
 
     store = Store(tmp_path / "bus.sqlite3")
     recipient = store.register("claude", "worktree", str(nested))
@@ -138,7 +141,9 @@ def test_existing_database_gets_nullable_sender_folder(tmp_path: Path) -> None:
     assert len(migrated.agents("/one")) == 2
 
 
-def test_existing_git_worktree_agents_get_repository_scope(tmp_path: Path) -> None:
+def test_existing_git_worktree_agents_get_repository_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     git = shutil.which("git")
     if git is None:
         pytest.skip("Git is required for worktree routing")
@@ -165,6 +170,8 @@ def test_existing_git_worktree_agents_get_repository_scope(tmp_path: Path) -> No
         [git, "-C", str(repo), "worktree", "add", "-q", "--detach", str(worktree)],
         check=True,
     )
+    nested = worktree / "nested"
+    nested.mkdir()
     path = tmp_path / "legacy.sqlite3"
     with sqlite3.connect(path) as db:
         db.execute(
@@ -173,16 +180,17 @@ def test_existing_git_worktree_agents_get_repository_scope(tmp_path: Path) -> No
         )
         db.executemany(
             "INSERT INTO agents VALUES (?, 'codex', ?, 'now', NULL)",
-            [("codex:main", str(repo)), ("codex:linked", str(worktree))],
+            [("codex:main", str(repo)), ("codex:linked", str(nested))],
         )
 
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(worktree))
     migrated = Store(path)
     assert {agent["address"] for agent in migrated.agents(str(repo))} == {
         "codex:main",
         "codex:linked",
     }
     sent = migrated.send(SenderContext("codex", "main", str(repo)), "codex:linked", "hello")
-    assert sent["recipient_cwd"] == str(worktree)
+    assert sent["recipient_cwd"] == str(nested)
 
 
 def test_session_end_hides_peer_but_preserves_pending_message(tmp_path: Path) -> None:

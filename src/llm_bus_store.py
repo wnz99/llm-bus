@@ -20,9 +20,7 @@ MAX_MESSAGE_BYTES = 64 * 1024
 MAX_BATCH = 100
 DB_ENV = "LLM_BUS_DB"
 WINDOWS_DATA_ENV = "LOCALAPPDATA"
-GIT_SCOPE_ENV_OVERRIDES = frozenset(
-    {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"}  # pylint: disable=clean-code-business-policy-literal
-)
+GIT_ENV_PREFIX = "GIT_"  # pylint: disable=clean-code-business-policy-literal
 SCHEMA = """
     CREATE TABLE IF NOT EXISTS agents (
         address TEXT PRIMARY KEY,
@@ -115,7 +113,7 @@ def routing_scope(project: str) -> str:
     if git is None:
         return str(folder)
     environment = {
-        key: value for key, value in os.environ.items() if key not in GIT_SCOPE_ENV_OVERRIDES
+        key: value for key, value in os.environ.items() if not key.startswith(GIT_ENV_PREFIX)
     }
     try:
         result = subprocess.run(  # noqa: S603 - fixed argv, no shell

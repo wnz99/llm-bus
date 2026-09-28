@@ -227,6 +227,7 @@ def test_codex_hook_registers_and_reports_pending_without_message_text(
         "hookSpecificOutput"
     ]["additionalContext"]
     assert "1 pending message" in notice
+    assert "wake.status" in notice
     assert "Untrusted message body" not in notice
 
 
@@ -537,6 +538,14 @@ def test_cli_filters_peers_and_requires_cross_folder_flag(
     second.mkdir()
     monkeypatch.setenv("LLM_BUS_DB", str(tmp_path / "bus.sqlite3"))
     monkeypatch.setenv("CODEX_THREAD_ID", "codex-one")
+
+    wakes: list[tuple[str, int]] = []
+
+    def fake_wake(_recipient: str, _message_id: int) -> dict[str, str]:
+        wakes.append((_recipient, _message_id))
+        return {"status": "requested"}
+
+    monkeypatch.setattr("llm_bus.wake", fake_wake)
     monkeypatch.chdir(first)
     assert main(["whoami"]) == 0
     capsys.readouterr()
@@ -552,8 +561,67 @@ def test_cli_filters_peers_and_requires_cross_folder_flag(
     assert len(cast("list[object]", json.loads(capsys.readouterr().out))) == 2
     assert main(["send", "codex:codex-one", "--body", "hello"]) == 1
     assert "--cross-folder" in capsys.readouterr().err
+    assert wakes == []
     assert main(["send", "codex:codex-one", "--body", "hello", "--cross-folder"]) == 0
-    assert json.loads(capsys.readouterr().out)["sender_cwd"] == str(second)
+    sent = cast("dict[str, object]", json.loads(capsys.readouterr().out))
+    assert sent["sender_cwd"] == str(second)
+    assert wakes == [("codex:codex-one", sent["id"])]
+
+
+def test_send_keeps_message_when_wake_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    folder = tmp_path / "project"
+    folder.mkdir()
+    path = tmp_path / "bus.sqlite3"
+    recipient = Store(path).register("codex", "recipient", str(folder))
+    monkeypatch.setenv("LLM_BUS_DB", str(path))
+    monkeypatch.setenv("CODEX_THREAD_ID", "sender")
+    monkeypatch.chdir(folder)
+    called: list[tuple[str, int]] = []
+
+    def fail_wake(address: str, message_id: int) -> dict[str, str]:
+        called.append((address, message_id))
+        return {"status": "failed", "via": "codex queue", "reason": "not reachable"}
+
+    monkeypatch.setattr("llm_bus.wake", fail_wake)
+    assert main(["send", recipient, "--body", "Please reply"]) == 0
+    output = capsys.readouterr()
+    sent = cast("dict[str, object]", json.loads(output.out))
+    assert sent["wake"] == {"status": "failed", "via": "codex queue", "reason": "not reachable"}
+    assert "stored; wake failed" in output.err
+    assert called == [(recipient, sent["id"])]
+    pending = Store(path).inbox(recipient)
+    assert len(pending) == 1
+    assert pending[0]["id"] == sent["id"]
+
+
+def test_send_reports_message_id_when_wake_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    folder = tmp_path / "project"
+    folder.mkdir()
+    path = tmp_path / "bus.sqlite3"
+    recipient = Store(path).register("codex", "recipient", str(folder))
+    monkeypatch.setenv("LLM_BUS_DB", str(path))
+    monkeypatch.setenv("CODEX_THREAD_ID", "sender")
+    monkeypatch.chdir(folder)
+
+    def broken_wake(_address: str, _message_id: int) -> dict[str, str]:
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte")
+
+    monkeypatch.setattr("llm_bus.wake", broken_wake)
+    assert main(["send", recipient, "--body", "Please reply"]) == 0
+    output = capsys.readouterr()
+    sent = cast("dict[str, object]", json.loads(output.out))
+    assert sent["id"] == 1
+    assert sent["wake"] == {
+        "status": "unknown",
+        "via": "host wake",
+        "reason": "wake adapter raised UnicodeDecodeError",
+    }
+    assert "message #1 stored; wake unknown" in output.err
+    assert len(Store(path).inbox(recipient)) == 1
 
 
 def test_uninstall_removes_hooks_then_uv_tool(

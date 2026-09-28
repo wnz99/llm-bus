@@ -3,6 +3,9 @@ import subprocess
 from subprocess import CompletedProcess
 
 import pytest
+
+pytest.importorskip("curses")
+
 import viewer
 
 

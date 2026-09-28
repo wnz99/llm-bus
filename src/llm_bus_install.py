@@ -13,7 +13,13 @@ from llm_bus_store import BusError
 
 EVENTS = ("SessionStart", "UserPromptSubmit")
 CLAUDE_ALLOW_RULE = "Bash(llm-bus *)"
+CODEX_HOME_ENV = "CODEX_HOME"
 type SettingsSnapshot = list[tuple[Path, bytes | None, int]]
+
+
+def _codex_settings_path(home: Path) -> Path:
+    codex_home = os.environ.get(CODEX_HOME_ENV)
+    return (Path(codex_home).expanduser() if codex_home else home / ".codex") / "hooks.json"
 
 
 def _hook_group(kind: str) -> dict[str, object]:
@@ -124,7 +130,7 @@ def _atomic_write(path: Path, content: bytes, mode: int, expected: bytes | None)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
-        os.fchmod(descriptor, mode)
+        Path(temporary).chmod(mode)
         with os.fdopen(descriptor, "wb") as file:
             file.write(content)
         if _current_bytes(path) != expected:
@@ -147,7 +153,7 @@ def _write_settings(
 
 def snapshot_host_settings(home: Path) -> SettingsSnapshot:
     """Capture both host settings from one validated read per file."""
-    paths = (home / ".codex" / "hooks.json", home / ".claude" / "settings.json")
+    paths = (_codex_settings_path(home), home / ".claude" / "settings.json")
     snapshots: SettingsSnapshot = []
     for path in paths:
         content = _current_bytes(path)
@@ -268,7 +274,7 @@ def configure_hosts(
     home: Path, *, install: bool, snapshots: SettingsSnapshot | None = None
 ) -> list[Path]:
     """Merge or remove bus-owned hooks in both user settings files."""
-    codex_path = home / ".codex" / "hooks.json"
+    codex_path = _codex_settings_path(home)
     claude_path = home / ".claude" / "settings.json"
     if snapshots is None:
         snapshots = snapshot_host_settings(home)

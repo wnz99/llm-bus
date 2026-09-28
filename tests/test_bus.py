@@ -13,7 +13,7 @@ import pytest
 
 from llm_bus import host_identity, main
 from llm_bus_install import configure_hosts
-from llm_bus_store import BusError, SenderContext, Store
+from llm_bus_store import BusError, SenderContext, Store, default_path
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -30,6 +30,7 @@ def test_messages_survive_reopen_until_recipient_acknowledges(tmp_path: Path) ->
         SenderContext("codex", "codex-session", "/project"), claude, "Review migration"
     )
     assert sent["sender_cwd"] == "/project"
+    assert sent["recipient_cwd"] == "/project"
     reopened = Store(path)
     assert reopened.inbox(claude) == [sent]
     assert reopened.inbox(claude) == [sent]
@@ -65,8 +66,11 @@ def test_folder_scope_requires_explicit_cross_folder_send(tmp_path: Path) -> Non
         store.send(SenderContext("codex", "one", "/one"), other, "hello")
     sent = store.send(SenderContext("codex", "one", "/one"), other, "hello", cross_folder=True)
     assert sent["sender_cwd"] == "/one"
+    assert sent["recipient_cwd"] == "/other"
     store.register("codex", "one", "/new-location")
+    store.register("claude", "three", "/new-location")
     assert store.inbox(other)[0]["sender_cwd"] == "/one"
+    assert store.inbox(other)[0]["recipient_cwd"] == "/other"
 
 
 def test_existing_database_gets_nullable_sender_folder(tmp_path: Path) -> None:
@@ -81,6 +85,81 @@ def test_existing_database_gets_nullable_sender_folder(tmp_path: Path) -> None:
             "INSERT INTO messages VALUES (1, 'codex:one', 'claude:two', 'old', 'now', NULL);"
         )
     assert Store(path).inbox("claude:two")[0]["sender_cwd"] is None
+    assert Store(path).inbox("claude:two")[0]["recipient_cwd"] is None
+
+
+def test_default_database_path_uses_windows_local_app_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("LLM_BUS_DB", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr("llm_bus_store.sys.platform", "win32")
+    assert default_path() == tmp_path / "llm-bus" / "bus.sqlite3"
+    monkeypatch.delenv("LOCALAPPDATA")
+    monkeypatch.setattr("llm_bus_store.Path.home", lambda: tmp_path)
+    assert default_path() == tmp_path / "AppData" / "Local" / "llm-bus" / "bus.sqlite3"
+
+
+def test_history_preserves_status_and_send_time_folders(tmp_path: Path) -> None:
+    store = Store(tmp_path / "bus.sqlite3")
+    recipient = store.register("claude", "two", "/other")
+    first = store.send(
+        SenderContext("codex", "one", "/first"), recipient, "first", cross_folder=True
+    )
+    second = store.send(
+        SenderContext("codex", "one", "/first"), recipient, "second", cross_folder=True
+    )
+    unrelated = store.register("codex", "three", "/third")
+    third = store.send(SenderContext("claude", "four", "/third"), unrelated, "third")
+    store.acknowledge(recipient, [first["id"]])
+    store.register("claude", "two", "/moved")
+
+    assert [item["id"] for item in store.history(folder="/first")] == [second["id"], first["id"]]
+    assert [item["id"] for item in store.history(folder="/other")] == [second["id"], first["id"]]
+    assert store.history(folder="/moved") == []
+    assert [item["id"] for item in store.history(folder=None, limit=2)] == [
+        third["id"],
+        second["id"],
+    ]
+    assert [item["id"] for item in store.history(folder=None, before=third["id"])] == [
+        second["id"],
+        first["id"],
+    ]
+    assert [item["id"] for item in store.history(folder=None, after=first["id"])] == [
+        second["id"],
+        third["id"],
+    ]
+    assert store.history(folder="/first")[1]["acknowledged_at"] is not None
+    assert store.history(folder="/first")[0]["acknowledged_at"] is None
+    assert store.inbox(recipient) == [second]
+
+
+def test_history_cli_needs_no_agent_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    folder = tmp_path / "project"
+    folder.mkdir()
+    monkeypatch.setenv("LLM_BUS_DB", str(tmp_path / "bus.sqlite3"))
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("CODEX_SESSION_ID", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    store = Store(tmp_path / "bus.sqlite3")
+    recipient = store.register("claude", "two", str(folder))
+    sent = store.send(SenderContext("codex", "one", str(folder)), recipient, "hello")
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["history"]) == 0
+    assert json.loads(capsys.readouterr().out) == []
+    assert main(["history", "--folder", str(folder)]) == 0
+    assert json.loads(capsys.readouterr().out)[0]["id"] == sent["id"]
+    assert main(["history", "--all", "--after", "0"]) == 0
+    assert json.loads(capsys.readouterr().out)[0]["recipient_cwd"] == str(folder)
+    assert main(["agents"]) == 0
+    agents = cast("list[dict[str, object]]", json.loads(capsys.readouterr().out))
+    assert {agent["address"] for agent in agents} == {"codex:one", "claude:two"}
+    assert {agent["project"] for agent in agents} == {str(folder)}
+    assert main(["history", "--all", "--limit", "0"]) == 1
+    assert "History limit" in capsys.readouterr().err
 
 
 def test_mixed_acknowledgement_batch_rolls_back(tmp_path: Path) -> None:
@@ -108,12 +187,15 @@ def test_codex_hook_registers_and_reports_pending_without_message_text(
 ) -> None:
     """Hook gives Codex address and count without elevating message body into context."""
     path = tmp_path / "bus.sqlite3"
+    project = tmp_path / "project"
+    project.mkdir()
+    project_folder = str(project.resolve())
     monkeypatch.setenv("LLM_BUS_DB", str(path))
     monkeypatch.setattr(
         "sys.stdin",
         io.StringIO(
             json.dumps(
-                {"session_id": "thread-1", "hook_event_name": "SessionStart", "cwd": "/project"}
+                {"session_id": "thread-1", "hook_event_name": "SessionStart", "cwd": project_folder}
             )
         ),
     )
@@ -124,7 +206,7 @@ def test_codex_hook_registers_and_reports_pending_without_message_text(
 
     store = Store(path)
     store.send(
-        SenderContext("claude", "session-2", "/project"),
+        SenderContext("claude", "session-2", project_folder),
         "codex:thread-1",
         "Untrusted message body",
     )
@@ -132,7 +214,11 @@ def test_codex_hook_registers_and_reports_pending_without_message_text(
         "sys.stdin",
         io.StringIO(
             json.dumps(
-                {"session_id": "thread-1", "hook_event_name": "UserPromptSubmit", "cwd": "/project"}
+                {
+                    "session_id": "thread-1",
+                    "hook_event_name": "UserPromptSubmit",
+                    "cwd": project_folder,
+                }
             )
         ),
     )
@@ -188,6 +274,15 @@ def test_install_and_uninstall_preserve_other_host_settings(tmp_path: Path) -> N
         "model": "sonnet",
         "permissions": {"allow": ["Bash(git *)"]},
     }
+
+
+def test_install_respects_codex_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    codex_home = tmp_path / "custom-codex"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    configure_hosts(tmp_path, install=True)
+    assert "llm-bus hook codex" in (codex_home / "hooks.json").read_text()
+    assert not (tmp_path / ".codex" / "hooks.json").exists()
+    configure_hosts(tmp_path, install=False)
 
 
 def test_uninstall_removes_existing_matching_bus_settings(tmp_path: Path) -> None:

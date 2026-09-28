@@ -42,6 +42,7 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("whoami", help="Show this session's bus address")
     peers = commands.add_parser("list", help="List agents in this folder")
     peers.add_argument("--all", action="store_true", help="Include agents in other folders")
+    commands.add_parser("agents", help="Read all registered agents without a host session")
     send = commands.add_parser("send", help="Send text to a registered agent")
     send.add_argument("to", help="Recipient address from `llm-bus list`")
     send.add_argument("--body", help="Message text; otherwise read standard input")
@@ -50,6 +51,16 @@ def _parser() -> argparse.ArgumentParser:
     )
     inbox = commands.add_parser("inbox")
     inbox.add_argument("--limit", type=int, default=100)
+    history = commands.add_parser("history", help="Read stored messages without changing inboxes")
+    scope = history.add_mutually_exclusive_group()
+    scope.add_argument(
+        "--folder", help="Show messages involving this folder; default is current folder"
+    )
+    scope.add_argument("--all", action="store_true", help="Show messages from every folder")
+    cursor = history.add_mutually_exclusive_group()
+    cursor.add_argument("--before", type=int, help="Show older messages below this ID")
+    cursor.add_argument("--after", type=int, help="Show newer messages above this ID")
+    history.add_argument("--limit", type=int, default=100)
     acknowledge = commands.add_parser("ack", help="Acknowledge handled messages")
     acknowledge.add_argument("ids", type=int, nargs="+")
     hook = commands.add_parser("hook", help="Register session and notify agent at turn boundary")
@@ -128,6 +139,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         store = Store(default_path())
         if command == "hook":
             _hook(store, cast("str", args["kind"]))
+            return 0
+        if command == "agents":
+            print(json.dumps(store.agents()))
+            return 0
+        if command == "history":
+            selected_folder = cast("str | None", args["folder"])
+            folder = None if args["all"] else str(Path(selected_folder or Path.cwd()).resolve())
+            print(
+                json.dumps(
+                    store.history(
+                        folder=folder,
+                        before=cast("int | None", args["before"]),
+                        after=cast("int | None", args["after"]),
+                        limit=cast("int", args["limit"]),
+                    )
+                )
+            )
             return 0
         kind, session_id = host_identity(dict(os.environ))
         project = str(Path.cwd().resolve())

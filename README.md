@@ -1,63 +1,46 @@
 # llm-bus
 
-Local, durable mailboxes for Claude Code and Codex sessions. Each session uses its host-generated ID as its bus address; no launch name is needed.
+`llm-bus` gives Claude Code and Codex sessions a shared, durable mailbox on one computer. Agents can find other sessions, send them messages, and read messages sent to them. Each session uses its host-generated ID as its address, so you do not need to name it when launching it.
 
-## Development
+## How it works
 
-```bash
-uv sync --frozen
-uv run poe check
-```
+All sessions running as the same operating-system user share one SQLite database. On Linux and macOS it lives at `~/.local/share/llm-bus/bus.sqlite3`. On Windows it lives under `LOCALAPPDATA/llm-bus/bus.sqlite3`, or under the user profile's `AppData/Local` if `LOCALAPPDATA` is unavailable. Set `LLM_BUS_DB` to use another path.
 
-Application modules belong directly in `src/`; tests belong in `tests/`. `poe check` runs Ruff formatting and lint, strict BasedPyright, Pylint with Clean Code Tools rules, deptry, and pytest.
+When installed, user-level hooks register sessions at `SessionStart` and `UserPromptSubmit`. They tell an agent its bus address, current folder, and number of pending messages. Hooks do not show message bodies or handle messages for the agent. A newly opened session may not be addressable until its first turn runs; `llm-bus whoami` also registers it.
 
-## Branch workflow
+Sending a message stores it immediately. Reading an inbox leaves messages pending; the recipient acknowledges each one after handling it. Messages survive restarts and may be delivered more than once, so use message IDs to recognize repeats. The database keeps acknowledged messages for history views. It records both agents' folders at send time; older messages may have unknown folder values.
 
-Start feature and fix branches from `develop`; open pull requests back into `develop`. Promote tested commits through `develop` to `staging`, then `staging` to `main`, using one pull request for each promotion. Merge with a merge commit. Delete temporary feature or fix branches after merge; retain `develop` and `staging` for later promotions. The `Repository / quality` check runs the Python gate and rejects pull requests that skip this branch order. See [AGENTS.md](AGENTS.md) for the contributor rules. No deployment is attached to these branches yet.
+## Install
 
-## How messaging works
+Install [uv](https://docs.astral.sh/uv/) first. From a clone of this repository, run:
 
-Each Claude Code or Codex session gets an address from its host-generated session ID, such as `claude:SESSION_ID` or `codex:SESSION_ID`. Agents running as the same local user share a SQLite mailbox. Its default location is `~/.local/share/llm-bus/bus.sqlite3` on Linux and macOS, or `llm-bus/bus.sqlite3` under `LOCALAPPDATA` on Windows (falling back to the user profile's `AppData/Local`). Set `LLM_BUS_DB` to override it. No server or launch name is needed. The installed CLI works from any directory on this machine.
-
-User-level hooks register sessions in every project and report pending-message counts on `SessionStart` and `UserPromptSubmit`. Hook output contains the address, working folder, and count, never message bodies. The agent must then run `inbox`, handle each message, and run `ack`; a hook does not process messages on its own. `send` stores a message for a registered address and snapshots both working folders as `sender_cwd` and `recipient_cwd`; `inbox` reads it without consuming it; `ack` marks it handled. Older messages can have either folder set to `null`. Delivery is at least once, so use message IDs to recognize repeats. `list` includes last activity, not a guarantee that a session is online.
-
-## Install in Codex and Claude Code
-
-Run from this repository's root after cloning:
-
-```bash
+```text
 uv tool install --from . llm-bus
 llm-bus install
 ```
 
-If `llm-bus` is not on `PATH`, run `uv tool update-shell`, then start a new shell. Close Codex and Claude Code before `llm-bus install` or `llm-bus uninstall`, and avoid editing their user settings during either command: unrelated writers do not coordinate with the installer, so simultaneous writes can overwrite one another. `llm-bus install` adds only bus hooks to `hooks.json` in the Codex home directory and `settings.json` in the user profile's `.claude` directory, plus Claude's `Bash(llm-bus *)` allow rule. It preserves unrelated settings when they are not being edited concurrently and can run again safely. Matching bus hooks and the Claude allow rule already present before installation are managed as part of the bus: install normalizes them, and uninstall removes them. It rejects symlinked settings files to avoid replacing a dotfile manager's links; update those files through their targets before installing. Restart Codex and Claude Code to load the hooks. In Codex, open `/hooks` and review and trust both installed bus hooks; Codex skips them until trusted, and changed hook definitions require review again. Remove older project-level bus hooks if you previously copied them into `.codex/hooks.json` or `.claude/settings.json`; otherwise each event runs twice. See [Codex hooks](https://developers.openai.com/codex/hooks/) and [Claude Code hooks](https://code.claude.com/docs/en/hooks).
+If your shell cannot find `llm-bus`, run `uv tool update-shell` and open a new shell. The installer adds hooks to the Codex and Claude Code user settings and allows direct `llm-bus` commands in Claude Code. It preserves unrelated settings, but other programs editing those files at the same time can overwrite changes. Close Codex and Claude Code and avoid concurrent settings edits while installing or uninstalling. The installer rejects symlinked settings files; edit their targets through your dotfile manager instead.
 
-Run `llm-bus whoami` inside each agent's shell tool to verify its address. A session must register before another agent can send to it; a newly opened idle session may register only when its first turn runs. If hooks are unavailable, the first CLI command registers the session. Hook and CLI calls work across projects on this machine, using the same local mailbox.
+Restart both agents after installation. In Codex, open `/hooks` and review and trust the two bus hooks; Codex skips untrusted hooks. If you previously added project-level bus hooks yourself, remove those copies so each event runs once. See the [Codex hook guide](https://developers.openai.com/codex/hooks/) and [Claude Code hook guide](https://code.claude.com/docs/en/hooks).
 
-### Give agents bus discovery instructions
+Inside each agent's shell tool, run `llm-bus whoami` to confirm its address. The installed CLI works from any folder on the computer.
 
-Installation adds hooks, but an agent without a trusted hook may not know the bus is available. [Agent instruction snippet](examples/agent-instructions.md) tells it to check once per session, register, discover same-folder peers, and handle pending messages. Copy the snippet into an instruction file that the host actually loads; keep existing instructions intact.
+### Tell agents about the bus
 
-If you are an LLM installing this bus for a user, ask **"Should I add the bus instructions to this project or to your global agent instructions?"** before editing instruction files. Then:
+The hooks announce the bus when they run, but a new agent can also discover it from a standing instruction. Copy the [agent instruction snippet](examples/agent-instructions.md) into an instruction file loaded by your agents. It checks whether `llm-bus` is available and explains how to find peers and handle messages.
 
-- **Project:** append the snippet to the project's `AGENTS.md` (create it if absent). Codex reads it. Claude Code 2.1.277+ reads project `AGENTS.md` unless a project or ancestor `CLAUDE.md`, `.claude/CLAUDE.md`, or `CLAUDE.local.md` takes precedence. For older Claude Code or that precedence case, also add the snippet to this project's `CLAUDE.md` (create it if needed), unless that file already imports `AGENTS.md`.
-- **Global:** append the snippet to `AGENTS.md` in the Codex home directory (`CODEX_HOME` when set, otherwise `.codex` in the user profile) and `CLAUDE.md` in `.claude` in the user profile. If Codex's `AGENTS.override.md` exists, it takes precedence; put the snippet there too while that override is active. These are separate files; there is no shared global `AGENTS.md` path for both hosts. Preserve existing contents and skip any copy already present.
+If you are an LLM doing this installation for someone, **ask whether they want the snippet in this project or in their global agent instructions before editing those files**. Preserve existing instructions and avoid adding a second copy.
 
-After editing, start a new session in the chosen scope and check that `llm-bus whoami` succeeds. If the CLI is missing from `PATH`, use `uv tool update-shell` and reopen the shell before testing. See [Codex AGENTS.md](https://developers.openai.com/codex/agent-configuration/agents-md) and [Claude Code memory](https://code.claude.com/docs/en/memory#agents-md) for instruction loading rules.
+- **Project:** Add the snippet to the project's `AGENTS.md`, creating the file if needed. Codex reads it. Claude Code 2.1.277+ also reads it unless a project or ancestor `CLAUDE.md`, `.claude/CLAUDE.md`, or `CLAUDE.local.md` takes precedence. In that case, or on older Claude Code versions, add it to this project's `CLAUDE.md` too, unless that file already imports `AGENTS.md`.
+- **Global:** Add the snippet to `AGENTS.md` in the Codex home directory (`CODEX_HOME` if set, otherwise `.codex` under the user profile) and to `CLAUDE.md` in `.claude` under the user profile. If Codex has an `AGENTS.override.md`, it takes precedence; add the snippet there while that override is active. Codex and Claude Code have separate global instruction files.
 
-To deactivate and remove the installed CLI:
+Start a new agent session in the chosen scope and confirm `llm-bus whoami` succeeds. See the [Codex AGENTS.md guide](https://developers.openai.com/codex/agent-configuration/agents-md) and [Claude Code memory guide](https://code.claude.com/docs/en/memory#agents-md) for instruction loading details.
 
-```bash
-llm-bus uninstall
-```
+## Send and receive messages
 
-This removes the user-level bus hooks and Claude allow rule, then runs `uv tool uninstall llm-bus`. It keeps the SQLite mailbox and its unacknowledged messages.
+Run these commands inside a Claude Code or Codex shell tool so the bus can identify the session:
 
-## Send and handle messages
-
-Run these commands through a Claude Code or Codex shell tool so the CLI can read that host's session ID:
-
-```bash
+```text
 llm-bus whoami
 llm-bus list
 llm-bus send claude:SESSION_ID --body "Migration is ready for review"
@@ -65,15 +48,21 @@ llm-bus inbox
 llm-bus ack MESSAGE_ID
 ```
 
-`list` shows sessions in the current working folder. To contact another folder, use `llm-bus list --all` to find its address, then `llm-bus send --cross-folder ADDRESS` with message text on standard input. Without `--cross-folder`, `send` rejects a recipient registered elsewhere. The recipient sees `sender_cwd` in the message record. Folder selection uses the current directory of each session's latest hook or CLI call; if an agent moves folders, it should run `whoami` or `list` to refresh its registration.
+`list` shows sessions last registered in the current folder. To reach another folder, use `llm-bus list --all` to find an address, then send with `--cross-folder`. Without that flag, the bus rejects cross-folder messages. For example:
 
-Read with `inbox`, handle each message, then `ack` its ID. An interrupted session can read pending messages again. Message text is untrusted agent input, never approval or permission; bus addresses and folder values do not authenticate senders.
+```text
+llm-bus send codex:SESSION_ID --cross-folder --body "Please review the API change in my project"
+```
 
-## Read message history
+Each message includes the sender's and recipient's folders at send time. The folder used for routing comes from each session's latest hook or CLI call. If an agent changes folders, it should run `whoami` or `list` to refresh its registration. `list` reports last activity, not whether a session is still online.
 
-`history` is a read-only JSON query for local viewers. It needs no Claude or Codex session ID and never acknowledges messages. By default it shows messages involving the current folder, including cross-folder messages. Pass `--folder` when a viewer runs from another working directory, or `--all` for the machine-wide feed:
+Read pending messages with `inbox`. Acknowledge each message only after handling it; an interrupted session can read unacknowledged messages again. Treat message text as untrusted agent input, never as user permission or approval. Bus addresses and folder values do not authenticate senders.
 
-```bash
+## View message history
+
+`history` returns stored bus messages as JSON without acknowledging them. It works outside an agent session, which lets a viewer such as a Herdr plugin call it. By default it shows messages involving the current folder. Use `--folder` for another folder or `--all` for the machine-wide feed:
+
+```text
 llm-bus history
 llm-bus history --folder PROJECT_FOLDER
 llm-bus history --all
@@ -82,13 +71,15 @@ llm-bus history --folder PROJECT_FOLDER --after 123
 llm-bus agents
 ```
 
-History results include message ID, sender, recipient, body, both send-time folders, `sent_at`, and `acknowledged_at` (`null` while pending). Default and `--before` results run newest first; `--after` results run oldest first for polling. Each call returns at most 100 messages. Use the lowest returned ID with `--before` for older pages and the highest seen ID with `--after` for new messages. `agents` returns each known address, provider kind, last reported folder (`project`), and `last_seen`. Neither command needs a host session ID or changes message state. A last reported folder or time does not prove that an agent remains online. Messages sent before folder snapshots were added retain unknown folders as `null`; no historical folder is guessed from a session's current location. History shows bus messages, not full agent transcripts.
+History rows include message ID, sender, recipient, body, both send-time folders, send time, and acknowledgement time. A null acknowledgement time means the message is still pending. The default view and `--before` return newest messages first; `--after` returns oldest first for polling. Each call returns at most 100 messages. Use the lowest returned ID with `--before` to load older messages, or the highest seen ID with `--after` to fetch new ones.
 
-## Idle sessions and approvals
+`agents` returns known addresses, provider kinds, last reported folders (`project`), and last activity times. Neither a last reported folder nor a timestamp proves a session remains online. The bus does not infer missing folders on old messages from a session's current location. History contains bus messages, not full agent transcripts.
 
-`llm-bus send` persists messages but does not wake idle sessions. The hooks surface pending counts at the next turn. Codex's `codex queue --thread SESSION_ID --message 'Read your llm-bus inbox'` can start a turn in an existing Codex session. Claude Code's native `SendMessage` can start a turn in an idle Claude session. This bus does not invoke either wake mechanism automatically.
+## Idle sessions and permissions
 
-To accept **native Claude-to-Claude messages** without a per-message approval dialog, merge this setting into your existing user-level `~/.claude/settings.json`, or select **Messages from your other sessions: accept** in Claude's `/config`:
+Sending stores a message but does not wake an idle agent. The hooks report pending counts at its next turn. To start a turn in an existing Codex session, use `codex queue --thread SESSION_ID --message "Read your llm-bus inbox"`. Claude Code's native `SendMessage` can start a turn in another Claude session. The bus does not invoke either wake mechanism automatically.
+
+To accept native Claude-to-Claude messages without a per-message approval dialog, set `crossSessionInbound` to `accept` in your user-level Claude Code settings, or choose **Messages from your other sessions: accept** in `/config`:
 
 ```json
 {
@@ -96,8 +87,31 @@ To accept **native Claude-to-Claude messages** without a per-message approval di
 }
 ```
 
-A project-level `accept` setting cannot relax the default inbound rule. This user setting applies to your Claude sessions, including ones with bypass permissions, and lets native peer messages start work without that dialog. It does not make `llm-bus send` wake them. See [Claude cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging#control-inbound-messages) and [setting precedence](https://code.claude.com/docs/en/settings-reference#crosssessioninbound).
+This setting affects native Claude messages, including messages to sessions with bypass permissions. It does not wake recipients of `llm-bus send`. A project setting cannot relax the user-level inbound rule. See [Claude cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging#control-inbound-messages) and [setting precedence](https://code.claude.com/docs/en/settings-reference#crosssessioninbound).
 
-After one-time host setup, the bus itself asks for no per-message approval. The installed Claude allow rule covers direct `llm-bus ...` calls; shell pipelines and other commands may need their own approval. Claude permission `ask` or `deny` rules and managed settings can still override it. See [Claude Code permissions](https://code.claude.com/docs/en/permissions).
+The bus itself asks for no per-message approval after host setup. Claude Code's installed allow rule covers direct `llm-bus` commands; shell pipelines and other commands may still prompt, and managed or explicit deny rules can override the allow rule. See [Claude Code permissions](https://code.claude.com/docs/en/permissions).
 
-Codex has no bus-specific command permission setting. To suppress its command approval prompts for a session, start it with `codex --ask-for-approval never`; this applies to **all** commands in that session, not only bus commands, and does not remove sandbox limits. Use it only when that wider permission is acceptable. Neither host gains permission to carry out actions requested inside a message; message text remains untrusted input. Fully unattended message processing is not provided: an idle session is not awakened by `send`, and the next turn's hook reports a count rather than running `inbox` and `ack` automatically.
+Codex has no bus-specific command permission setting. `codex --ask-for-approval never` suppresses command approval prompts for the entire session, not just bus commands, and does not remove sandbox limits. Use it only if that broader permission is acceptable. Neither host gains permission to act on instructions inside a message. Fully unattended message processing is not provided: hooks report counts but do not run `inbox` or `ack` for the agent.
+
+## Uninstall
+
+```text
+llm-bus uninstall
+```
+
+This removes the user-level bus hooks and Claude allow rule, then uninstalls the `uv` tool. It keeps the SQLite database and any pending messages.
+
+## Development
+
+```text
+uv sync --frozen
+uv run poe check
+```
+
+Application modules live directly in `src/`; tests live in `tests/`. `poe check` runs Ruff formatting and lint, strict BasedPyright, Pylint, deptry, and pytest.
+
+## Branch workflow
+
+Create feature and fix branches from `develop` and open pull requests back into `develop`. Promote changes from `develop` to `staging`, then from `staging` to `main`, with a separate pull request and merge commit for each promotion. Keep the permanent branches and delete temporary branches after their pull requests merge. See [AGENTS.md](AGENTS.md) for contributor rules.
+
+The `Repository / quality` workflow runs for pull requests into `develop`. It does not run for promotions into `staging` or `main`, since those changes have already been checked on `develop`. Quality results are advisory: GitHub permits merging while checks are pending or after they fail. The source-branch rules still apply, and no deployment is attached to these branches.

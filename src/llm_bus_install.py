@@ -11,7 +11,7 @@ from typing import cast
 
 from llm_bus_store import BusError
 
-EVENTS = ("SessionStart", "UserPromptSubmit")
+EVENTS = ("SessionStart", "UserPromptSubmit", "SessionEnd")
 CLAUDE_ALLOW_RULE = "Bash(llm-bus *)"
 CODEX_HOME_ENV = "CODEX_HOME"
 type SettingsSnapshot = list[tuple[Path, bytes | None, int]]

@@ -91,6 +91,19 @@ History rows contain message ID, sender, recipient, body, both folders at send t
 
 `agents` returns registered addresses, provider kinds, last reported folders (`project`), and last activity times. Neither command changes message state. Old messages with unknown folders keep null values; the bus does not infer their past location from a session's current one. History contains bus messages, not full agent transcripts.
 
+### Herdr viewer
+
+Herdr 0.9.1+ on macOS or Linux can show history in a terminal tab. Install `llm-bus` as above and ensure both `python3` (3.10+) and `llm-bus` are on Herdr's `PATH`. From a local checkout:
+
+```text
+herdr plugin link /absolute/path/to/llm-bus/plugins/herdr-history
+herdr plugin pane open --plugin llm-bus.history --entrypoint history
+```
+
+Once this plugin is published on the repository's default branch, it can also be installed with `herdr plugin install wnz99/llm-bus/plugins/herdr-history`.
+
+The viewer starts with the active Herdr workspace folder, using the focused pane folder if the workspace has no folder. Without either, it starts in global view. Press `f` for folder, `g` for all folders, `j`/`k` or arrow keys to scroll, `n`/`p` for older/newer pages, `r` to refresh, and `q` to close. It shows bus messages newest first, with send-time folders and pending or acknowledged state. Global view can expose messages from every local folder. The viewer never sends or acknowledges messages; recipients still handle pending messages through `llm-bus inbox` and `ack`.
+
 ## Storage and permissions
 
 Sessions running as the same operating-system user share a SQLite mailbox. By default it lives at `~/.local/share/llm-bus/bus.sqlite3` on Linux and macOS, or under `LOCALAPPDATA/llm-bus/bus.sqlite3` on Windows. If `LOCALAPPDATA` is unavailable, Windows uses `AppData/Local` under the user profile. Set `LLM_BUS_DB` to use another path. The installed CLI works from any folder on the computer.

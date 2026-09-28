@@ -43,7 +43,7 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("whoami", help="Show this session's bus address")
     peers = commands.add_parser("list", help="List agents in this folder")
     peers.add_argument("--all", action="store_true", help="Include agents in other folders")
-    commands.add_parser("agents", help="Read all registered agents without a host session")
+    commands.add_parser("agents", help="Read all registered agents, including ended sessions")
     send = commands.add_parser("send", help="Store a message and request recipient wake")
     send.add_argument("to", help="Recipient address from `llm-bus list`")
     send.add_argument("--body", help="Message text; otherwise read standard input")
@@ -78,8 +78,15 @@ def _hook(store: Store, kind: str) -> None:
     hook_data = cast("dict[str, object]", hook_input)
     session_id = hook_data.get("session_id")
     event = hook_data.get("hook_event_name")
-    if not isinstance(session_id, str) or event not in {"SessionStart", "UserPromptSubmit"}:
+    if not isinstance(session_id, str) or event not in {
+        "SessionStart",
+        "UserPromptSubmit",
+        "SessionEnd",
+    }:
         raise BusError("Hook input lacks a valid session_id or event")
+    if event == "SessionEnd":
+        store.end_session(kind, session_id)
+        return
     project = hook_data.get("cwd")
     if not isinstance(project, str):
         project = str(Path.cwd())
@@ -146,7 +153,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             _hook(store, cast("str", args["kind"]))
             return 0
         if command == "agents":
-            print(json.dumps(store.agents()))
+            print(json.dumps(store.all_agents()))
             return 0
         if command == "history":
             selected_folder = cast("str | None", args["folder"])
@@ -192,7 +199,14 @@ def _send(store: Store, args: dict[str, object], sender: SenderContext) -> objec
         cross_folder=cast("bool", args["cross_folder"]),
     )
     try:
-        wake_result = wake(sent["recipient"], sent["id"])
+        if store.is_ended(sent["recipient"]):
+            wake_result = {
+                "status": "failed",
+                "via": "host wake",
+                "reason": "recipient session ended; message remains pending",
+            }
+        else:
+            wake_result = wake(sent["recipient"], sent["id"])
     except Exception as exc:  # pylint: disable=broad-exception-caught
         # Delivery already committed; always report message ID.
         wake_result = {

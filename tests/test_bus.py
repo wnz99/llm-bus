@@ -84,8 +84,27 @@ def test_existing_database_gets_nullable_sender_folder(tmp_path: Path) -> None:
             "INSERT INTO agents VALUES ('claude:two', 'claude', '/one', 'now');"
             "INSERT INTO messages VALUES (1, 'codex:one', 'claude:two', 'old', 'now', NULL);"
         )
-    assert Store(path).inbox("claude:two")[0]["sender_cwd"] is None
-    assert Store(path).inbox("claude:two")[0]["recipient_cwd"] is None
+    migrated = Store(path)
+    assert migrated.inbox("claude:two")[0]["sender_cwd"] is None
+    assert migrated.inbox("claude:two")[0]["recipient_cwd"] is None
+    assert migrated.all_agents()[0]["ended_at"] is None
+
+
+def test_session_end_hides_peer_but_preserves_pending_message(tmp_path: Path) -> None:
+    store = Store(tmp_path / "bus.sqlite3")
+    recipient = store.register("codex", "recipient", "/project")
+    sent = store.send(SenderContext("claude", "sender", "/project"), recipient, "hello")
+
+    store.end_session("codex", "recipient")
+    assert recipient not in {agent["address"] for agent in store.agents("/project")}
+    assert store.is_ended(recipient)
+    ended = next(agent for agent in store.all_agents() if agent["address"] == recipient)
+    assert ended["ended_at"] is not None
+    assert store.inbox(recipient) == [sent]
+
+    store.register("codex", "recipient", "/project")
+    assert recipient in {agent["address"] for agent in store.agents("/project")}
+    assert not store.is_ended(recipient)
 
 
 def test_default_database_path_uses_windows_local_app_data(
@@ -253,6 +272,26 @@ def test_claude_hook_uses_same_session_address(
     assert json.loads(capsys.readouterr().out) == {"address": "claude:claude-session"}
 
 
+@pytest.mark.parametrize("kind", ["codex", "claude"])
+def test_session_end_hook_marks_registered_agent_ended(
+    kind: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    path = tmp_path / "bus.sqlite3"
+    monkeypatch.setenv("LLM_BUS_DB", str(path))
+    store = Store(path)
+    address = store.register(kind, "session", str(tmp_path))
+    monkeypatch.setattr(
+        "sys.stdin",
+        io.StringIO(json.dumps({"session_id": "session", "hook_event_name": "SessionEnd"})),
+    )
+    assert main(["hook", kind]) == 0
+    assert capsys.readouterr().out == ""
+    assert Store(path).is_ended(address)
+
+
 def test_install_and_uninstall_preserve_other_host_settings(tmp_path: Path) -> None:
     codex = tmp_path / ".codex" / "hooks.json"
     claude = tmp_path / ".claude" / "settings.json"
@@ -266,6 +305,8 @@ def test_install_and_uninstall_preserve_other_host_settings(tmp_path: Path) -> N
     assert once == (codex.read_text(), claude.read_text())
     assert "llm-bus hook codex" in codex.read_text()
     assert "llm-bus hook claude" in claude.read_text()
+    assert "SessionEnd" in json.loads(codex.read_text())["hooks"]
+    assert "SessionEnd" in json.loads(claude.read_text())["hooks"]
     assert "Bash(llm-bus *)" in claude.read_text()
     configure_hosts(tmp_path, install=False)
     assert json.loads(codex.read_text()) == {
@@ -359,10 +400,10 @@ def test_optional_bus_hook_fields_are_normalized_and_removed(tmp_path: Path) -> 
     )
     configure_hosts(tmp_path, install=True)
     assert codex.read_text().count("llm-bus hook codex") == len(
-        ("SessionStart", "UserPromptSubmit")
+        ("SessionStart", "UserPromptSubmit", "SessionEnd")
     )
     assert claude.read_text().count("llm-bus hook claude") == len(
-        ("SessionStart", "UserPromptSubmit")
+        ("SessionStart", "UserPromptSubmit", "SessionEnd")
     )
     configure_hosts(tmp_path, install=False)
     assert json.loads(codex.read_text()) == {}
@@ -594,6 +635,29 @@ def test_send_keeps_message_when_wake_fails(
     pending = Store(path).inbox(recipient)
     assert len(pending) == 1
     assert pending[0]["id"] == sent["id"]
+
+
+def test_send_to_ended_session_stores_message_without_wake(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    folder = tmp_path / "project"
+    folder.mkdir()
+    path = tmp_path / "bus.sqlite3"
+    store = Store(path)
+    recipient = store.register("codex", "recipient", str(folder))
+    store.end_session("codex", "recipient")
+    monkeypatch.setenv("LLM_BUS_DB", str(path))
+    monkeypatch.setenv("CODEX_THREAD_ID", "sender")
+    monkeypatch.chdir(folder)
+
+    def unexpected_wake(_address: str, _message_id: int) -> dict[str, str]:
+        pytest.fail("ended session must not be woken")
+
+    monkeypatch.setattr("llm_bus.wake", unexpected_wake)
+    assert main(["send", recipient, "--body", "Please reply"]) == 0
+    sent = cast("dict[str, object]", json.loads(capsys.readouterr().out))
+    assert cast("dict[str, str]", sent["wake"])["status"] == "failed"
+    assert len(Store(path).inbox(recipient)) == 1
 
 
 def test_send_reports_message_id_when_wake_raises(

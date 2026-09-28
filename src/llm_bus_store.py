@@ -23,7 +23,8 @@ SCHEMA = """
         address TEXT PRIMARY KEY,
         kind TEXT NOT NULL,
         project TEXT NOT NULL,
-        last_seen TEXT NOT NULL
+        last_seen TEXT NOT NULL,
+        ended_at TEXT
     );
     CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY,
@@ -51,6 +52,7 @@ class Agent(TypedDict):
     kind: str
     project: str
     last_seen: str
+    ended_at: str | None
 
 
 class Message(TypedDict):
@@ -111,6 +113,15 @@ class Store:
         with closing(self._connect()) as db:
             db.executescript(SCHEMA)
             db.execute("BEGIN IMMEDIATE")
+            agent_columns = {
+                row[1]
+                for row in cast(
+                    "list[tuple[int, str, str, int, object, int]]",
+                    db.execute("PRAGMA table_info(agents)").fetchall(),
+                )
+            }
+            if "ended_at" not in agent_columns:
+                db.execute("ALTER TABLE agents ADD COLUMN ended_at TEXT")
             columns = {
                 row[1]
                 for row in cast(
@@ -157,29 +168,60 @@ class Store:
     def _upsert_agent(db: sqlite3.Connection, kind: str, session_id: str, project: str) -> str:
         agent_address = address(kind, session_id)
         db.execute(
-            "INSERT INTO agents(address, kind, project, last_seen) "
-            "VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) "
+            "INSERT INTO agents(address, kind, project, last_seen, ended_at) "
+            "VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL) "
             "ON CONFLICT(address) DO UPDATE SET project = excluded.project, "
-            "last_seen = excluded.last_seen",
+            "last_seen = excluded.last_seen, ended_at = NULL",
             (agent_address, kind, project),
         )
         return agent_address
 
+    def end_session(self, kind: str, session_id: str) -> None:
+        """Mark a registered session closed without consuming its pending messages."""
+        with self._transaction() as db:
+            db.execute(
+                "UPDATE agents SET ended_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
+                "WHERE address = ?",
+                (address(kind, session_id),),
+            )
+
     def agents(self, project: str | None = None) -> list[Agent]:
-        """List known addresses; last_seen does not promise online presence."""
+        """List sessions without a recorded end; presence is not guaranteed."""
+        clauses = ["ended_at IS NULL"]
+        parameters: list[str] = []
+        if project is not None:
+            clauses.append("project = ?")
+            parameters.append(project)
+        return self._read_agents(clauses, parameters)
+
+    def all_agents(self) -> list[Agent]:
+        """List all registered sessions, including ended ones."""
+        return self._read_agents([], [])
+
+    def _read_agents(self, clauses: list[str], parameters: list[str]) -> list[Agent]:
         with closing(self._connect()) as db:
-            query = "SELECT address, kind, project, last_seen FROM agents"
-            parameters: tuple[str, ...] = ()
-            if project is not None:
-                query += " WHERE project = ?"
-                parameters = (project,)
+            query = "SELECT address, kind, project, last_seen, ended_at FROM agents"
+            if clauses:
+                query += " WHERE " + " AND ".join(clauses)
             rows = cast(
-                "list[tuple[str, str, str, str]]",
+                "list[tuple[str, str, str, str, str | None]]",
                 db.execute(query + " ORDER BY last_seen DESC", parameters).fetchall(),
             )
         return [
-            Agent(address=row[0], kind=row[1], project=row[2], last_seen=row[3]) for row in rows
+            Agent(address=row[0], kind=row[1], project=row[2], last_seen=row[3], ended_at=row[4])
+            for row in rows
         ]
+
+    def is_ended(self, agent_address: str) -> bool:
+        """Whether a host reported the registered session's end."""
+        with closing(self._connect()) as db:
+            row = cast(
+                "tuple[str | None] | None",
+                db.execute(
+                    "SELECT ended_at FROM agents WHERE address = ?", (agent_address,)
+                ).fetchone(),
+            )
+        return row is not None and row[0] is not None
 
     def send(
         self,

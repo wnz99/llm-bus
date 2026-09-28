@@ -2,7 +2,7 @@ name: PR · Repository
 
 on:
   pull_request:
-    branches: [develop, staging, main]
+    branches: [develop]
     types: [opened, synchronize, reopened, ready_for_review, edited]
 
 permissions:

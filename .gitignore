@@ -12,6 +12,7 @@ dist/
 .codex/
 .agent/
 .agents/
+.serena/
 .claude/
 .clean-code-tools/
 .mcp.json

@@ -59,6 +59,9 @@ def _parser() -> argparse.ArgumentParser:
     scope.add_argument(
         "--folder", help="Show messages involving this folder; default is current folder"
     )
+    scope.add_argument(
+        "--repository", help="Show messages involving this Git repository and its worktrees"
+    )
     scope.add_argument("--all", action="store_true", help="Show messages from every folder")
     cursor = history.add_mutually_exclusive_group()
     cursor.add_argument("--before", type=int, help="Show older messages below this ID")
@@ -159,11 +162,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if command == "history":
             selected_folder = cast("str | None", args["folder"])
-            folder = None if args["all"] else str(Path(selected_folder or Path.cwd()).resolve())
+            selected_repository = cast("str | None", args["repository"])
+            folder = (
+                None
+                if args["all"] or selected_repository is not None
+                else str(Path(selected_folder or Path.cwd()).resolve())
+            )
+            repository = (
+                str(Path(selected_repository).resolve())
+                if selected_repository is not None
+                else None
+            )
             print(
                 json.dumps(
                     store.history(
                         folder=folder,
+                        repository=repository,
                         before=cast("int | None", args["before"]),
                         after=cast("int | None", args["after"]),
                         limit=cast("int", args["limit"]),
@@ -216,6 +230,19 @@ def _send(store: Store, args: dict[str, object], sender: SenderContext) -> objec
             "via": "host wake",
             "reason": f"wake adapter raised {type(exc).__name__}",
         }
+    try:
+        store.record_wake(
+            sent["id"],
+            wake_result["status"],
+            wake_result.get("via", "host wake"),
+            wake_result.get("reason"),
+        )
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        print(
+            f"llm-bus: message #{sent['id']} stored; could not record wake result: "
+            f"{type(exc).__name__}",
+            file=sys.stderr,
+        )
     if wake_result["status"] != "requested":
         print(
             f"llm-bus: message #{sent['id']} stored; wake {wake_result['status']}: "

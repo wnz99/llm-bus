@@ -28,6 +28,10 @@ class Message:
     recipient_cwd: str | None
     sent_at: str
     acknowledged_at: str | None
+    wake_status: str | None
+    wake_via: str | None
+    wake_reason: str | None
+    wake_checked_at: str | None
 
 
 def clean(value: str) -> str:
@@ -75,14 +79,34 @@ def parse_messages(raw: str) -> list[Message]:
         )
         if not all(isinstance(value, str) for value in (sender, recipient, body, sent_at)):
             raise ValueError("llm-bus history message has an invalid text field")
-        sender_cwd, recipient_cwd, acknowledged_at = (
+        (
+            sender_cwd,
+            recipient_cwd,
+            acknowledged_at,
+            wake_status,
+            wake_via,
+            wake_reason,
+            wake_checked_at,
+        ) = (
             record.get("sender_cwd"),
             record.get("recipient_cwd"),
             record.get("acknowledged_at"),
+            record.get("wake_status"),
+            record.get("wake_via"),
+            record.get("wake_reason"),
+            record.get("wake_checked_at"),
         )
         if any(
             value is not None and not isinstance(value, str)
-            for value in (sender_cwd, recipient_cwd, acknowledged_at)
+            for value in (
+                sender_cwd,
+                recipient_cwd,
+                acknowledged_at,
+                wake_status,
+                wake_via,
+                wake_reason,
+                wake_checked_at,
+            )
         ):
             raise ValueError("llm-bus history message has an invalid optional field")
         messages.append(
@@ -95,13 +119,19 @@ def parse_messages(raw: str) -> list[Message]:
                 cast("str | None", recipient_cwd),
                 cast("str", sent_at),
                 cast("str | None", acknowledged_at),
+                cast("str | None", wake_status),
+                cast("str | None", wake_via),
+                cast("str | None", wake_reason),
+                cast("str | None", wake_checked_at),
             )
         )
     return messages
 
 
 def fetch_history(binary: str, folder: str | None, before: int | None = None) -> list[Message]:
-    command = [binary, "history", "--folder", folder] if folder else [binary, "history", "--all"]
+    command = (
+        [binary, "history", "--repository", folder] if folder else [binary, "history", "--all"]
+    )
     command.extend(("--limit", str(PAGE_SIZE)))
     if before is not None:
         command.extend(("--before", str(before)))
@@ -142,6 +172,17 @@ def message_lines(messages: list[Message], width: int) -> list[str]:
         sender_folder = message.sender_cwd or "unknown"
         recipient_folder = message.recipient_cwd or "unknown"
         lines.extend(wrap(f"folders: {sender_folder} to {recipient_folder}", width))
+        if message.wake_status is None:
+            lines.extend(wrap("wake: unrecorded", width))
+        else:
+            wake = f"wake: {message.wake_status}"
+            if message.wake_via:
+                wake += f" via {message.wake_via}"
+            if message.wake_checked_at:
+                wake += f" at {message.wake_checked_at}"
+            if message.wake_reason:
+                wake += f" ({message.wake_reason})"
+            lines.extend(wrap(wake, width))
         for line in message.body.split("\n"):
             lines.extend(wrap(f"  {line}", width))
         lines.append("")
@@ -212,7 +253,7 @@ class Viewer:
             screen.addnstr(0, 0, "Enlarge pane", max(1, width - 1))
             screen.refresh()
             return 0
-        scope = self.folder if self.scope == "folder" else "ALL FOLDERS"
+        scope = f"REPOSITORY {self.folder}" if self.scope == "folder" else "ALL FOLDERS"
         screen.addnstr(0, 0, clean(f"llm-bus history | {scope}"), width - 1, curses.A_REVERSE)
         count = len(self.pages[self.page]) if self.pages else 0
         screen.addnstr(1, 0, f"Page {self.page + 1} | {count} messages | newest first", width - 1)
@@ -228,7 +269,7 @@ class Viewer:
         screen.addnstr(
             height - 1,
             0,
-            "j/k scroll  n older  p newer  r refresh  f folder  g all  q quit",
+            "j/k scroll  n older  p newer  r refresh  f repository  g all  q quit",
             width - 1,
             curses.A_REVERSE,
         )

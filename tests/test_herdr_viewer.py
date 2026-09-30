@@ -57,7 +57,28 @@ def test_empty_and_legacy_history() -> None:
     message = viewer.parse_messages(json.dumps([row(1, sender_cwd=None, recipient_cwd=None)]))[0]
     assert message.sender_cwd is None
     assert "folders: unknown to unknown" in viewer.message_lines([message], 80)
+    assert "wake: unrecorded" in viewer.message_lines([message], 80)
     assert "[pending]" in viewer.message_lines([message], 80)[0]
+
+
+def test_wake_result_is_visible() -> None:
+    message = viewer.parse_messages(
+        json.dumps(
+            [
+                row(
+                    1,
+                    wake_status="failed",
+                    wake_via="codex queue",
+                    wake_reason="not reachable",
+                    wake_checked_at="2026-09-28T10:00:01Z",
+                )
+            ]
+        )
+    )[0]
+    assert any(
+        "wake: failed via codex queue at 2026-09-28T10:00:01Z (not reachable)" in line
+        for line in viewer.message_lines([message], 100)
+    )
 
 
 def test_missing_bus_stays_visible() -> None:
@@ -78,7 +99,7 @@ def test_history_command_uses_scope_and_before_cursor(monkeypatch: pytest.Monkey
     assert calls[0] == [
         "/bin/llm-bus",
         "history",
-        "--folder",
+        "--repository",
         "/project",
         "--limit",
         "50",

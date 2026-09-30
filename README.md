@@ -104,13 +104,14 @@ For teams with parallel agent sessions, add this example after the basic snippet
 ```text
 llm-bus history
 llm-bus history --folder PROJECT_FOLDER
+llm-bus history --repository PROJECT_FOLDER
 llm-bus history --all
 llm-bus history --all --before 123 --limit 50
 llm-bus history --folder PROJECT_FOLDER --after 123
 llm-bus agents
 ```
 
-History rows contain message ID, sender, recipient, body, both folders at send time, send time, and acknowledgement time. A null acknowledgement time means the message is pending. The default view and `--before` return newest messages first; `--after` returns oldest first for polling. Each call returns at most 100 messages. Use the lowest returned ID with `--before` for an older page and the highest seen ID with `--after` for new messages.
+`--folder` matches one exact folder. `--repository` includes that Git repository and its linked worktrees, using each message's send-time repository; outside Git, it matches the folder. Old messages whose worktree paths no longer exist may appear only under their exact folder. History rows contain message ID, sender, recipient, body, both folders at send time, send time, acknowledgement time, and the recorded wake status, path, reason, and check time. A null acknowledgement time means the message is pending. Null wake fields mean the message predates wake recording or the send stopped before its result could be stored. The default view and `--before` return newest messages first; `--after` returns oldest first for polling. Each call returns at most 100 messages. Use the lowest returned ID with `--before` for an older page and the highest seen ID with `--after` for new messages.
 
 `agents` returns registered addresses, provider kinds, last reported folders (`project`), and last activity times. Neither command changes message state. Old messages with unknown folders keep null values; the bus does not infer their past location from a session's current one. History contains bus messages, not full agent transcripts.
 
@@ -125,7 +126,7 @@ herdr plugin pane open --plugin llm-bus.history --entrypoint history
 
 Once this plugin is published on the repository's default branch, it can also be installed with `herdr plugin install wnz99/llm-bus/plugins/herdr-history`.
 
-The viewer starts with the active Herdr workspace folder, using the focused pane folder if the workspace has no folder. Without either, it starts in global view. Press `f` for folder, `g` for all folders, `j`/`k` or arrow keys to scroll, `n`/`p` for older/newer pages, `r` to refresh, and `q` to close. It shows bus messages newest first, with send-time folders and pending or acknowledged state. Global view can expose messages from every local folder. The viewer never sends or acknowledges messages; recipients still handle pending messages through `llm-bus inbox` and `ack`.
+The viewer starts with the active Herdr workspace repository, using the focused pane folder if the workspace has no folder. Without either, it starts in global view. Press `f` for repository, `g` for all folders, `j`/`k` or arrow keys to scroll, `n`/`p` for older/newer pages, `r` to refresh, and `q` to close. It shows bus messages newest first, with send-time folders, wake results, and pending or acknowledged state. Global view can expose messages from every local folder. The viewer never sends or acknowledges messages; recipients still handle pending messages through `llm-bus inbox` and `ack`.
 
 ## Storage and permissions
 

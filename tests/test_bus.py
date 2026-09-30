@@ -122,6 +122,39 @@ def test_linked_worktrees_share_routing_scope_but_keep_their_folders(
     with pytest.raises(BusError, match="--cross-folder"):
         store.send(sender, foreign, "other repository")
 
+    worktree_sender = SenderContext("codex", "worktree-sender", str(nested))
+    sent_within_worktree = store.send(worktree_sender, recipient, "worktree-only")
+    assert sent_within_worktree["id"] in {
+        item["id"] for item in store.history(folder=None, repository=str(repo))
+    }
+    assert sent_within_worktree["id"] not in {
+        item["id"] for item in store.history(folder=str(repo))
+    }
+    legacy_path = tmp_path / "legacy-messages.sqlite3"
+    with sqlite3.connect(legacy_path) as db:
+        db.executescript(
+            "CREATE TABLE agents (address TEXT PRIMARY KEY, kind TEXT, project TEXT, last_seen TEXT);"
+            "CREATE TABLE messages (id INTEGER PRIMARY KEY, sender TEXT, recipient TEXT, "
+            "body TEXT, sender_cwd TEXT, recipient_cwd TEXT, sent_at TEXT, acknowledged_at TEXT);"
+        )
+        db.executemany(
+            "INSERT INTO agents VALUES (?, 'codex', ?, 'now')",
+            [("codex:old-sender", str(nested)), ("codex:old-recipient", str(nested))],
+        )
+        db.execute(
+            "INSERT INTO messages VALUES (1, 'codex:old-sender', 'codex:old-recipient', "
+            "'old worktree message', ?, ?, 'now', NULL)",
+            (str(nested), str(nested)),
+        )
+    migrated = Store(legacy_path)
+    subprocess.run(
+        [git, "-C", str(repo), "worktree", "remove", "--force", str(worktree)], check=True
+    )
+    assert sent_within_worktree["id"] in {
+        item["id"] for item in store.history(folder=None, repository=str(repo))
+    }
+    assert [item["id"] for item in migrated.history(folder=None, repository=str(repo))] == [1]
+
 
 def test_existing_database_gets_nullable_sender_folder(tmp_path: Path) -> None:
     path = tmp_path / "bus.sqlite3"
@@ -137,6 +170,7 @@ def test_existing_database_gets_nullable_sender_folder(tmp_path: Path) -> None:
     migrated = Store(path)
     assert migrated.inbox("claude:two")[0]["sender_cwd"] is None
     assert migrated.inbox("claude:two")[0]["recipient_cwd"] is None
+    assert migrated.history(folder=None)[0]["wake_status"] is None
     assert migrated.all_agents()[0]["ended_at"] is None
     assert len(migrated.agents("/one")) == 2
 
@@ -210,6 +244,38 @@ def test_session_end_hides_peer_but_preserves_pending_message(tmp_path: Path) ->
     assert not store.is_ended(recipient)
 
 
+def test_idle_session_closes_after_24_hours_and_reopens_on_registration(tmp_path: Path) -> None:
+    path = tmp_path / "bus.sqlite3"
+    store = Store(path)
+    recipient = store.register("codex", "recipient", "/project")
+    sent = store.send(SenderContext("claude", "sender", "/project"), recipient, "hello")
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "UPDATE agents SET last_seen = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-23 hours') "
+            "WHERE address = ?",
+            (recipient,),
+        )
+    assert recipient in {agent["address"] for agent in store.agents("/project")}
+    assert not store.is_ended(recipient)
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "UPDATE agents SET last_seen = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-25 hours') "
+            "WHERE address = ?",
+            (recipient,),
+        )
+
+    assert recipient not in {agent["address"] for agent in store.agents("/project")}
+    assert store.is_ended(recipient)
+    ended = next(agent for agent in store.all_agents() if agent["address"] == recipient)
+    assert ended["ended_at"] is not None
+    assert store.inbox(recipient) == [sent]
+
+    store.register("codex", "recipient", "/project")
+    assert recipient in {agent["address"] for agent in store.agents("/project")}
+    assert not store.is_ended(recipient)
+    assert store.inbox(recipient) == [sent]
+
+
 def test_default_database_path_uses_windows_local_app_data(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -239,6 +305,10 @@ def test_history_preserves_status_and_send_time_folders(tmp_path: Path) -> None:
     assert [item["id"] for item in store.history(folder="/first")] == [second["id"], first["id"]]
     assert [item["id"] for item in store.history(folder="/other")] == [second["id"], first["id"]]
     assert store.history(folder="/moved") == []
+    assert [item["id"] for item in store.history(folder=None, repository="/first")] == [
+        second["id"],
+        first["id"],
+    ]
     assert [item["id"] for item in store.history(folder=None, limit=2)] == [
         third["id"],
         second["id"],
@@ -253,6 +323,7 @@ def test_history_preserves_status_and_send_time_folders(tmp_path: Path) -> None:
     ]
     assert store.history(folder="/first")[1]["acknowledged_at"] is not None
     assert store.history(folder="/first")[0]["acknowledged_at"] is None
+    assert store.history(folder="/first")[0]["wake_status"] is None
     assert store.inbox(recipient) == [second]
 
 
@@ -273,6 +344,8 @@ def test_history_cli_needs_no_agent_identity(
     assert main(["history"]) == 0
     assert json.loads(capsys.readouterr().out) == []
     assert main(["history", "--folder", str(folder)]) == 0
+    assert json.loads(capsys.readouterr().out)[0]["id"] == sent["id"]
+    assert main(["history", "--repository", str(folder)]) == 0
     assert json.loads(capsys.readouterr().out)[0]["id"] == sent["id"]
     assert main(["history", "--all", "--after", "0"]) == 0
     assert json.loads(capsys.readouterr().out)[0]["recipient_cwd"] == str(folder)
@@ -738,6 +811,11 @@ def test_send_keeps_message_when_wake_fails(
     pending = Store(path).inbox(recipient)
     assert len(pending) == 1
     assert pending[0]["id"] == sent["id"]
+    history = Store(path).history(folder=str(folder))[0]
+    assert history["wake_status"] == "failed"
+    assert history["wake_via"] == "codex queue"
+    assert history["wake_reason"] == "not reachable"
+    assert history["wake_checked_at"] is not None
 
 
 def test_send_to_ended_session_stores_message_without_wake(
@@ -761,6 +839,7 @@ def test_send_to_ended_session_stores_message_without_wake(
     sent = cast("dict[str, object]", json.loads(capsys.readouterr().out))
     assert cast("dict[str, str]", sent["wake"])["status"] == "failed"
     assert len(Store(path).inbox(recipient)) == 1
+    assert Store(path).history(folder=str(folder))[0]["wake_status"] == "failed"
 
 
 def test_send_reports_message_id_when_wake_raises(
@@ -789,6 +868,36 @@ def test_send_reports_message_id_when_wake_raises(
     }
     assert "message #1 stored; wake unknown" in output.err
     assert len(Store(path).inbox(recipient)) == 1
+    assert Store(path).history(folder=str(folder))[0]["wake_status"] == "unknown"
+
+
+def test_send_reports_message_id_when_wake_recording_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    folder = tmp_path / "project"
+    folder.mkdir()
+    path = tmp_path / "bus.sqlite3"
+    recipient = Store(path).register("codex", "recipient", str(folder))
+    monkeypatch.setenv("LLM_BUS_DB", str(path))
+    monkeypatch.setenv("CODEX_THREAD_ID", "sender")
+    monkeypatch.chdir(folder)
+
+    def requested_wake(_address: str, _id: int) -> dict[str, str]:
+        return {"status": "requested", "via": "codex queue"}
+
+    monkeypatch.setattr("llm_bus.wake", requested_wake)
+
+    def fail_record(_store: Store, _id: int, _status: str, _via: str, _reason: str | None) -> None:
+        raise sqlite3.OperationalError("database locked")
+
+    monkeypatch.setattr(Store, "record_wake", fail_record)
+    assert main(["send", recipient, "--body", "Please reply"]) == 0
+    output = capsys.readouterr()
+    sent = cast("dict[str, object]", json.loads(output.out))
+    assert sent["id"] == 1
+    assert "could not record wake result" in output.err
+    assert Store(path).inbox(recipient)[0]["id"] == 1
+    assert Store(path).history(folder=str(folder))[0]["wake_status"] is None
 
 
 def test_uninstall_removes_hooks_then_uv_tool(

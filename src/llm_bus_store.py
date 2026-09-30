@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 MAX_MESSAGE_BYTES = 64 * 1024
 MAX_BATCH = 100
+SESSION_IDLE_HOURS = 24
 DB_ENV = "LLM_BUS_DB"
 WINDOWS_DATA_ENV = "LOCALAPPDATA"
 GIT_ENV_PREFIX = "GIT_"  # pylint: disable=clean-code-business-policy-literal
@@ -37,8 +38,14 @@ SCHEMA = """
         body TEXT NOT NULL,
         sender_cwd TEXT,
         recipient_cwd TEXT,
+        sender_scope TEXT,
+        recipient_scope TEXT,
         sent_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-        acknowledged_at TEXT
+        acknowledged_at TEXT,
+        wake_status TEXT,
+        wake_via TEXT,
+        wake_reason TEXT,
+        wake_checked_at TEXT
     );
     CREATE INDEX IF NOT EXISTS messages_pending
         ON messages(recipient, acknowledged_at, id);
@@ -75,6 +82,10 @@ class HistoryMessage(Message):
     """Stored message with delivery state for read-only history views."""
 
     acknowledged_at: str | None
+    wake_status: str | None
+    wake_via: str | None
+    wake_reason: str | None
+    wake_checked_at: str | None
 
 
 class SenderContext(NamedTuple):
@@ -83,6 +94,22 @@ class SenderContext(NamedTuple):
     kind: str
     session_id: str
     project: str
+
+
+type HistoryRow = tuple[
+    int,
+    str,
+    str,
+    str,
+    str | None,
+    str | None,
+    str,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+]
 
 
 def default_path() -> Path:
@@ -174,14 +201,52 @@ class Store:
                 db.execute("ALTER TABLE messages ADD COLUMN sender_cwd TEXT")
             if "recipient_cwd" not in columns:
                 db.execute("ALTER TABLE messages ADD COLUMN recipient_cwd TEXT")
+            for column in (
+                "sender_scope",
+                "recipient_scope",
+                "wake_status",
+                "wake_via",
+                "wake_reason",
+                "wake_checked_at",
+            ):
+                if column not in columns:
+                    db.execute(f"ALTER TABLE messages ADD COLUMN {column} TEXT")
+            if "sender_scope" not in columns or "recipient_scope" not in columns:
+                self._backfill_message_scopes(db)
             db.execute(
                 "CREATE INDEX IF NOT EXISTS messages_sender_folder ON messages(sender_cwd, id)"
             )
             db.execute(
                 "CREATE INDEX IF NOT EXISTS msg_recipient_folder ON messages(recipient_cwd, id)"
             )
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS messages_sender_scope ON messages(sender_scope, id)"
+            )
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS messages_recipient_scope "
+                "ON messages(recipient_scope, id)"
+            )
             db.commit()
         self.path.chmod(0o600)
+
+    @staticmethod
+    def _backfill_message_scopes(db: sqlite3.Connection) -> None:
+        for select_query, update_query in (
+            (
+                "SELECT DISTINCT sender_cwd FROM messages WHERE sender_cwd IS NOT NULL",
+                "UPDATE messages SET sender_scope = ? WHERE sender_cwd = ?",
+            ),
+            (
+                "SELECT DISTINCT recipient_cwd FROM messages WHERE recipient_cwd IS NOT NULL",
+                "UPDATE messages SET recipient_scope = ? WHERE recipient_cwd = ?",
+            ),
+        ):
+            folders = cast(
+                "list[tuple[str]]",
+                db.execute(select_query).fetchall(),
+            )
+            for (folder,) in folders:
+                db.execute(update_query, (routing_scope(folder), folder))
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=10)
@@ -231,7 +296,7 @@ class Store:
             )
 
     def agents(self, project: str | None = None) -> list[Agent]:
-        """List sessions without a recorded end; presence is not guaranteed."""
+        """List sessions active within the last day; presence is not guaranteed."""
         clauses = ["ended_at IS NULL"]
         parameters: list[str] = []
         if project is not None:
@@ -244,7 +309,8 @@ class Store:
         return self._read_agents([], [])
 
     def _read_agents(self, clauses: list[str], parameters: list[str]) -> list[Agent]:
-        with closing(self._connect()) as db:
+        with self._transaction() as db:
+            self._expire_idle_agents(db)
             query = "SELECT address, kind, project, last_seen, ended_at FROM agents"
             if clauses:
                 query += " WHERE " + " AND ".join(clauses)
@@ -257,9 +323,19 @@ class Store:
             for row in rows
         ]
 
+    @staticmethod
+    def _expire_idle_agents(db: sqlite3.Connection) -> None:
+        db.execute(
+            "UPDATE agents SET ended_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
+            "WHERE ended_at IS NULL AND last_seen <= "
+            "strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)",
+            (f"-{SESSION_IDLE_HOURS} hours",),
+        )
+
     def is_ended(self, agent_address: str) -> bool:
-        """Whether a host reported the registered session's end."""
-        with closing(self._connect()) as db:
+        """Whether a session ended or has been idle for a day."""
+        with self._transaction() as db:
+            self._expire_idle_agents(db)
             row = cast(
                 "tuple[str | None] | None",
                 db.execute(
@@ -301,9 +377,17 @@ class Store:
             if sender_scope != recipient_row[1] and not cross_folder:
                 raise BusError("Recipient is in another repository or folder; use --cross-folder")
             cursor = db.execute(
-                "INSERT INTO messages(sender, recipient, body, sender_cwd, recipient_cwd) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (sender, recipient, body, sender_context.project, recipient_row[0]),
+                "INSERT INTO messages(sender, recipient, body, sender_cwd, recipient_cwd, "
+                "sender_scope, recipient_scope) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    sender,
+                    recipient,
+                    body,
+                    sender_context.project,
+                    recipient_row[0],
+                    sender_scope,
+                    recipient_row[1],
+                ),
             )
             message_id = cursor.lastrowid
             if message_id is None:
@@ -327,6 +411,17 @@ class Store:
             recipient_cwd=row[5],
             sent_at=row[6],
         )
+
+    def record_wake(self, message_id: int, status: str, via: str, reason: str | None) -> None:
+        """Save the outcome after delivery without changing acknowledgement state."""
+        with self._transaction() as db:
+            cursor = db.execute(
+                "UPDATE messages SET wake_status = ?, wake_via = ?, wake_reason = ?, "
+                "wake_checked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
+                (status, via, reason, message_id),
+            )
+            if cursor.rowcount != 1:
+                raise BusError(f"Unknown message ID {message_id}")
 
     def inbox(self, recipient: str, limit: int = MAX_BATCH) -> list[Message]:
         """Read pending messages without consuming them."""
@@ -359,6 +454,7 @@ class Store:
         self,
         *,
         folder: str | None,
+        repository: str | None = None,
         before: int | None = None,
         after: int | None = None,
         limit: int = MAX_BATCH,
@@ -370,11 +466,21 @@ class Store:
             raise BusError("History cursors must be nonnegative message IDs")
         if before is not None and after is not None:
             raise BusError("Use either --before or --after, not both")
+        if folder is not None and repository is not None:
+            raise BusError("Use either folder or repository scope, not both")
         clauses: list[str] = []
         parameters: list[str | int] = []
         if folder is not None:
             clauses.append("(sender_cwd = ? OR recipient_cwd = ?)")
             parameters.extend((folder, folder))
+        if repository is not None:
+            scope = routing_scope(repository)
+            clauses.append(
+                "(sender_scope = ? OR recipient_scope = ? OR "
+                "(sender_scope IS NULL AND sender_cwd = ?) OR "
+                "(recipient_scope IS NULL AND recipient_cwd = ?))"
+            )
+            parameters.extend((scope, scope, repository, repository))
         if before is not None:
             clauses.append("id < ?")
             parameters.append(before)
@@ -386,10 +492,11 @@ class Store:
         parameters.append(limit)
         with closing(self._connect()) as db:
             rows = cast(
-                "list[tuple[int, str, str, str, str | None, str | None, str, str | None]]",
+                "list[HistoryRow]",
                 db.execute(
                     "SELECT id, sender, recipient, body, sender_cwd, recipient_cwd, "  # noqa: S608
-                    f"sent_at, acknowledged_at FROM messages{where} ORDER BY id {order} LIMIT ?",
+                    "sent_at, acknowledged_at, wake_status, wake_via, wake_reason, "
+                    f"wake_checked_at FROM messages{where} ORDER BY id {order} LIMIT ?",
                     parameters,
                 ).fetchall(),
             )
@@ -403,6 +510,10 @@ class Store:
                 recipient_cwd=row[5],
                 sent_at=row[6],
                 acknowledged_at=row[7],
+                wake_status=row[8],
+                wake_via=row[9],
+                wake_reason=row[10],
+                wake_checked_at=row[11],
             )
             for row in rows
         ]

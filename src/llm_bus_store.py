@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 MAX_MESSAGE_BYTES = 64 * 1024
 MAX_BATCH = 100
+SESSION_IDLE_HOURS = 24
 DB_ENV = "LLM_BUS_DB"
 WINDOWS_DATA_ENV = "LOCALAPPDATA"
 GIT_ENV_PREFIX = "GIT_"  # pylint: disable=clean-code-business-policy-literal
@@ -231,7 +232,7 @@ class Store:
             )
 
     def agents(self, project: str | None = None) -> list[Agent]:
-        """List sessions without a recorded end; presence is not guaranteed."""
+        """List sessions active within the last day; presence is not guaranteed."""
         clauses = ["ended_at IS NULL"]
         parameters: list[str] = []
         if project is not None:
@@ -244,7 +245,8 @@ class Store:
         return self._read_agents([], [])
 
     def _read_agents(self, clauses: list[str], parameters: list[str]) -> list[Agent]:
-        with closing(self._connect()) as db:
+        with self._transaction() as db:
+            self._expire_idle_agents(db)
             query = "SELECT address, kind, project, last_seen, ended_at FROM agents"
             if clauses:
                 query += " WHERE " + " AND ".join(clauses)
@@ -257,9 +259,19 @@ class Store:
             for row in rows
         ]
 
+    @staticmethod
+    def _expire_idle_agents(db: sqlite3.Connection) -> None:
+        db.execute(
+            "UPDATE agents SET ended_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
+            "WHERE ended_at IS NULL AND last_seen <= "
+            "strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)",
+            (f"-{SESSION_IDLE_HOURS} hours",),
+        )
+
     def is_ended(self, agent_address: str) -> bool:
-        """Whether a host reported the registered session's end."""
-        with closing(self._connect()) as db:
+        """Whether a session ended or has been idle for a day."""
+        with self._transaction() as db:
+            self._expire_idle_agents(db)
             row = cast(
                 "tuple[str | None] | None",
                 db.execute(

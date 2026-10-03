@@ -151,6 +151,6 @@ Application modules live directly in `src/`; tests live in `tests/`. `poe check`
 
 ## Branch workflow
 
-Create feature and fix branches from `develop` and open pull requests back into `develop`. Promote changes from `develop` to `staging`, then from `staging` to `main`, using a separate pull request and merge commit for each promotion. Keep the permanent branches and delete temporary branches after their pull requests merge. See [AGENTS.md](AGENTS.md) for contributor rules.
+`main` is the only permanent branch. Create feature and fix branches from `main` and open pull requests back into `main`. Merge with a merge commit and delete temporary branches after their pull requests merge. See [AGENTS.md](AGENTS.md) for contributor rules.
 
-The `Repository / quality` workflow runs for pull requests into `develop`; promotion pull requests do not repeat it. Check the `develop` results before promoting, because quality results are advisory: GitHub permits merging while checks are pending or after they fail. Follow the source-branch rules in [AGENTS.md](AGENTS.md). A merge into `main` does not deploy anything.
+The `Repository / quality` workflow and macOS/Windows portability checks run for pull requests into `main`. Check their results before merging, because quality results are advisory: GitHub permits merging while checks are pending or after they fail. A merge into `main` does not deploy anything.

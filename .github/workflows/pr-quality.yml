@@ -2,7 +2,7 @@ name: PR · Repository
 
 on:
   pull_request:
-    branches: [develop]
+    branches: [main]
     types: [opened, synchronize, reopened, ready_for_review, edited]
 
 permissions:
@@ -20,13 +20,6 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Validate promotion source
-        env:
-          BASE_BRANCH: ${{ github.base_ref }}
-          HEAD_BRANCH: ${{ github.head_ref }}
-          SOURCE_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
-          TARGET_REPOSITORY: ${{ github.repository }}
-        run: bash tools/ci/validate_promotion_source.sh "$BASE_BRANCH" "$HEAD_BRANCH" "$SOURCE_REPOSITORY" "$TARGET_REPOSITORY"
       - uses: astral-sh/setup-uv@v7
       - run: uv python install 3.12
       - run: uv sync --frozen

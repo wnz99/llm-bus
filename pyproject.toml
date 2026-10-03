@@ -115,11 +115,11 @@ score = false
 known_first_party = ["llm_bus", "llm_bus_install", "llm_bus_store", "llm_bus_wake"]
 
 [tool.poe.tasks]
-format = "ruff format src tests tools/ci plugins/herdr-history"
-format-check = "ruff format --check src tests tools/ci plugins/herdr-history"
-lint = "ruff check src tests tools/ci plugins/herdr-history"
+format = "ruff format src tests plugins/herdr-history"
+format-check = "ruff format --check src tests plugins/herdr-history"
+lint = "ruff check src tests plugins/herdr-history"
 type-check = "basedpyright"
-pylint = "pylint src tools/ci"
+pylint = "pylint src"
 deptry = "deptry ."
 test = "pytest"
 build = "uv build"

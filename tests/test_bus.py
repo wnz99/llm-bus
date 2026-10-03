@@ -785,6 +785,44 @@ def test_cli_filters_peers_and_requires_cross_folder_flag(
     assert wakes == [("codex:codex-one", sent["id"])]
 
 
+def test_claude_deferred_wake_preserves_message_for_next_prompt_hook(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    folder = tmp_path / "project"
+    folder.mkdir()
+    path = tmp_path / "bus.sqlite3"
+    recipient = Store(path).register("claude", "recipient", str(folder))
+    monkeypatch.setenv("LLM_BUS_DB", str(path))
+    monkeypatch.setenv("CODEX_THREAD_ID", "sender")
+    monkeypatch.chdir(folder)
+
+    assert main(["send", recipient, "--body", "Please reply"]) == 0
+    output = capsys.readouterr()
+    sent = cast("dict[str, object]", json.loads(output.out))
+    assert cast("dict[str, str]", sent["wake"])["status"] == "unsupported"
+    assert "stored; wake unsupported" in output.err
+    assert Store(path).history(folder=str(folder))[0]["wake_status"] == "unsupported"
+
+    monkeypatch.setattr(
+        "sys.stdin",
+        io.StringIO(
+            json.dumps(
+                {
+                    "session_id": "recipient",
+                    "hook_event_name": "UserPromptSubmit",
+                    "cwd": str(folder),
+                }
+            )
+        ),
+    )
+    assert main(["hook", "claude"]) == 0
+    assert "1 pending message(s)" in capsys.readouterr().out
+    pending = Store(path).inbox(recipient)
+    assert len(pending) == 1
+    assert pending[0]["id"] == sent["id"]
+    assert pending[0]["body"] == "Please reply"
+
+
 def test_send_keeps_message_when_wake_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

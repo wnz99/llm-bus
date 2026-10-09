@@ -48,7 +48,7 @@ To ask another Codex session for a reply, use one command, even when both sessio
 llm-bus send codex:SESSION_ID --body "Please reply when you receive this"
 ```
 
-The response includes the stored message and a `wake` status. `requested` means the host accepted the wake request; it does not prove the recipient handled the message. If wake fails, do not resend blindly: the message is already stored.
+The response includes the stored message and a `wake` status. `requested` means the wake request was submitted; it does not prove the recipient received or handled the message. If wake fails, do not resend blindly: the message is already stored.
 
 ## Wake behavior
 

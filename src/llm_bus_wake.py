@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
+import socket
+import stat
 import subprocess
+from pathlib import Path
 from typing import NotRequired, TypedDict
 
 WAKE_TIMEOUT_SECONDS = 10
 WAKE_FAILED = "failed"
 CLAUDE_WAKE_REASON = (
-    "Claude wake is disabled to preserve prompt drafts; "
-    "pending messages are reported by the next turn hook"
+    "Claude native inbox is unavailable; pending messages are reported by the next turn hook"
 )
+CLAUDE_WAKE_VIA = "Claude inbox socket"
+CLAUDE_SOCKET_FAILURE_REASON = "Claude inbox socket could not be reached; message remains pending"
 
 
 class WakeResult(TypedDict):
@@ -57,7 +63,52 @@ def _wake_codex(session_id: str, message_id: int) -> WakeResult:
     )
 
 
-def wake(recipient: str, message_id: int) -> WakeResult:
+def _wake_claude(session_id: str, message_id: int, socket_path: str | None) -> WakeResult:
+    if not socket_path or os.name == "nt":
+        return {"status": "unsupported", "via": "none", "reason": CLAUDE_WAKE_REASON}
+    failure_status = WAKE_FAILED
+    try:
+        endpoint = Path(socket_path)
+        metadata = endpoint.lstat()
+        if (
+            not endpoint.is_absolute()
+            or not stat.S_ISSOCK(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        ):
+            return {
+                "status": WAKE_FAILED,
+                "via": CLAUDE_WAKE_VIA,
+                "reason": (
+                    "Claude inbox must be a local socket owned by this user with private writes"
+                ),
+            }
+        frame = {
+            "type": "user",
+            "session_id": session_id,
+            "message": {
+                "role": "user",
+                "content": f"Read and handle llm-bus message #{message_id} in your inbox.",
+            },
+            "priority": "next",
+        }
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(WAKE_TIMEOUT_SECONDS)
+            connection.connect(socket_path)
+            failure_status = "unknown"
+            connection.sendall((json.dumps(frame) + "\n").encode("utf-8"))
+    except TimeoutError:
+        return {"status": "unknown", "via": CLAUDE_WAKE_VIA, "reason": "wake request timed out"}
+    except OSError:
+        return {
+            "status": failure_status,
+            "via": CLAUDE_WAKE_VIA,
+            "reason": CLAUDE_SOCKET_FAILURE_REASON,
+        }
+    return {"status": "requested", "via": CLAUDE_WAKE_VIA}
+
+
+def wake(recipient: str, message_id: int, *, claude_socket: str | None = None) -> WakeResult:
     """Request a host turn without risking the already-committed bus message."""
     kind, separator, session_id = recipient.partition(":")
     if not separator or not session_id:
@@ -65,9 +116,5 @@ def wake(recipient: str, message_id: int) -> WakeResult:
     if kind == "codex":
         return _wake_codex(session_id, message_id)
     if kind == "claude":
-        return {
-            "status": "unsupported",
-            "via": "none",
-            "reason": CLAUDE_WAKE_REASON,
-        }
+        return _wake_claude(session_id, message_id, claude_socket)
     return {"status": "unsupported", "via": "none", "reason": "Unknown recipient kind"}

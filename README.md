@@ -57,11 +57,13 @@ The response includes the stored message and a `wake` status. `requested` means 
 | Recipient | Automatic wake path | Limit |
 | --- | --- | --- |
 | Codex | `codex queue` with the recipient's session ID | Requires `codex` on `PATH` and a reachable session. |
-| Claude Code | Deferred to the next turn hook (`unsupported`) | No terminal input is sent, preserving any prompt draft. |
+| Claude Code | Native inbox Unix socket on macOS and Linux | Requires a registered socket and Claude inbound delivery permission; no terminal input is sent. |
 
-The wake status is `requested`, `failed`, `unknown` (timeout; the host might still have accepted it), or `unsupported`. The wake prompt contains only the bus message ID, never the message body. A roster entry and a successful wake request do not prove that the recipient is online or has replied. Without a wake, the hooks report pending messages at the recipient's next turn. Claude automatic wake is disabled because `herdr agent prompt` types text and Enter into the terminal, which can append to and submit an unfinished user prompt. Checking agent state first cannot prevent typing races. Messages remain pending until Claude reads and acknowledges them. Claude's native `SendMessage` remains an option for Claude-to-Claude coordination outside Herdr; a shell command cannot invoke that in-session tool. See [Claude cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging).
+The wake status is `requested`, `failed`, `unknown` (timeout; the host might still have received it), or `unsupported`. The wake prompt contains only the bus message ID, never the message body. For Claude, `requested` means the frame was written to the native socket; inbound controls may still hold or refuse it. A successful request does not prove delivery or handling. Messages remain pending until the recipient reads and acknowledges them. Without a wake, hooks report pending messages at the recipient's next turn.
 
-Claude may hold a native message instead of delivering it when the sending and receiving sessions have different permission-mode classes. To accept native messages from your other Claude sessions without a per-message dialog, select **Messages from your other sessions: accept** in Claude's `/config`, or set `crossSessionInbound` in your user-level `settings.json` under `.claude`:
+Claude Code v2.1.224+ exposes `CLAUDE_CODE_MESSAGING_SOCKET` to hooks and shell commands. Restart Claude or run `llm-bus whoami` inside its shell tool after upgrading llm-bus to register the endpoint. Native messages enter Claude's queue between tool calls and can start a turn while idle, preserving the prompt draft. The bus sends a session-targeted JSON frame and never uses `herdr agent prompt`, which can submit unfinished user input. No messaging tokens are stored. Missing sockets and Windows named pipes use deferred notification (`unsupported`); unreachable sockets report `failed`. See [Claude's inbox socket](https://code.claude.com/docs/en/cross-session-messaging#the-sessions-inbox-socket).
+
+Claude's inbound controls apply to bus wake frames. The bus does not assert a sender permission-mode class, so Claude sessions that bypass permission prompts may hold the wake for approval by default. To accept native messages without a per-message dialog, select **Messages from your other sessions: accept** in Claude's `/config`, or set `crossSessionInbound` in your user-level `settings.json` under `.claude`:
 
 ```json
 {
@@ -69,7 +71,7 @@ Claude may hold a native message instead of delivering it when the sending and r
 }
 ```
 
-This setting affects native Claude messages, not `llm-bus send`. A project-level setting cannot relax the user-level inbound rule. The recipient's own permissions still apply to work requested in the message. See [inbound controls](https://code.claude.com/docs/en/cross-session-messaging#control-inbound-messages) and [setting precedence](https://code.claude.com/docs/en/settings-reference#crosssessioninbound).
+This setting affects all native inbound messages, including bus wakes; llm-bus does not change it during installation. A project-level setting cannot relax the user-level inbound rule. The recipient's own permissions still apply to work requested in the message. See [inbound controls](https://code.claude.com/docs/en/cross-session-messaging#control-inbound-messages) and [setting precedence](https://code.claude.com/docs/en/settings-reference#crosssessioninbound).
 
 ## Help agents discover the bus
 

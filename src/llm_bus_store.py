@@ -29,7 +29,8 @@ SCHEMA = """
         project TEXT NOT NULL,
         scope TEXT NOT NULL,
         last_seen TEXT NOT NULL,
-        ended_at TEXT
+        ended_at TEXT,
+        messaging_socket TEXT
     );
     CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY,
@@ -179,6 +180,8 @@ class Store:
             }
             if "ended_at" not in agent_columns:
                 db.execute("ALTER TABLE agents ADD COLUMN ended_at TEXT")
+            if "messaging_socket" not in agent_columns:
+                db.execute("ALTER TABLE agents ADD COLUMN messaging_socket TEXT")
             if "scope" not in agent_columns:
                 db.execute("ALTER TABLE agents ADD COLUMN scope TEXT")
                 projects = cast(
@@ -265,11 +268,30 @@ class Store:
                 db.rollback()
                 raise
 
-    def register(self, kind: str, session_id: str, project: str) -> str:
+    def register(
+        self, kind: str, session_id: str, project: str, *, messaging_socket: str | None = None
+    ) -> str:
         """Upsert session address without deleting its pending messages."""
         scope = routing_scope(project)
         with self._transaction() as db:
-            return self._upsert_agent(db, kind, session_id, project, scope)
+            agent_address = self._upsert_agent(db, kind, session_id, project, scope)
+            db.execute(
+                "UPDATE agents SET messaging_socket = ? WHERE address = ?",
+                (messaging_socket if kind == "claude" else None, agent_address),
+            )
+            return agent_address
+
+    def messaging_socket(self, agent_address: str) -> str | None:
+        """Read the native endpoint reported by the recipient's own hook."""
+        with closing(self._connect()) as db:
+            row = cast(
+                "tuple[str | None] | None",
+                db.execute(
+                    "SELECT messaging_socket FROM agents WHERE address = ? AND ended_at IS NULL",
+                    (agent_address,),
+                ).fetchone(),
+            )
+        return row[0] if row is not None else None
 
     @staticmethod
     def _upsert_agent(
@@ -290,7 +312,8 @@ class Store:
         """Mark a registered session closed without consuming its pending messages."""
         with self._transaction() as db:
             db.execute(
-                "UPDATE agents SET ended_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
+                "UPDATE agents SET ended_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), "
+                "messaging_socket = NULL "
                 "WHERE address = ?",
                 (address(kind, session_id),),
             )

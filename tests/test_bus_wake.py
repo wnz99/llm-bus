@@ -1,8 +1,13 @@
 """Host wake adapters never undo already-stored messages."""
 
 import json
+import os
 import shutil
+import socket
 import subprocess
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import cast
 
 import pytest
 
@@ -36,7 +41,58 @@ def test_claude_wake_never_sends_terminal_input(monkeypatch: pytest.MonkeyPatch)
     assert commands == []
     assert result["status"] == "unsupported"
     assert result["via"] == "none"
-    assert "draft" in result.get("reason", "")
+    assert "next turn hook" in result.get("reason", "")
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or not hasattr(socket, "AF_UNIX"), reason="Unix sockets required"
+)
+def test_claude_native_wake_uses_socket_and_targets_exact_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbid_terminal(_command: list[str]) -> subprocess.CompletedProcess[str]:
+        pytest.fail("Claude wake must never write terminal input")
+
+    monkeypatch.setattr(llm_bus_wake, "_run", forbid_terminal)
+    with (
+        TemporaryDirectory(prefix="bus-", dir="/tmp") as folder,
+        socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server,
+    ):
+        endpoint = Path(folder) / "inbox.sock"
+        server.bind(str(endpoint))
+        endpoint.chmod(0o600)
+        server.listen(1)
+        server.settimeout(2)
+        assert llm_bus_wake.wake("claude:target", 7, claude_socket=str(endpoint)) == {
+            "status": "requested",
+            "via": "Claude inbox socket",
+        }
+        connection = server.accept()[0]
+        with connection:
+            connection.settimeout(2)
+            with connection.makefile("rb") as reader:
+                frame = cast("object", json.loads(reader.readline()))
+        assert frame == {
+            "type": "user",
+            "session_id": "target",
+            "message": {
+                "role": "user",
+                "content": "Read and handle llm-bus message #7 in your inbox.",
+            },
+            "priority": "next",
+        }
+    assert llm_bus_wake.wake("claude:target", 8, claude_socket=str(endpoint))["status"] == "failed"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Unix sockets required")
+def test_claude_wake_refuses_non_socket_and_symlink(tmp_path: Path) -> None:
+    endpoint = tmp_path / "ordinary-file"
+    endpoint.write_text("user draft")
+    link = tmp_path / "link"
+    link.symlink_to(endpoint)
+    for path in (endpoint, link):
+        assert llm_bus_wake.wake("claude:target", 7, claude_socket=str(path))["status"] == "failed"
+    assert endpoint.read_text() == "user draft"
 
 
 def test_codex_wake_queues_message_id(monkeypatch: pytest.MonkeyPatch) -> None:

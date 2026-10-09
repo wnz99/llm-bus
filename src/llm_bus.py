@@ -17,6 +17,7 @@ from llm_bus_store import BusError, SenderContext, Store, default_path
 from llm_bus_wake import wake
 
 CLAUDE_SESSION_ENV = "CLAUDE_CODE_SESSION_ID"
+CLAUDE_SOCKET_ENV = "CLAUDE_CODE_MESSAGING_SOCKET"
 CODEX_THREAD_ENV = "CODEX_THREAD_ID"
 CODEX_SESSION_ENV = "CODEX_SESSION_ID"
 
@@ -96,7 +97,7 @@ def _hook(store: Store, kind: str) -> None:
     if not isinstance(project, str):
         project = str(Path.cwd())
     project = str(Path(project).resolve())
-    agent_address = store.register(kind, session_id, project)
+    agent_address = store.register(kind, session_id, project, messaging_socket=_claude_socket(kind))
     count = store.pending_count(agent_address)
     notice = (
         f"Local agent bus address: {agent_address}; folder: {project}. "
@@ -119,6 +120,10 @@ def _hook(store: Store, kind: str) -> None:
         )
     else:
         print(notice)
+
+
+def _claude_socket(kind: str) -> str | None:
+    return os.environ.get(CLAUDE_SOCKET_ENV) if kind == "claude" else None
 
 
 def _configure_host_hooks(*, install: bool) -> None:
@@ -190,7 +195,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if command == "send":
             result: object = _send(store, args, SenderContext(kind, session_id, project))
         else:
-            agent_address = store.register(kind, session_id, project)
+            agent_address = store.register(
+                kind, session_id, project, messaging_socket=_claude_socket(kind)
+            )
             result = _registered_command(store, command, args, agent_address, project)
         print(json.dumps(result))
     except (
@@ -221,6 +228,12 @@ def _send(store: Store, args: dict[str, object], sender: SenderContext) -> objec
                 "via": "host wake",
                 "reason": "recipient session ended; message remains pending",
             }
+        elif sent["recipient"].startswith("claude:"):
+            wake_result = wake(
+                sent["recipient"],
+                sent["id"],
+                claude_socket=store.messaging_socket(sent["recipient"]),
+            )
         else:
             wake_result = wake(sent["recipient"], sent["id"])
     except Exception as exc:  # pylint: disable=broad-exception-caught

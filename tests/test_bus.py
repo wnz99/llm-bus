@@ -823,6 +823,28 @@ def test_claude_deferred_wake_preserves_message_for_next_prompt_hook(
     assert pending[0]["body"] == "Please reply"
 
 
+def test_claude_hook_registers_socket_without_token_and_clears_on_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "bus.sqlite3"
+    monkeypatch.setenv("LLM_BUS_DB", str(path))
+    endpoint = str(tmp_path / "inbox.sock")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", endpoint)
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "must-not-store-this")
+    recipient = "claude:recipient"
+    for event in ("SessionStart", "SessionEnd"):
+        monkeypatch.setattr(
+            "sys.stdin",
+            io.StringIO(json.dumps({"session_id": "recipient", "hook_event_name": event})),
+        )
+        assert main(["hook", "claude"]) == 0
+        store = Store(path)
+        assert store.messaging_socket(recipient) == (endpoint if event == "SessionStart" else None)
+        assert "must-not-store-this" not in capsys.readouterr().out
+    with sqlite3.connect(path) as db:
+        assert "must-not-store-this" not in "\n".join(db.iterdump())
+
+
 def test_send_keeps_message_when_wake_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

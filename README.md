@@ -282,4 +282,4 @@ Use `uv run --frozen poe format` to apply formatting. Checks remain manual and i
 
 `main` is the only permanent branch. Create feature and fix branches from `main` and open pull requests back into `main`. Merge with a merge commit and delete temporary branches after their pull requests merge. See [AGENTS.md](AGENTS.md) for contributor rules.
 
-The `Repository / quality` workflow and macOS/Windows portability checks run for pull requests into `main`. Check their results before merging, because quality results are advisory: GitHub permits merging while checks are pending or after they fail. A merge into `main` does not deploy anything.
+The `Repository / quality` and `Relay / quality` checks run on Linux for pull requests into `main`. Check their results before merging, because quality results are advisory: GitHub permits merging while checks are pending or after they fail. A merge into `main` does not deploy anything.

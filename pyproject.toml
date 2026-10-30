@@ -29,7 +29,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/llm_bus.py", "src/llm_bus_install.py", "src/llm_bus_store.py", "src/llm_bus_wake.py", "src/llm_bus_policy.py", "src/llm_bus_remote.py", "src/llm_bus_remote_store.py", "src/llm_bus_reports.py", "src/llm_bus_collab_cli.py", "src/llm_bus_collab_daemon.py", "src/llm_bus_collab_identity.py", "src/llm_bus_collab_responder.py", "src/llm_bus_collab_state.py", "src/llm_bus_collab_transport.py", "src/llm_bus_collab_web.py", "src/llm_bus_schema.py", "src/llm_bus_dispatch.py", "src/llm_bus_locks.py"]
+packages = ["src/llm_bus"]
 
 [tool.hatch.build.targets.sdist]
 exclude = ["/cloudflare/node_modules", "/cloudflare/.wrangler", "/cloudflare/dist", "/cloudflare/.dev.vars"]
@@ -53,8 +53,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["PLR2004", "S101", "S603"]
-"src/llm_bus_remote.py" = ["T201"]
-"src/llm_bus.py" = ["T201"] # Printing is the CLI and hook output boundary.
+"src/llm_bus/remote/bridge.py" = ["T201"]
+"src/llm_bus/cli/app.py" = ["T201"] # Printing is the CLI and hook output boundary.
+"src/llm_bus/cli/commands.py" = ["T201"] # Moved CLI output boundary.
+"src/llm_bus/cli/hooks.py" = ["T201"] # Moved hook output boundary.
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
@@ -122,7 +124,7 @@ max-line-length = 100
 score = false
 
 [tool.deptry]
-known_first_party = ["llm_bus", "llm_bus_install", "llm_bus_store", "llm_bus_wake", "llm_bus_policy", "llm_bus_remote", "llm_bus_remote_store", "llm_bus_reports", "llm_bus_collab_cli", "llm_bus_collab_daemon", "llm_bus_collab_identity", "llm_bus_collab_responder", "llm_bus_collab_state", "llm_bus_collab_transport", "llm_bus_collab_web", "llm_bus_schema", "llm_bus_dispatch", "llm_bus_locks"]
+known_first_party = ["llm_bus", "history"] # Standalone Herdr plugin sibling module.
 
 [tool.poe.tasks]
 setup = "sh tools/quality/setup.sh"

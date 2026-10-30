@@ -25,7 +25,12 @@ jobs:
           version: "0.13.1"
       - run: uv python install 3.12
       - run: uv sync --frozen
-      - run: uv run --frozen poe check
+      - name: Run pre-push hook
+        run: |
+          head=$(git rev-parse HEAD)
+          printf 'refs/heads/ci %s refs/heads/ci %s\n' "$head" "$head" | .githooks/pre-push
+      - run: uv run --frozen poe test
+      - run: uv run --frozen poe package-check
 
   relay:
     name: Relay / quality

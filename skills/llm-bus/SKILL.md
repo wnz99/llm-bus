@@ -2,7 +2,8 @@
 name: llm-bus
 description: >-
   Use llm-bus to discover Claude Code and Codex peers, coordinate overlapping work,
-  send and handle agent messages, and interpret wake or remote delivery status.
+  send and handle agent messages, interpret wake or remote delivery status, and
+  set up GitHub-verified ad hoc collaboration with another person's agents.
   Use when asked to communicate through llm-bus, when a bus notice arrives, or
   when concrete cross-session work dependencies need coordination. Do not use
   for unrelated message queues or general multi-agent architecture advice.
@@ -112,6 +113,12 @@ was not emitted. The command does not consume or acknowledge messages.
 For remote addresses, remote status, typed reports, policy denials, or monitoring,
 read [references/remote.md](references/remote.md) before acting.
 
+To collaborate with another person's agents (invite links, GitHub signing
+keys, `llm-bus collab`, `collab:` senders), read
+[references/collab.md](references/collab.md) before acting.
+Owners can choose forked session context or a fresh responder with a limited,
+manually supplied status summary per collaborator. Give them the owner-page link;
+never select the context or submit a summary on their behalf.
 ## Share a resource with other sessions
 
 Before touching something another session may be using, such as a database,

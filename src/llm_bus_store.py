@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NamedTuple, TypedDict, cast
 
+import llm_bus_collab_state
 import llm_bus_policy
 from llm_bus_schema import ensure_schema
 
@@ -268,7 +269,7 @@ def routing_scope(project: str) -> str:
     return f"git:{(folder / common_dir).resolve()}"
 
 
-class Store:
+class Store:  # pylint: disable=too-many-public-methods
     """Durable messages; inbox reads leave items pending until acknowledged."""
 
     path: Path
@@ -626,7 +627,7 @@ class Store:
                 db, sender, recipient, body, cross_folder=cross_folder, reply_to=reply_to
             )
 
-    def send_in_transaction(  # noqa: PLR0913 - same send contract plus caller-owned transaction
+    def send_in_transaction(  # noqa: PLR0913  # pylint: disable=too-many-arguments
         self,
         db: sqlite3.Connection,
         sender: str,
@@ -654,7 +655,7 @@ class Store:
                 "SELECT project, scope FROM agents WHERE address = ?", (recipient,)
             ).fetchone(),
         )
-        if recipient_row is None:
+        if recipient_row is None or recipient.startswith(llm_bus_collab_state.SENDER_PREFIX):
             raise BusError(f"Unknown recipient {recipient!r}; run `llm-bus list` first")
         if sender_scope != recipient_row[1] and not cross_folder:
             raise BusError("Recipient is in another repository or folder; use --cross-folder")
@@ -782,6 +783,8 @@ class Store:
 
     @staticmethod
     def _pending_permitted(row: PendingRow, db: sqlite3.Connection) -> bool:
+        if row.sender.startswith(llm_bus_collab_state.SENDER_PREFIX):
+            return llm_bus_collab_state.exposure_allowed(row.sender, row.recipient)
         if "/" not in row.sender:
             return True
         # Registration can move between rows already fetched in the same page.
@@ -871,6 +874,42 @@ class Store:
                 ).fetchone(),
             )
             return result is not None and self._pending_permitted(PendingRow(*result), db)
+
+    def deliver_collab(self, sender: str, recipient: str, body: str) -> int:
+        """Store daemon-delivered collaboration text for a registered local session.
+
+        The sender row is marked ended so it never appears in `list` and cannot be addressed.
+        """
+        if not sender.startswith(llm_bus_collab_state.SENDER_PREFIX):
+            raise BusError("Collaboration sender must use the collab: prefix")
+        if not body.strip() or len(body.encode("utf-8")) > MAX_MESSAGE_BYTES:
+            raise BusError("Collaboration message is empty or exceeds 64 KiB")
+        with self.transaction() as db:
+            recipient_row = cast(
+                "tuple[str, str] | None",
+                db.execute(
+                    "SELECT project, scope FROM agents WHERE address = ? AND kind != 'collab'",
+                    (recipient,),
+                ).fetchone(),
+            )
+            if recipient_row is None:
+                raise BusError(f"Unknown recipient {recipient!r}")
+            db.execute(
+                "INSERT INTO agents(address, kind, project, scope, last_seen, ended_at) "
+                "VALUES (?, 'collab', '', 'collab', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), "
+                "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) "
+                "ON CONFLICT(address) DO UPDATE SET last_seen = excluded.last_seen",
+                (sender,),
+            )
+            cursor = db.execute(
+                "INSERT INTO messages(sender, recipient, body, recipient_cwd, recipient_scope) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (sender, recipient, body, recipient_row[0], recipient_row[1]),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("SQLite did not return a message ID")
+            self.request_dispatch(db, recipient)
+            return cursor.lastrowid
 
     def inbox(self, recipient: str, limit: int = MAX_BATCH) -> list[Message]:
         """Read pending messages without consuming them."""

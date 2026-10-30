@@ -12,6 +12,8 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+import llm_bus_collab_cli
+from llm_bus_collab_state import CollabError
 from llm_bus_dispatch import dispatch_pending
 from llm_bus_install import configure_hosts, restore_bus_settings, snapshot_host_settings
 from llm_bus_locks import Key, Locks, Request, detach, run_timer
@@ -54,6 +56,14 @@ def host_identity(environment: dict[str, str]) -> tuple[str, str]:
     if codex_id:
         return "codex", codex_id
     raise BusError("No host session ID found; run inside a Claude Code or Codex agent session")
+
+
+def _optional_address() -> str | None:
+    try:
+        kind, session_id = host_identity(dict(os.environ))
+    except BusError:
+        return None
+    return f"{kind}:{session_id}"
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -114,6 +124,7 @@ def _parser() -> argparse.ArgumentParser:
         help="Refresh status reads once, including suspended observations; requires --once",  # pylint: disable=clean-code-business-policy-literal
     )
     commands.add_parser("remote-status", help="Show the latest 100 outgoing remote delivery states")
+    llm_bus_collab_cli.add_parser(commands.add_parser)
     status = commands.add_parser(
         "status", help="Read retained body-free diagnostics without identity or config"
     )
@@ -357,6 +368,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if _human_command(store, command, args):
             return 0
+        if command == "collab":
+            result = llm_bus_collab_cli.run(args, _optional_address())
+            if result is not None:
+                print(json.dumps(result))
+            return 0
         kind, session_id = host_identity(dict(os.environ))
         project = str(Path.cwd().resolve())
         if command == "send":
@@ -369,6 +385,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(result))
     except (
         BusError,
+        CollabError,
         OSError,
         sqlite3.Error,
         json.JSONDecodeError,

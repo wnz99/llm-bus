@@ -25,6 +25,7 @@ dev = [
     "pylint==4.0.8",
     "pytest==9.1.1",
     "ruff==0.16.8",
+    "shellcheck-py==0.11.0.1",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -124,6 +125,13 @@ score = false
 known_first_party = ["llm_bus", "llm_bus_install", "llm_bus_store", "llm_bus_wake", "llm_bus_policy", "llm_bus_remote", "llm_bus_remote_store", "llm_bus_reports", "llm_bus_collab_cli", "llm_bus_collab_daemon", "llm_bus_collab_identity", "llm_bus_collab_responder", "llm_bus_collab_state", "llm_bus_collab_transport", "llm_bus_collab_web", "llm_bus_schema", "llm_bus_dispatch", "llm_bus_locks"]
 
 [tool.poe.tasks]
+setup = "sh tools/quality/setup.sh"
+hooks-install = "sh tools/quality/install-hooks.sh"
+versions = "sh tools/quality/check-versions.sh"
+hygiene = "sh tools/quality/hooks.sh hygiene"
+shellcheck.shell = "shellcheck .githooks/pre-commit .githooks/pre-push tools/quality/*.sh"
+check-static.sequence = ["versions", "hygiene", "shellcheck", "format-check", "lint", "type-check", "pylint", "deptry"]
+fix = "ruff check --fix src tests plugins/herdr-history tools"
 format = "ruff format src tests plugins/herdr-history tools"
 format-check = "ruff format --check src tests plugins/herdr-history tools"
 lint = "ruff check --no-fix src tests plugins/herdr-history tools"
@@ -139,4 +147,4 @@ deptry = "deptry ."
 test = "pytest"
 build = "uv build"
 package-check = "python tools/check_package.py"
-check.sequence = ["format-check", "lint", "type-check", "pylint", "deptry", "test", "package-check"]
+check.sequence = ["check-static", "test", "package-check"]

@@ -121,7 +121,7 @@ Locks are advisory: nothing stops a session that never calls `acquire`. Lock mes
 | `unknown` | The request timed out; the host may still have received it. |
 | `unsupported` | Automatic wake is unavailable; hooks notify on a later turn. |
 
-Codex wakes through `codex queue`; Claude Code uses its native inbox socket on macOS and Linux. Both require a registered, reachable session. If delivery stalls, expand the host details below.
+Codex wakes through `codex queue --resume`; Claude Code uses its native inbox socket on macOS and Linux. Both require a registered, reachable session. If delivery stalls, expand the host details below.
 
 <details>
 <summary>Host requirements, stale notices, and Claude inbound settings</summary>
@@ -134,8 +134,10 @@ Acknowledging a message does not cancel its already queued host notice. With the
 
 | Recipient | Automatic wake path | Limit |
 | --- | --- | --- |
-| Codex | `codex queue` with the recipient's session ID | Requires `codex` on `PATH` and a reachable session. |
+| Codex | `codex queue --resume` with the recipient's session ID | Requires `codex` on `PATH` and a reachable parent session. |
 | Claude Code | Native inbox Unix socket on macOS and Linux | Requires a registered socket and Claude inbound delivery permission; no terminal input is sent. |
+
+Codex's `--resume` requests that the host resume the thread after queueing. Resume is best-effort; an active turn can still defer the notice, and a queued notice does not prove handling. Older Codex versions that reject `--resume` fall back to queueing alone. Codex v2 sub-agents reject direct app-server input: their wake is `unsupported`; address the parent coordinator instead. The bus never redirects a message to another recipient automatically.
 
 The wake status is `requested`, `coalesced`, `failed`, `unknown` (outcome uncertain; the host might still have received it), or `unsupported`. The wake prompt includes the bus message ID and sender address, never the message body. Both hosts receive the same notice, such as `llm-bus message #1231 from codex:SESSION_ID. Read and handle it with llm-bus inbox`. Claude Code may still label its native approval dialog “Another Claude session”; that host label does not identify the bus sender. Read the sender address in the notice or stored inbox message. For Claude, `requested` means the frame was written to the native socket; inbound controls may still hold or refuse it. A successful request does not prove delivery or handling. Messages remain pending until the recipient reads and acknowledges them. Without a wake, hooks report pending messages at the recipient's next turn.
 

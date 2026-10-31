@@ -64,6 +64,7 @@ def _wake_codex(session_id: str, notice: str) -> WakeResult:
     command = [
         binary,
         "queue",
+        "--resume",
         "--thread",
         session_id,
         "--message",
@@ -71,10 +72,23 @@ def _wake_codex(session_id: str, notice: str) -> WakeResult:
     ]
     try:
         result = _run(command)
+        if result.returncode != 0 and "unexpected argument '--resume' found" in result.stderr:
+            # Older Codex rejects the flag before queueing; retrying cannot duplicate a notice.
+            command.remove("--resume")
+            result = _run(command)
     except subprocess.TimeoutExpired:
         return {"status": "unknown", "via": "codex queue", "reason": "wake request timed out"}
     except OSError as exc:
         return {"status": WAKE_FAILED, "via": "codex queue", "reason": str(exc)}
+    if result.returncode != 0 and (
+        "direct app-server input is not allowed for multi-agent v2 sub-agents" in result.stderr
+        or "direct app-server input is not allowed for unloaded spawned sub-agents" in result.stderr
+    ):
+        return {
+            "status": "unsupported",
+            "via": "codex queue",
+            "reason": "Codex sub-agent wakes are unsupported; address its parent coordinator",
+        }
     return (
         {"status": "requested", "via": "codex queue"}
         if result.returncode == 0

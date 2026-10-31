@@ -474,12 +474,56 @@ def test_codex_wake_queues_message_id_and_sender(
         [
             "/bin/codex",
             "queue",
+            "--resume",
             "--thread",
             "session-123",
             "--message",
             f"llm-bus message #42 from {sender}. Read and handle it with `llm-bus inbox`.",
         ]
     ]
+
+
+def test_codex_legacy_queue_retries_only_rejected_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands: list[list[str]] = []
+
+    def codex_path(_name: str) -> str:
+        return "/bin/codex"
+
+    def run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        commands.append(command.copy())
+        if "--resume" in command:
+            return subprocess.CompletedProcess(
+                command, 2, "", "error: unexpected argument '--resume' found"
+            )
+        return subprocess.CompletedProcess(command, 0, "Queued", "")
+
+    monkeypatch.setattr(shutil, "which", codex_path)
+    monkeypatch.setattr(llm_bus_wake, "_run", run)
+    assert llm_bus_wake.wake("codex:target", 42, "codex:source")["status"] == "requested"
+    assert len(commands) == 2
+    assert "--resume" in commands[0]
+    assert commands[1] == [arg for arg in commands[0] if arg != "--resume"]
+
+
+def test_codex_subagent_rejection_is_unsupported(monkeypatch: pytest.MonkeyPatch) -> None:
+    def codex_path(_name: str) -> str:
+        return "/bin/codex"
+
+    def run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            "",
+            "direct app-server input is not allowed for multi-agent v2 sub-agents (code -32600)",
+        )
+
+    monkeypatch.setattr(shutil, "which", codex_path)
+    monkeypatch.setattr(llm_bus_wake, "_run", run)
+    assert llm_bus_wake.wake("codex:child", 42, "codex:source") == {
+        "status": "unsupported",
+        "via": "codex queue",
+        "reason": "Codex sub-agent wakes are unsupported; address its parent coordinator",
+    }
 
 
 def test_missing_host_and_timeout_report_wake_state(monkeypatch: pytest.MonkeyPatch) -> None:

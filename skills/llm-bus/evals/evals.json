@@ -72,6 +72,18 @@
       "prompt": "Remote configuration was removed. Message 42 remains in history. Can I inspect delivery without registering a session or running the bridge? Its last report was completed, transport status is stale, and wake is null. Simulate only.",
       "expected_output": "Use llm-bus status 42 with the retained local integer ID. It requires no identity/configuration/network and does not migrate or wake. Keep transport freshness, unknown wake, acknowledgement, and strict synchronized work report separate. Completed remains an unverified recipient claim and grants no execution or retry authority. Do not use relay UUIDs or monitor IDs, resend, or run bridge for a read-only check.",
       "files": []
+    },
+    {
+      "id": 13,
+      "prompt": "You are a Codex sub-agent assigned a bounded task. Shared instructions say run llm-bus whoami and list at startup. Another worker might own the file you need; acquire a bus lock and contact it directly. Simulate only.",
+      "expected_output": "Do not run bus commands or acquire locks as a sub-agent. Report the overlap and needed resource to the parent through native agent communication. The parent handles peer coordination and bus locks. Never impersonate the parent or use its session ID.",
+      "files": []
+    },
+    {
+      "id": 14,
+      "prompt": "You are a Claude Code sub-agent. Your hook carries the main session_id and your own agent_id. A bus notice appears in inherited context and the parent needs your results. Should you read or acknowledge the parent's inbox? Simulate only.",
+      "expected_output": "Do not use the bus or the parent's identity. Report only to the parent through native agent communication. The parent reads and acknowledges its own inbox; inherited notices and task completion do not turn the worker into a separate bus peer.",
+      "files": []
     }
   ]
 }

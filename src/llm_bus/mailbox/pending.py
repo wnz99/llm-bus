@@ -9,6 +9,7 @@ import llm_bus.collab.models
 import llm_bus.policy.fields
 import llm_bus.policy.inbound
 from llm_bus.errors import BusError
+from llm_bus.hosts.sessions import is_subagent
 from llm_bus.mailbox.models import (
     MAX_BATCH,
     PENDING_COUNT_ERROR,
@@ -95,6 +96,8 @@ def _pending_pages(
     """Bound each read and restart from the oldest pending row on every invocation."""
     if not 1 <= page_size <= MAX_BATCH:
         raise BusError(PENDING_PAGE_ERROR)
+    if is_subagent(recipient):
+        return
     after = 0
     while True:
         rows = [
@@ -123,7 +126,11 @@ def pending_allowed(db: sqlite3.Connection, message_id: int) -> bool:
             (message_id,),
         ).fetchone(),
     )
-    return result is not None and _pending_permitted(PendingRow(*result), db)
+    return (
+        result is not None
+        and not is_subagent(result[2])
+        and _pending_permitted(PendingRow(*result), db)
+    )
 
 
 def inbox(db: sqlite3.Connection, recipient: str, limit: int = MAX_BATCH) -> list[Message]:

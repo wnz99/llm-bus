@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+from llm_bus.hosts.sessions import is_subagent
 from llm_bus.locks.models import (
     CATALOG_IDLE_DAYS,
     DEFAULT_TTL_MINUTES,
@@ -59,6 +60,13 @@ def read_lock(db: sqlite3.Connection, key: Key) -> Lock | None:
 def reap(db: sqlite3.Connection) -> list[Notice]:
     """Pass lapsed or abandoned locks to their first waiter, then raise any due checks."""
     expire_idle_agents(db)
+    waiters = cast(
+        "list[tuple[str]]",
+        db.execute("SELECT DISTINCT waiter FROM resource_lock_waiters").fetchall(),
+    )
+    for (waiter,) in waiters:
+        if is_subagent(waiter):
+            db.execute("DELETE FROM resource_lock_waiters WHERE waiter=?", (waiter,))
     db.execute(
         "DELETE FROM resource_lock_waiters WHERE waiter IN "
         "(SELECT address FROM agents WHERE ended_at IS NOT NULL)"
@@ -162,7 +170,7 @@ def enqueue(
         "reason=COALESCE(excluded.reason,reason)",
         (*key, agent_address, reason),
     )
-    if not request.notify:
+    if not request.notify or is_subagent(holder):
         return []
     due = cast(
         "tuple[int]",

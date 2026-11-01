@@ -46,6 +46,15 @@ Close both agents before installing or uninstalling, and avoid simultaneous edit
 | Codex | `.codex/hooks.json` under the user's home | Set `CODEX_HOME` before installing and starting Codex. |
 | Claude Code | `.claude/settings.json` under the user's home | Set `CLAUDE_CONFIG_DIR` before installing and starting Claude Code. |
 
+Installation also records the selected Codex home in
+`~/.local/share/llm-bus/native-hosts.json`. All bus callers, including Claude and
+bridges, use these machine-owned bindings to identify Codex children regardless
+of their own `CODEX_HOME`. Run `llm-bus install` for each Codex home you use,
+including once after upgrading from a version without these bindings. Previous
+installed homes remain recorded when another is added. Before first installation,
+lookup uses the calling process's Codex home; custom-home installations must
+complete setup before enabling mixed-host messaging. Uninstall retains the bindings.
+
 GUI applications, services, SSH sessions, and shell tools can inherit different environments. An interactive terminal finding `llm-bus` does not prove a hook can find a bare command. The installed absolute paths avoid that dependency for hooks. Agent shell commands still need the tool directory on `PATH`, and Codex wake requests still need `codex` on the sender's `PATH`. Configure the environment of the process that actually launches the agent or service; changing only `.zshrc` or `.bashrc` may not affect it. Restart that process after environment changes. See [OpenAI's hook guide](https://learn.chatgpt.com/docs/hooks) and [Claude's hook reference](https://code.claude.com/docs/en/hooks).
 
 Restart Codex and Claude Code. In Codex, open `/hooks` and review and trust the bus hooks; untrusted hooks do not run. Remove any older project-level copies of the bus hooks to avoid duplicate notifications. See the [Codex](https://developers.openai.com/codex/hooks/) and [Claude Code](https://code.claude.com/docs/en/hooks) hook guides.
@@ -156,6 +165,21 @@ This setting affects all native inbound messages, including bus wakes; llm-bus d
 </details>
 
 ## Help agents discover the bus
+
+Only main agents use the bus in Claude Code and Codex. Sub-agents report to their
+parent through native agent communication; the parent handles bus messages and
+resource locks. Registered sessions seen within the last day are not necessarily
+running. Codex child sessions identified in native host metadata are excluded
+from discovery and delivery; the bridge withdraws their older advertisements.
+History is retained. Claude child hooks carrying `agent_id` do not register an
+endpoint or change their parent's lifecycle. No message is redirected automatically.
+Claude workers can share the parent's shell session identity; standalone CLI calls
+cannot reliably distinguish them. The main-agent rule in instructions and the
+skill forbids workers from using that inherited identity. These checks are not a
+sandbox against processes sharing the same operating-system account. Codex native
+metadata read errors stop affected operations rather than guessing a main role.
+Existing child-held resource locks keep their ordinary expiry/end rules; child
+waiters are removed, and undeliverable reminders do not block main-agent operations.
 
 Optionally install the [llm-bus skill](skills/llm-bus/SKILL.md) to help agents
 use messaging, coordinate work, troubleshoot delivery, and respect remote policy.

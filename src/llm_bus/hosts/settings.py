@@ -6,6 +6,7 @@ import json
 import os
 import stat
 from pathlib import Path
+from typing import cast
 
 from llm_bus.errors import BusError
 from llm_bus.hosts import files
@@ -14,6 +15,39 @@ from llm_bus.hosts.restore import restore_written
 
 CODEX_HOME_ENV = "CODEX_HOME"
 CLAUDE_CONFIG_DIR_ENV = "CLAUDE_CONFIG_DIR"
+CODEX_HOMES_KEY = "codex_homes"
+
+
+def native_metadata_path(home: Path) -> Path:
+    return home / ".local/share/llm-bus/native-hosts.json"
+
+
+def codex_metadata_homes(home: Path) -> list[Path]:
+    """Use installed host bindings across shells; retain legacy lookup before installation."""
+    path = native_metadata_path(home)
+    content = files.current_bytes(path)
+    if content is None:
+        return [codex_settings_path(home).parent.resolve()]
+    settings = files.parse_settings(path, content)
+    values = settings.get(CODEX_HOMES_KEY)
+    if set(settings) != {CODEX_HOMES_KEY} or not isinstance(values, list) or not values:
+        raise BusError("Invalid native host metadata bindings; rerun llm-bus install")
+    paths: list[Path] = []
+    for value in cast("list[object]", values):
+        if not isinstance(value, str) or not Path(value).is_absolute():
+            raise BusError("Native Codex home bindings must be absolute paths")
+        paths.append(Path(value))
+    return paths
+
+
+def remember_codex_home(home: Path) -> None:
+    """Persist installed homes so bridges and Claude do not guess another process's home."""
+    path = native_metadata_path(home)
+    before = files.current_bytes(path)
+    homes = {*codex_metadata_homes(home), codex_settings_path(home).parent.resolve()}
+    settings: dict[str, object] = {CODEX_HOMES_KEY: sorted(str(item) for item in homes)}
+    if before is None or files.parse_settings(path, before) != settings:
+        files.write_settings(path, settings, before, 0o600)
 
 
 def codex_settings_path(home: Path) -> Path:
@@ -65,6 +99,8 @@ def configure_hosts(
                 claude_path, claude_settings, snapshots[1][1], snapshots[1][2]
             )
             written.append((snapshots[1], content, "claude"))
+        if install:
+            remember_codex_home(home)
     except (BusError, OSError):
         for snapshot, content, kind in reversed(written):
             restore_written(snapshot, content, kind)

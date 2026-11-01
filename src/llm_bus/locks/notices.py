@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+from llm_bus.hosts.sessions import is_subagent
 from llm_bus.locks.models import (
     HOOK_DESCRIPTION_CHARS,
     HOOK_NAME_LIMIT,
@@ -105,12 +106,18 @@ def persist(
 ) -> list[Message]:
     messages: list[Message] = []
     for notice in notices:
+        if is_subagent(notice.recipient):
+            continue
         if notice.sender is None and notice.recipient == agent_address:
             continue
+        sender = notice.sender or agent_address
+        if is_subagent(sender):
+            # A legacy child timer may grant a root waiter after the holder's lease expires.
+            sender = notice.recipient
         messages.append(
             store.send_in_transaction(
                 db,
-                notice.sender or agent_address,
+                sender,
                 notice.recipient,
                 notice.body,
                 cross_folder=True,

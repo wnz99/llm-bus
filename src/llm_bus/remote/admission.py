@@ -6,6 +6,7 @@ import json
 from typing import TYPE_CHECKING, cast
 
 from llm_bus.errors import BusError
+from llm_bus.hosts.sessions import is_subagent
 from llm_bus.policy.inbound import receive_mode
 from llm_bus.remote import outbox
 from llm_bus.remote.models import Delivery, validate_reply_uuid
@@ -57,7 +58,7 @@ def admit_message(
                 (native,),
             ).fetchone(),
         )
-        if recipient is None:
+        if recipient is None or is_subagent(native):
             return None
         mode = receive_mode(item, scope, recipient[1], self.connection)
         if mode == "deny":

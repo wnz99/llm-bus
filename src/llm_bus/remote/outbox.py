@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
 from llm_bus.errors import BusError
+from llm_bus.hosts.sessions import require_main_agent
 from llm_bus.mailbox.models import MAX_MESSAGE_BYTES, address
 from llm_bus.remote.models import Envelope
 from llm_bus.routing import routing_scope
@@ -47,6 +48,7 @@ def enqueue(  # noqa: PLR0913 - additive public API preserves optional keywords
     if not body.strip() or len(body.encode("utf-8")) > MAX_MESSAGE_BYTES:
         raise BusError("Message body must contain 1-65536 UTF-8 bytes")
     native = address(sender.kind, sender.session_id)
+    require_main_agent(native)
     scope = routing_scope(sender.project) if scope is None else scope
     envelope = Envelope(
         id=str(uuid4()), sender=native, recipient=recipient, repo_id=repo_id, body=body

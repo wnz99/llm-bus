@@ -9,12 +9,34 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from llm_bus.errors import BusError
+from llm_bus.hosts import files
 from llm_bus.hosts.settings import configure_hosts
 
 from .support import settings_paths
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def test_failed_native_binding_write_restores_hook_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    codex, claude = settings_paths(tmp_path)
+    codex.write_text('{"hooks": {}}\n')
+    claude.write_text('{"model": "sonnet"}\n')
+    before = [path.read_bytes() for path in (codex, claude)]
+    original = files.atomic_write
+
+    def fail_binding(path: Path, content: bytes, mode: int, expected: bytes | None) -> None:
+        if path.name == "native-hosts.json":
+            raise OSError("simulated native binding failure")
+        original(path, content, mode, expected)
+
+    monkeypatch.setattr(files, "atomic_write", fail_binding)
+    with pytest.raises(OSError, match="native binding failure"):
+        configure_hosts(tmp_path, install=True)
+    assert [path.read_bytes() for path in (codex, claude)] == before
+    assert not (tmp_path / ".local/share/llm-bus/native-hosts.json").exists()
 
 
 def test_install_rejects_invalid_second_file_before_writing_first(tmp_path: Path) -> None:

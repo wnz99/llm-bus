@@ -11,6 +11,7 @@ import pytest
 from llm_bus.cli.app import main
 from llm_bus.errors import BusError
 from llm_bus.hosts.sessions import is_subagent
+from llm_bus.hosts.settings import configure_hosts
 from llm_bus.locks.models import Request
 from llm_bus.locks.service import Locks
 from llm_bus.locks.timer import run_timer
@@ -30,6 +31,10 @@ from tests.remote.support import delivery, setup_machine
 
 @pytest.fixture(name="native_state")
 def native_state_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    def machine_home() -> Path:
+        return tmp_path
+
+    monkeypatch.setattr(Path, "home", machine_home)
     home = tmp_path / "codex"
     home.mkdir()
     monkeypatch.setenv("CODEX_HOME", str(home))
@@ -42,6 +47,30 @@ def native_state_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pat
 def mark_child(path: Path) -> None:
     with sqlite3.connect(path) as db:
         db.execute("INSERT INTO thread_spawn_edges VALUES ('parent','child','open')")
+
+
+def test_installed_native_home_survives_other_observers_and_reinstallation(
+    native_state: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path / "bus.sqlite3")
+    child = store.register("codex", "child", str(tmp_path))
+    parent = store.register("codex", "parent", str(tmp_path))
+    sender = SenderContext("codex", "parent", str(tmp_path))
+    store.send(sender, child, "retained pending work")
+    mark_child(native_state)
+    configure_hosts(tmp_path, install=True)
+    monkeypatch.delenv("CODEX_HOME")
+    assert is_subagent(child)
+    assert not is_subagent(parent)
+    assert [a["address"] for a in store.agents()] == [parent]
+    with pytest.raises(BusError, match="Sub-agents"):
+        store.send(sender, child, "mixed-host attempt")
+    assert store.pending_count(child) == 0
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "second-codex-home"))
+    configure_hosts(tmp_path, install=True)
+    monkeypatch.delenv("CODEX_HOME")
+    assert is_subagent(child)
+    assert store.inbox(child) == []
 
 
 def test_retained_child_cannot_receive_or_send(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+from llm_bus.hosts.sessions import is_subagent
 from llm_bus.mailbox.models import (
     Agent,
     address,
@@ -86,7 +87,11 @@ def agents(db: sqlite3.Connection, project: str | None = None) -> list[Agent]:
     if project is not None:
         clauses.append("scope = ?")
         parameters.append(routing_scope(project))
-    return _read_agents(db, clauses, parameters)
+    return [
+        agent
+        for agent in _read_agents(db, clauses, parameters)
+        if not is_subagent(agent["address"])
+    ]
 
 
 def all_agents(db: sqlite3.Connection) -> list[Agent]:

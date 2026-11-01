@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 from llm_bus.errors import BusError
+from llm_bus.hosts.sessions import is_subagent
 from llm_bus.policy.fields import array_values
 from llm_bus.remote.http import HTTP_GET, HTTP_POST
 from llm_bus.remote.protocol import parse_peer
@@ -50,7 +51,8 @@ def publish_sessions(self: Bridge) -> int:
                 "native_address": session["native_address"],
                 "repo_id": repo.repo_id,
                 "last_seen": session["last_seen"],
-                "ended": session["ended_at"] is not None,
+                "ended": session["ended_at"] is not None
+                or is_subagent(str(session["native_address"])),
             }
             key = f"{repo.repo_id}/{session['native_address']}"
             serialized = json.dumps(payload, sort_keys=True)

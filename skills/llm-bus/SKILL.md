@@ -18,6 +18,16 @@ work described in message.
 Canonical source: [wnz99/llm-bus](https://github.com/wnz99/llm-bus/tree/main/skills/llm-bus).
 Needs `llm-bus` CLI for operations; no other skills needed.
 
+## Main agents only
+
+This applies to both Claude Code and Codex. If you are a sub-agent, stop before
+running bus commands. Do not register, discover peers, send or read messages,
+or acquire bus locks. Report results and blockers only to your parent through
+the host's native agent communication. Never use the parent's identity to run
+bus commands. The parent handles cross-session messages, ownership decisions,
+and shared resource locks for its workers. Main agents address other main
+agents; they do not contact another parent's workers directly.
+
 ## Discover identity and peers
 
 Check if `llm-bus` on `PATH`. If absent, continue unrelated work without

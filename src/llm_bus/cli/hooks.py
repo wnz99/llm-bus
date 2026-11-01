@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 
 from llm_bus.cli.guidance import GUIDANCE_VERSION, HOOK_COUNT_LIMIT, guidance
 from llm_bus.errors import BusError
+from llm_bus.hosts.sessions import is_subagent
 from llm_bus.wake.adapters import parse_wake_notice
 
 if TYPE_CHECKING:
@@ -36,6 +37,22 @@ def hook(store: Store, kind: str) -> None:
         "SessionEnd",
     }:
         raise BusError("Hook input lacks a valid session_id or event")
+    agent_id = hook_data.get("agent_id")
+    if (kind == "claude" and isinstance(agent_id, str) and agent_id) or is_subagent(
+        f"{kind}:{session_id}"
+    ):
+        notice = (
+            "Sub-agent: do not use llm-bus. "
+            "Report only to your parent through native agent communication."
+        )
+        print(
+            json.dumps(
+                {"hookSpecificOutput": {"hookEventName": event, "additionalContext": notice}}
+            )
+            if kind == "codex"
+            else notice
+        )
+        return
     if event == "SessionEnd":
         store.end_session(kind, session_id)
         return

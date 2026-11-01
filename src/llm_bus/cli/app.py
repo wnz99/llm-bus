@@ -17,6 +17,7 @@ from llm_bus.cli.installation import configure_host_hooks
 from llm_bus.cli.parser import build_parser
 from llm_bus.collab.models import CollabError
 from llm_bus.errors import BusError
+from llm_bus.hosts.sessions import require_main_agent
 from llm_bus.mailbox.connection import default_path
 from llm_bus.mailbox.models import SenderContext
 from llm_bus.mailbox.store import Store
@@ -52,7 +53,9 @@ def _optional_address() -> str | None:
         kind, session_id = host_identity(dict(os.environ))
     except BusError:
         return None
-    return f"{kind}:{session_id}"
+    agent_address = f"{kind}:{session_id}"
+    require_main_agent(agent_address)
+    return agent_address
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -82,6 +85,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(json.dumps(result))
             return 0
         kind, session_id = host_identity(dict(os.environ))
+        require_main_agent(f"{kind}:{session_id}")
         project = str(Path.cwd().resolve())
         if command == "send":
             result = send(store, args, SenderContext(kind, session_id, project))

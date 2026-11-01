@@ -12,6 +12,8 @@ import subprocess
 from pathlib import Path
 from typing import NotRequired, TypedDict
 
+from llm_bus.hosts.sessions import is_subagent
+
 WAKE_TIMEOUT_SECONDS = 10
 SQLITE_MAX_MESSAGE_ID = 2**63 - 1
 WAKE_FAILED = "failed"
@@ -145,6 +147,8 @@ def wake(
     recipient: str, message_id: int, sender: str, *, claude_socket: str | None = None
 ) -> WakeResult:
     """Request a host turn without risking the already-committed bus message."""
+    if is_subagent(recipient):
+        return {"status": "unsupported", "via": "none", "reason": "Address the parent main agent"}
     notice = (
         f"llm-bus message #{message_id} from {sender}. Read and handle it with `llm-bus inbox`."
     )

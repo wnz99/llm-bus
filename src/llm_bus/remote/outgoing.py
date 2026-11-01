@@ -6,6 +6,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, cast
 
 from llm_bus.errors import BusError
+from llm_bus.hosts.sessions import is_subagent
 from llm_bus.policy.config import NATIVE, Config
 from llm_bus.policy.fields import IDENTIFIER, object_fields
 from llm_bus.remote import discovery, protocol
@@ -56,6 +57,8 @@ def enqueue_remote(  # noqa: PLR0913 - additive reply keyword preserves callers
 
 def permits_outgoing(self: Bridge, envelope: Envelope) -> bool:
     try:
+        if is_subagent(envelope["sender"]):
+            return False
         current = self.current_config()
     except BusError:
         return False

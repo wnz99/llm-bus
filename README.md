@@ -157,6 +157,14 @@ This setting affects all native inbound messages, including bus wakes; llm-bus d
 
 ## Help agents discover the bus
 
+Only main agents use the bus in Claude Code and Codex. Sub-agents report to their
+parent through native agent communication; the parent handles bus messages and
+resource locks. Registered sessions seen within the last day are not necessarily
+running. Codex child sessions identified in native host metadata are excluded
+from discovery and delivery; the bridge withdraws their older advertisements.
+History is retained. Claude child hooks carrying `agent_id` do not register an
+endpoint or change their parent's lifecycle. No message is redirected automatically.
+
 Optionally install the [llm-bus skill](skills/llm-bus/SKILL.md) to help agents
 use messaging, coordinate work, troubleshoot delivery, and respect remote policy.
 Copy the entire `skills/llm-bus/` directory into your agent's skills directory

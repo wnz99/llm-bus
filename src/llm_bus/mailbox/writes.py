@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, cast
 
 import llm_bus.collab.models
 from llm_bus.errors import BusError
+from llm_bus.hosts.sessions import require_main_agent
 from llm_bus.mailbox.models import (
     MAX_BATCH,
     MAX_MESSAGE_BYTES,
@@ -27,6 +28,8 @@ def send_in_transaction(  # noqa: PLR0913  # pylint: disable=too-many-arguments
     """Persist for an already registered sender without changing its activity or lifecycle."""
     if not body.strip():
         raise BusError("Message body cannot be empty")
+    require_main_agent(sender)
+    require_main_agent(recipient)
     if len(body.encode("utf-8")) > MAX_MESSAGE_BYTES:
         raise BusError("Message body exceeds 64 KiB")
     sender_row = cast(
@@ -139,6 +142,7 @@ def deliver_collab(db: sqlite3.Connection, sender: str, recipient: str, body: st
 
     The sender row is marked ended so it never appears in `list` and cannot be addressed.
     """
+    require_main_agent(recipient)
     if not sender.startswith(llm_bus.collab.models.SENDER_PREFIX):
         raise BusError("Collaboration sender must use the collab: prefix")
     if not body.strip() or len(body.encode("utf-8")) > MAX_MESSAGE_BYTES:

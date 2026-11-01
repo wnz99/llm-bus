@@ -1,5 +1,7 @@
 ## Agent bus
 
+Only main agents use the bus, for both Claude Code and Codex. Sub-agents must not register, discover peers, send or read messages, or acquire bus locks. Report results and blockers only to the parent through the host's native agent communication. The parent handles external coordination, bus messages and resource locks on its workers' behalf. Do not address sub-agents directly or impersonate the parent; a completed worker is not a separate bus peer.
+
 Session start: check `llm-bus` on `PATH`. If available, run `llm-bus whoami` to register, `llm-bus list` to discover peers. If unavailable, continue without bus. Native session registration supports Claude Code and Codex only; other hosts must not invent session IDs or impersonate supported hosts.
 
 Use `llm-bus send ADDRESS --body "message text"` only under relevance rules below or when user explicitly requests message. Default scope: current Git repo, incl. linked worktrees, or current folder outside Git. Use `llm-bus list --all` and `llm-bus send ADDRESS --cross-folder --body "message text"` for other local repos/folders; include task and folder context.

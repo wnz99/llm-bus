@@ -164,6 +164,13 @@ running. Codex child sessions identified in native host metadata are excluded
 from discovery and delivery; the bridge withdraws their older advertisements.
 History is retained. Claude child hooks carrying `agent_id` do not register an
 endpoint or change their parent's lifecycle. No message is redirected automatically.
+Claude workers can share the parent's shell session identity; standalone CLI calls
+cannot reliably distinguish them. The main-agent rule in instructions and the
+skill forbids workers from using that inherited identity. These checks are not a
+sandbox against processes sharing the same operating-system account. Codex native
+metadata read errors stop affected operations rather than guessing a main role.
+Existing child-held resource locks keep their ordinary expiry/end rules; child
+waiters are removed, and undeliverable reminders do not block main-agent operations.
 
 Optionally install the [llm-bus skill](skills/llm-bus/SKILL.md) to help agents
 use messaging, coordinate work, troubleshoot delivery, and respect remote policy.

@@ -11,14 +11,20 @@ import pytest
 from llm_bus.cli.app import main
 from llm_bus.errors import BusError
 from llm_bus.hosts.sessions import is_subagent
+from llm_bus.locks.models import Request
+from llm_bus.locks.service import Locks
+from llm_bus.locks.timer import run_timer
 from llm_bus.mailbox.models import SenderContext
 from llm_bus.mailbox.store import Store
 from llm_bus.remote.bridge import Bridge
 from llm_bus.remote.discovery import publish_sessions
 from llm_bus.remote.outgoing import permits_outgoing
 from llm_bus.remote.store import RemoteStore
+from llm_bus.reports.store import Reports
+from llm_bus.reports.sync import submit_reports
 from llm_bus.wake.adapters import wake
 from llm_bus.wake.dispatch import dispatch_pending
+from tests.locks.support import no_timer, overdue, record_wakes
 from tests.remote.support import delivery, setup_machine
 
 
@@ -125,7 +131,11 @@ def test_claude_child_hook_cannot_change_parent_lifecycle(
         ),
     )
     assert main(["hook", "claude"]) == 0
-    assert "Report only to your parent" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    if event == "SessionEnd":
+        assert output == ""
+    else:
+        assert "Report only to your parent" in output
     assert not store.is_ended(parent)
     assert len(store.all_agents()) == 1
 
@@ -169,3 +179,133 @@ def test_codex_child_hook_and_cli_do_not_register(
     result = cast("dict[str, dict[str, str]]", json.loads(capsys.readouterr().out))
     assert "Report only to your parent" in result["hookSpecificOutput"]["additionalContext"]
     assert Store(tmp_path / "bus.sqlite3").all_agents() == []
+
+
+def test_legacy_child_locks_do_not_block_parent_hooks_or_handoff(
+    native_state: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr("llm_bus.locks.service.schedule_check", no_timer)
+    wakes = record_wakes(monkeypatch)
+    store = Store(tmp_path / "bus.sqlite3")
+    monkeypatch.setenv("LLM_BUS_DB", str(store.path))
+    child = store.register("codex", "child", str(tmp_path))
+    waiter = store.register("claude", "waiter", str(tmp_path))
+    children = Locks(store, child, str(tmp_path))
+    parents = Locks(store, store.register("codex", "parent", str(tmp_path)), str(tmp_path))
+    legacy = children.key("legacy-db", shared=False)
+    deploy = parents.key("deploy", shared=False)
+    children.acquire(legacy, Request(check="1h", describe="existing child work"))
+    parents.acquire(deploy, Request(check="1h", describe="deploy"))
+    children.acquire(deploy, Request(check="1h"))
+    Locks(store, waiter, str(tmp_path)).acquire(deploy, Request(check="1h"))
+    with store.transaction() as db:
+        expiry = cast(
+            "tuple[str]",
+            db.execute(
+                "SELECT expires_at FROM resource_locks WHERE resource='legacy-db'"
+            ).fetchone(),
+        )
+    overdue(store)
+    mark_child(native_state)
+    monkeypatch.setattr(
+        "sys.stdin",
+        io.StringIO(
+            json.dumps(
+                {"session_id": "parent", "hook_event_name": "SessionStart", "cwd": str(tmp_path)}
+            )
+        ),
+    )
+    assert main(["hook", "codex"]) == 0
+    assert "Local agent bus address" in capsys.readouterr().out
+    parents.status(None, every_scope=True)
+    queued = parents.acquire(legacy, Request(check="1h", notify=True))
+    assert queued["status"] == "waiting"
+    assert queued["notified"] is False
+    with store.transaction() as db:
+        assert db.execute(
+            "SELECT holder,expires_at FROM resource_locks WHERE resource='legacy-db'"
+        ).fetchone() == (child, expiry[0])
+        assert (
+            db.execute("SELECT 1 FROM resource_lock_waiters WHERE waiter=?", (child,)).fetchone()
+            is None
+        )
+        assert db.execute("SELECT 1 FROM messages WHERE recipient=?", (child,)).fetchone() is None
+    assert parents.release(deploy)["granted_to"] == waiter
+    assert child not in wakes
+
+
+def test_legacy_child_timer_grants_main_waiter_only_after_expiry(
+    native_state: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("llm_bus.locks.service.schedule_check", no_timer)
+    record_wakes(monkeypatch)
+    store = Store(tmp_path / "bus.sqlite3")
+    child = store.register("codex", "child", str(tmp_path))
+    parent = store.register("codex", "parent", str(tmp_path))
+    children = Locks(store, child, str(tmp_path))
+    parents = Locks(store, parent, str(tmp_path))
+    key = children.key("legacy-db", shared=False)
+    children.acquire(key, Request(check="1h", describe="existing child work"))
+    parents.acquire(key, Request(check="1h"))
+    mark_child(native_state)
+    with store.transaction() as db:
+        db.execute(
+            "UPDATE resource_locks SET expires_at='2000-01-01T00:00:00Z',check_at='2000-01-01T00:00:00Z'"
+        )
+    run_timer(store, key)
+    with store.transaction() as db:
+        holder = cast("tuple[str]", db.execute("SELECT holder FROM resource_locks").fetchone())
+    assert holder[0] == parent
+    messages = store.inbox(parent)
+    assert len(messages) == 1
+    assert "lock granted" in messages[0]["body"]
+    assert messages[0]["sender"] == parent
+
+
+def test_queued_child_reports_are_retained_without_upload(
+    native_state: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setenv("LLM_BUS_CONFIG", str(config_path))
+    store, config = setup_machine(tmp_path, "b")
+    with config_path.open("a") as stream:
+        stream.write('send_reports = ["received"]\n')
+    store.register("codex", "child", str(tmp_path / "repo"))
+    remote = RemoteStore(store, config.connection)
+    item = delivery()
+    item["recipient"] = "b/xyz/codex:child"
+    admission = remote.admit_message(item, config.repositories[0].scope)
+    assert admission is not None
+    assert admission[1] is not None
+    reports = Reports(store, config.connection)
+    reports.enqueue(admission[1], "codex:child", "received", None)
+    mark_child(native_state)
+    bridge = Bridge(store, config)
+
+    def forbidden(*_args: object, **_kwargs: object) -> object:
+        pytest.fail("Neither a receipt nor a report may upload for a child")
+
+    monkeypatch.setattr(bridge.relay, "request", forbidden)
+    assert submit_reports(bridge) == 0
+    assert len(reports.pending()) == 1
+    assert len(store.history(folder=None)) == 1
+
+
+def test_codex_child_session_end_retires_legacy_registration(
+    native_state: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "bus.sqlite3"
+    monkeypatch.setenv("LLM_BUS_DB", str(path))
+    store = Store(path)
+    child = store.register("codex", "child", str(tmp_path))
+    mark_child(native_state)
+    monkeypatch.setattr(
+        "sys.stdin",
+        io.StringIO(json.dumps({"session_id": "child", "hook_event_name": "SessionEnd"})),
+    )
+    assert main(["hook", "codex"]) == 0
+    assert store.is_ended(child)
+    assert len(store.all_agents()) == 1

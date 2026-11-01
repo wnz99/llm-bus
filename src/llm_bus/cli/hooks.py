@@ -38,9 +38,12 @@ def hook(store: Store, kind: str) -> None:
     }:
         raise BusError("Hook input lacks a valid session_id or event")
     agent_id = hook_data.get("agent_id")
-    if (kind == "claude" and isinstance(agent_id, str) and agent_id) or is_subagent(
-        f"{kind}:{session_id}"
-    ):
+    claude_child = kind == "claude" and isinstance(agent_id, str) and bool(agent_id)
+    if event == "SessionEnd":
+        if not claude_child:
+            store.end_session(kind, session_id)
+        return
+    if claude_child or is_subagent(f"{kind}:{session_id}"):
         notice = (
             "Sub-agent: do not use llm-bus. "
             "Report only to your parent through native agent communication."
@@ -52,9 +55,6 @@ def hook(store: Store, kind: str) -> None:
             if kind == "codex"
             else notice
         )
-        return
-    if event == "SessionEnd":
-        store.end_session(kind, session_id)
         return
     project = hook_data.get("cwd")
     if not isinstance(project, str):

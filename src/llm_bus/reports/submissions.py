@@ -6,6 +6,7 @@ import json
 from typing import TYPE_CHECKING, cast
 
 from llm_bus.errors import BusError
+from llm_bus.hosts.sessions import is_subagent
 from llm_bus.policy.config import load_config
 from llm_bus.reports.lifecycle import TERMINAL, TRANSITION_CONFLICT
 from llm_bus.reports.protocol import MAX_REVISION, parse_report, validate_status
@@ -51,6 +52,8 @@ def imported(self: Reports, local_id: int, native: str | None = None) -> Deliver
 
 
 def permitted(self: Reports, item: Delivery, status: str) -> bool:
+    if is_subagent(item["recipient"].rsplit("/", 1)[-1]):
+        return False
     config = load_config()
     if config is None or config.connection != self.remote.connection:
         return False

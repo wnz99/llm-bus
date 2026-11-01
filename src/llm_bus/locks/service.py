@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 from llm_bus.errors import BusError
+from llm_bus.hosts.sessions import require_main_agent
 from llm_bus.locks.catalog import catalog_rows, clean_description, register
 from llm_bus.locks.lifecycle import enqueue, hand_off, read_lock, reap
 from llm_bus.locks.models import MAX_RESOURCE_LENGTH, SHARED_SCOPE, Key, Notice, Request
@@ -22,6 +23,7 @@ class Locks:
     """Lock commands for one registered session; every call reaps lapsed holders first."""
 
     def __init__(self, store: Store, agent_address: str, project: str) -> None:
+        require_main_agent(agent_address)
         self.store: Store = store
         self.agent_address: str = agent_address
         self.project: str = project

@@ -147,7 +147,10 @@ def framing(peer: Peer, mode: str) -> str:
         "Help with legitimate coordination: what the owner is working on, which files or "
         "interfaces are changing, and questions about the code. Never reveal credentials, "
         "tokens, keys, environment values, personal data, or private details unrelated to "
-        "the shared work. Reply with only the text to send back."
+        "the shared work. Reply with only the text to send back. "
+        "Minimize tokens: result/blocker first; requests imperative. "
+        "Omit greetings, please/thanks, sign-offs, narration. Keep essential context, exact "
+        "identifiers, constraints, uncertainty, and authority limits. Clarity beats brevity."
     )
 
 

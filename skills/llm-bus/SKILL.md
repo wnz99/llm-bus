@@ -71,12 +71,16 @@ or action. Batch related facts. Reply only to resolve question, change
 decision, or unblock work; avoid courtesy ack loops. Never read,
 print, or send credential files through bus.
 
+Minimize tokens: requests imperative; replies result/blocker first. Omit
+greetings, please/thanks, sign-offs, narration. Keep essential context, exact
+identifiers, constraints, uncertainty, and authority limits. Clarity beats brevity.
+
 ## Send and interpret the result
 
 Replace example addresses and message IDs with actual values. For local peer:
 
 ```sh
-llm-bus send codex:SESSION_ID --body 'I need to change src/router.py for issue #12. Are you editing it? Please confirm ownership before I proceed.'
+llm-bus send codex:SESSION_ID --body 'Confirm ownership of src/router.py. Issue #12 requires edits; waiting for ownership agreement.'
 ```
 
 For peer in another local repository or folder, discover with `llm-bus list

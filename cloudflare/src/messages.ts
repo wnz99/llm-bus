@@ -4,8 +4,20 @@ import { ACTIVE_GRANT, grant } from './auth';
 import { qualified } from './sessions';
 export const BATCH = 100;
 export const LIVE_MESSAGE = `m.sent_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')`;
-export async function send(request: Request, env: Env, machine: string): Promise<Response> {
+function direction(value: unknown): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new HttpError(400, 'Invalid coordination');
+  const data = value as Record<string, unknown>;
+  if (Object.keys(data).sort().join(',') !== 'generation,grant_id,operation,project_id,version'
+    || data.version !== 1 || typeof data.operation !== 'string' || !['assign','reprioritize','clarify','pause','cancel','review'].includes(data.operation)) {
+    throw new HttpError(400, 'Invalid coordination');
+  }
+  return JSON.stringify({version:1,project_id:text(data.project_id,UUID),generation:text(data.generation,UUID),grant_id:text(data.grant_id,UUID),operation:data.operation});
+}
+export async function send(request: Request, env: Env, machine: string, coordination = false): Promise<Response> {
   const data = await jsonBody(request);
+  if (!coordination && 'coordination' in data) throw new HttpError(400, 'Use coordination endpoint');
+  if (coordination && Object.keys(data).some(key => !['id','sender','recipient','repo_id','body','reply_to','coordination'].includes(key))) throw new HttpError(400, 'Invalid coordination envelope');
+  const metadata = coordination ? direction(data.coordination) : null;
   const id = text(data.id, UUID);
   const repo = text(data.repo_id, ID);
   const sender = qualified(machine, repo, text(data.sender, NATIVE));
@@ -18,13 +30,13 @@ export async function send(request: Request, env: Env, machine: string): Promise
   await grant(env, machine, repo);
   const prior = await env.DB.prepare('SELECT * FROM messages WHERE id=?').bind(id).first<MessageRow>();
   if (prior) {
-    if (prior.sender !== sender || prior.recipient !== recipient || prior.repo_id !== repo || prior.body !== body || prior.reply_to !== reply) {
+    if (prior.sender !== sender || prior.recipient !== recipient || prior.repo_id !== repo || prior.body !== body || prior.reply_to !== reply || prior.coordination !== metadata) {
       throw new HttpError(409, 'Message ID already used');
     }
     return Response.json(transportResult(prior));
   }
-  const result = await env.DB.prepare(`INSERT INTO messages(id,sender,recipient,repo_id,body,reply_to)
-    SELECT ?,s.address,r.address,?,?,? FROM sessions s JOIN sessions r ON r.address=?
+  const result = await env.DB.prepare(`INSERT INTO messages(id,sender,recipient,repo_id,body,reply_to,coordination)
+    SELECT ?,s.address,r.address,?,?,?,? FROM sessions s JOIN sessions r ON r.address=?
     JOIN machines rm ON rm.id=r.machine_id AND rm.revoked_at IS NULL
     JOIN repo_grants rg ON rg.machine_id=r.machine_id AND rg.repo_id=r.repo_id
     WHERE s.address=? AND s.repo_id=? AND r.repo_id=? AND r.machine_id<>?
@@ -32,10 +44,10 @@ export async function send(request: Request, env: Env, machine: string): Promise
     AND (? IS NULL OR EXISTS (SELECT 1 FROM messages p WHERE p.id=? AND p.repo_id=?
       AND ((p.sender=s.address AND p.recipient=r.address) OR (p.sender=r.address AND p.recipient=s.address))))
     ON CONFLICT(id) DO NOTHING`)
-    .bind(id, repo, body, reply, recipient, sender, repo, repo, machine, machine, repo, reply, reply, repo).run();
+    .bind(id, repo, body, reply, metadata, recipient, sender, repo, repo, machine, machine, repo, reply, reply, repo).run();
   if (!result.meta.changes) {
     const raced = await env.DB.prepare('SELECT * FROM messages WHERE id=?').bind(id).first<MessageRow>();
-    if (raced && raced.sender === sender && raced.recipient === recipient && raced.body === body && raced.repo_id === repo && raced.reply_to === reply) {
+    if (raced && raced.sender === sender && raced.recipient === recipient && raced.body === body && raced.repo_id === repo && raced.reply_to === reply && raced.coordination === metadata) {
       return Response.json(transportResult(raced));
     }
     throw new HttpError(raced ? 409 : 403, 'Recipient or sender not allowed');
@@ -55,7 +67,7 @@ function messageStatus(row: MessageRow): string {
   if (Date.parse(row.sent_at) <= Date.now() - 30 * 86400_000) return 'expired';
   return 'accepted_remote';
 }
-export async function inbox(url: URL, env: Env, machine: string): Promise<Response> {
+export async function inbox(url: URL, env: Env, machine: string, coordination = false): Promise<Response> {
   const repo = text(url.searchParams.get('repo_id'), ID);
   const after = Number(url.searchParams.get('after') ?? 0);
   if (!Number.isSafeInteger(after) || after < 0) throw new HttpError(400, 'Invalid cursor');
@@ -65,6 +77,7 @@ export async function inbox(url: URL, env: Env, machine: string): Promise<Respon
     JOIN machines sm ON sm.id=s.machine_id AND sm.revoked_at IS NULL
     JOIN repo_grants sg ON sg.machine_id=s.machine_id AND sg.repo_id=m.repo_id
     WHERE r.machine_id=? AND m.repo_id=? AND m.sequence>? AND m.ready=1
+    AND m.coordination IS ${coordination ? 'NOT NULL' : 'NULL'}
     AND m.received_at IS NULL AND ${LIVE_MESSAGE} AND ${ACTIVE_GRANT}
     ORDER BY m.sequence LIMIT ?`)
     .bind(machine, repo, after, machine, repo, BATCH).all<MessageRow>();
@@ -76,7 +89,10 @@ export async function inbox(url: URL, env: Env, machine: string): Promise<Respon
     bytes += size;
     page.push(row);
   }
-  return Response.json(page.map(row => ({...row, reply_to:row.reply_to ?? undefined})));
+  return Response.json(page.map(row => {
+    const {coordination: metadata, ...ordinary} = row;
+    return {...ordinary, reply_to:row.reply_to ?? undefined, ...(metadata === null ? {} : {coordination:JSON.parse(metadata)})};
+  }));
 }
 export async function receipt(request: Request, env: Env, machine: string, acknowledge: boolean): Promise<Response> {
   const data = await jsonBody(request);

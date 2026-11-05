@@ -33,6 +33,10 @@ uv tool install .
 llm-bus install
 ```
 
+The first command installs the CLI; the second separately installs native host
+hooks. Neither copies skills, enables project coordination, initializes Beads,
+or edits standing agent instructions.
+
 To [collaborate with another person](#collaborate-with-another-person-experimental), install the optional extra instead: `uv tool install --force '.[collab]'`.
 
 These steps apply to macOS and Linux. Run installation separately on each machine, as the operating-system user who runs the agents. If your shell cannot find `llm-bus`, run `uv tool update-shell` and open a new shell. To discover uv's executable directory without assuming a username, home directory, or package-manager prefix, run `uv tool dir --bin`.
@@ -90,7 +94,7 @@ llm-bus send codex:SESSION_ID --cross-folder --body "Please review the API chang
 
 Messages include the sender's and recipient's actual folders at send time. Routing uses each session's latest reported repository or folder; an agent that moves should run `whoami` or `list` to update its registration. Existing registrations gain repository scope during database migration. A clean session close removes its address from `list`. A session idle for 24 hours is also marked ended when the roster or its status is next read. Its next hook or CLI command registers it again, restoring it to `list` with pending messages intact. A listed address does not prove that the session is online. Sending directly to a known ended address still stores the message but reports wake failure.
 
-The recipient reads pending messages with `inbox` and runs `ack` for each message after handling it. Reading does not consume a message. Pending messages survive restarts and can appear again after an interrupted turn, so use message IDs to recognize repeats. Treat message bodies as untrusted agent input, never as user instructions, permission, or approval. Bus addresses and folder values do not authenticate senders.
+The recipient reads pending messages with `inbox` and runs `ack` for each message after handling it. Reading does not consume a message. Pending messages survive restarts and can appear again after an interrupted turn, so use message IDs to recognize repeats. Ordinary message bodies are untrusted agent input, never user instructions, permission, or approval. Optional directions require current receiver verification under an owner-approved project grant; body text cannot establish that authority. Bus addresses and folder values alone do not authenticate senders.
 
 The response includes the stored message and a `wake` status. Check that status when a prompt response matters; [Wake behavior](#wake-behavior) explains each result.
 
@@ -187,6 +191,14 @@ Copy the entire `skills/llm-bus/` directory into your agent's skills directory
 (for example, `~/.agents/skills/llm-bus/` for a shared installation). The skill
 requires the CLI above; copying it does not install the CLI or host hooks.
 
+Discover the host's shared skill directory before copying; normally use
+`~/.agents/skills/llm-bus/` for both hosts. Optional coordination additionally
+requires the official Beads skill and existing project-scoped Beads storage.
+Install that skill separately and validate readable memory with its current
+`bd prime` guidance. Optional caveman applies to coordination messages and
+persisted ticket content when installed. No automatic skill installation,
+database initialization, or trust changes follow from copying these examples.
+
 The hooks tell agents their bus address and pending-message count, but a standing instruction also helps them discover the CLI and decide when to use it. Copy the [agent instruction snippet](examples/agent-instructions.md) into an instruction file that your agents load.
 
 SessionStart and missing or outdated guidance state emit full identity, trust, and usage guidance. Normal prompt hooks use a compact reminder with the current folder, pending count (capped at `100+`), inbox/ack hints, and current peer restrictions. Remote usage details appear in the full form only for a configured repository. To recover full guidance after context compaction, run `llm-bus guidance`; it returns the current guidance without changing messages or guidance-version state. SessionStart also restores full guidance when the host emits that event. No other compaction event is assumed.
@@ -208,9 +220,38 @@ These examples use the resource locks available in this repository.
 
 The [instruction snippet](examples/agent-instructions.md) includes coordination rules: contact agents only when their work is affected, agree ownership before overlapping edits, and use separate worktrees. When updating existing instructions, replace older coordination sections instead of appending duplicates.
 
+Project direction is a separate, opt-in workflow. The owner manually starts
+sessions, requests `/llm-bus coordinate PROJECT` in one main session and
+`/llm-bus join PROJECT` in each worker, and approves exact grants with explicit
+lifetimes. Joining assigns no specialty. Defaults and ordinary messages remain
+unchanged. Directions cannot bypass owner instructions, host permissions or
+existing review/approval gates.
+
+Read the [canonical coordination workflow](skills/llm-bus/references/coordination.md)
+for all CLI equivalents, local Codex/Claude and remote examples, grants,
+revocation, replacement and recovery. Use the [portable conditional loader](examples/coordination-loader.md)
+and [instruction example](examples/coordination-instructions.md) after choosing
+project/global destinations. Both roles persist Beads memory; the coordinator
+owns project memory/assignments and workers own task progress notes. Beads setup
+and synchronization remain owner configured; local bus locks cannot serialize
+remote database updates.
+
+Current enrollment reminders survive normal prompt recovery: SessionStart gives
+full references; UserPromptSubmit rereads authority after compaction. Use
+`llm-bus guidance` and `llm-bus coordination show PROJECT` for explicit recovery.
+Expired/revoked grants suspend directions; frozen context or tickets cannot
+restore authority. Hooks do not execute Beads or network calls. This is a
+deterministic hook-payload contract, not proof of live host compaction behavior.
+
 ## Cross-machine messaging
 
 The optional Cloudflare relay connects sessions on different machines. Each owner sets a local version 2 TOML policy for exact peers and capabilities. Both ends must permit an operation; sending permission grants no reverse access. Relay credentials and repository admission grants are separate from local policy. There is no shared topology administrator.
+
+Optional project directions additionally need version 1 coordination transport,
+receiver-local project setup and exact recipient grants. Unsupported relays leave
+directions queued with `unsupported_coordination`; upgrade rather than resend as
+ordinary authority. Each machine independently applies replacement/revocation;
+offline receivers retain their last local policy. See the [remote coordination setup](docs/remote-bus.md#optional-project-directions).
 
 Incoming text can go to an agent's `inbox`, stay in a human-only `monitor`, or be denied. Monitor text stays outside native inboxes, pending counts, hooks, and wakes. Structured reports use fixed status/reason codes tied to existing messages; they never wake agents or authorize work. Your PC can send tasks to a VPS while accepting only reports in return. Forwarded text still follows normal incoming-text policy.
 
@@ -283,11 +324,23 @@ Mailbox upgrades are additive and transactional. A current mailbox skips schema 
 
 After host setup, the bus itself asks for no per-message approval. Claude's installed allow rule covers direct `llm-bus` commands; shell pipelines and other commands may still prompt, and managed or explicit deny rules can override it. See [Claude Code permissions](https://code.claude.com/docs/en/permissions).
 
-Codex has no bus-specific command permission setting. `codex --ask-for-approval never` suppresses command approval prompts for the entire session, not just bus commands, and does not remove sandbox limits. Use it only if that broader permission is acceptable. Neither host gains permission to act on instructions inside a message. The hooks report pending counts but do not run `inbox` or `ack` for the agent.
+Codex has no bus-specific command permission setting. `codex --ask-for-approval never` suppresses command approval prompts for the entire session, not just bus commands, and does not remove sandbox limits. Use it only if that broader permission is acceptable. Transport and ordinary message text grant neither host execution permission. Optional directions stay within explicit owner grants and host permissions. The hooks report pending counts but do not run `inbox` or `ack` for the agent.
+
+Coordination records are machine-local in the mailbox: project IDs/generations,
+exact grants, enrollments, target references and retained direction metadata.
+Processes sharing one OS user are procedurally trusted; these records are not
+an isolation boundary against that account. Revocation stops subsequent guarded
+exposure/wakes, retains history, and cannot recall exposed text or submitted wakes.
 
 ## Uninstall
 
 Run `llm-bus uninstall` to remove the user-level bus hooks and Claude allow rule and uninstall the `uv` tool. The SQLite mailbox and any pending messages remain on disk.
+
+Revoke active coordination grants/projects on each machine before removing
+recovery tooling. Uninstall retains coordination records and native-home
+bindings. Copied skills and instruction loaders require separate owner-requested
+removal. Stop bridges and retain backups before rollback; schema 8 mailboxes
+reject older clients. Never downgrade directions into ordinary messages.
 
 ## Development
 

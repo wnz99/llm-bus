@@ -27,6 +27,7 @@ class Envelope(TypedDict):
     repo_id: str
     body: str
     reply_to: NotRequired[str]
+    coordination: NotRequired[dict[str, object]]
 
 
 class Peer(TypedDict):

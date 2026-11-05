@@ -3,6 +3,27 @@ import worker from '../src/index';
 import { dispatch, repair } from '../src/messages';
 import { bindings, request, register, send } from './relay-fixture';
 describe('machine and repository boundary', () => {
+  it('isolates versioned directions and compares every immutable authority field', async () => {
+    const call = (path:string, data?:object) => worker.fetch(new Request(`https://bus.test/v2/coordination/${path}`, {
+      method:data ? 'POST' : 'GET', headers:{Authorization:`Bearer ${'a'.repeat(43)}`,'Content-Type':'application/json'}, body:data ? JSON.stringify(data) : undefined,
+    }),bindings);
+    expect(await (await call('capabilities')).json()).toEqual({version:1});
+    const metadata={version:1,project_id:crypto.randomUUID(),generation:crypto.randomUUID(),grant_id:crypto.randomUUID(),operation:'assign'};
+    const message={id:crypto.randomUUID(),sender:'codex:a',recipient:'b/xyz/codex:b',repo_id:'xyz',body:'direction',coordination:metadata};
+    expect((await request('a','messages',message)).status).toBe(400);
+    expect((await call('messages',message)).status).toBe(202);
+    expect((await call('messages',{...message,coordination:{...metadata}})).status).toBe(200);
+    for (const key of ['grant_id','generation','project_id']) {
+      expect((await call('messages',{...message,coordination:{...metadata,[key]:crypto.randomUUID()}})).status).toBe(409);
+    }
+    for (const bad of [{...metadata,version:2},{...metadata,extra:true},{...metadata,operation:['assign']},{...metadata,grant_id:'bad'}]) {
+      expect((await call('messages',{...message,id:crypto.randomUUID(),coordination:bad})).status).toBe(400);
+    }
+    await dispatch(bindings,message.id);
+    expect(await (await request('b','inbox?repo_id=xyz')).json()).toEqual([]);
+    const result=await worker.fetch(new Request('https://bus.test/v2/coordination/inbox?repo_id=xyz',{headers:{Authorization:`Bearer ${'b'.repeat(43)}`}}),bindings);
+    expect(await result.json()).toMatchObject([{id:message.id,coordination:metadata,sender:'a/xyz/codex:a'}]);
+  });
   it('compares the reply UUID again after a raced duplicate insert', async () => {
     const {message} = await send();
     const reply = {id:crypto.randomUUID(),sender:'codex:b',recipient:'a/xyz/codex:a',repo_id:'xyz',body:'reply',reply_to:message.id};

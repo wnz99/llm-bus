@@ -1,5 +1,23 @@
 # Local machine permissions implementation plan
 
+## Implementation-gap note: optional coordination
+
+This historical proposal does not itself configure deployed permissions.
+Optional coordination now adds schema 8 owner-local projects, generations,
+exact recipient grants/enrollments, verified directions and version 1 remote
+coordination transport. Relay admission still grants no local trust. Receiver
+policy and grants guard admission, pending exposure and native wakes; monitor
+text and fixed-code reports remain separate from agent assignment authority.
+See the [current workflow](../skills/llm-bus/references/coordination.md).
+
+Operational gaps remain explicit: owners must configure each endpoint and
+upgrade clients/relay themselves; no global topology or remotely editable grants
+exist. Offline receivers use their last local policy. Revocation cannot recall
+exposed text or submitted wakes. Same-OS-user processes remain procedurally
+trusted. Hook payload tests establish recovery formatting; they do not establish
+live native-host compaction behavior. No production configuration or deployment
+is implied by this implementation.
+
 ## Features and effects
 
 This proposal lets people collaborate through sandboxed VPS agents while attaching personal computers with narrower permissions. Each machine owner edits only their own configuration. There is no shared topology file or central topology administrator. The relay continues to authenticate machines and enforce existing repository admission grants.

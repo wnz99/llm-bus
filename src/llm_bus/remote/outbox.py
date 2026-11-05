@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
+from llm_bus.coordination.delivery import persist, require_coordinator
 from llm_bus.errors import BusError
 from llm_bus.hosts.sessions import require_main_agent
 from llm_bus.mailbox.models import MAX_MESSAGE_BYTES, address
@@ -16,6 +18,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from sqlite3 import Connection
 
+    from llm_bus.coordination.models import Direction
     from llm_bus.mailbox.models import SenderContext
 
 if TYPE_CHECKING:
@@ -42,6 +45,7 @@ def enqueue(  # noqa: PLR0913 - additive public API preserves optional keywords
     *,
     scope: str | None = None,
     reply_to: int | None = None,
+    direction: Direction | None = None,
 ) -> dict[str, object]:
     # Preserve the existing scope keyword and add an optional public parent ID.
     # pylint: disable=too-many-arguments
@@ -55,6 +59,9 @@ def enqueue(  # noqa: PLR0913 - additive public API preserves optional keywords
     )
     with self.store.transaction() as db:
         db.execute("BEGIN IMMEDIATE")
+        if direction is not None:
+            require_coordinator(db, native, scope, direction)
+            envelope["coordination"] = asdict(direction)
         self.store.validate_reply(db, reply_to, (native, scope), (recipient, f"remote:{repo_id}"))
         if reply_to is not None:
             parent = cast(
@@ -84,6 +91,10 @@ def enqueue(  # noqa: PLR0913 - additive public API preserves optional keywords
             (native, recipient, body, sender.project, scope, f"remote:{repo_id}", reply_to),
         )
         local_id = cursor.lastrowid
+        if local_id is None:
+            raise RuntimeError("SQLite did not return an outgoing message ID")
+        if direction is not None:
+            persist(db, local_id, direction)
         db.execute(
             "INSERT INTO remote_outbox VALUES (?,?,?,'queued_local')",
             (envelope["id"], local_id, json.dumps(envelope)),

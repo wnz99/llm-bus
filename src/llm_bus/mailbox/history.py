@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+from llm_bus.coordination.delivery import verification
 from llm_bus.errors import BusError
 from llm_bus.mailbox.models import (
     MAX_BATCH,
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
     from llm_bus.mailbox.models import HistoryRow
 
 
-def history(  # noqa: C901, PLR0913 - independent public history filters compose here
+def history(  # noqa: C901, PLR0913, PLR0912 - independent public history filters compose here
     db: sqlite3.Connection,
     *,
     folder: str | None,
@@ -29,7 +30,7 @@ def history(  # noqa: C901, PLR0913 - independent public history filters compose
 ) -> list[HistoryMessage]:
     """Read stored messages, newest page first or new items after a cursor."""
     # Optional public filters preserve the existing keyword API and compose one SQL query.
-    # pylint: disable=too-many-arguments,too-many-locals
+    # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
     if not 1 <= limit <= MAX_BATCH:
         raise BusError("History limit must be between 1 and 100")
     if (before is not None and before < 1) or (after is not None and after < 0):
@@ -85,7 +86,7 @@ def history(  # noqa: C901, PLR0913 - independent public history filters compose
             parameters,
         ).fetchall(),
     )
-    return [
+    messages = [
         HistoryMessage(
             **message_from_row(row[:7], row[12]),
             acknowledged_at=row[7],
@@ -96,6 +97,11 @@ def history(  # noqa: C901, PLR0913 - independent public history filters compose
         )
         for row in rows
     ]
+    for message in messages:
+        authority = verification(db, message["id"])
+        if authority is not None:
+            message["coordination"] = authority
+    return messages
 
 
 def _conversation_root(db: sqlite3.Connection, message_id: int) -> int:

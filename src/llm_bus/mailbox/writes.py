@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 import llm_bus.collab.models
+from llm_bus.coordination.authority import authorize
+from llm_bus.coordination.delivery import persist, require_coordinator
 from llm_bus.errors import BusError
 from llm_bus.hosts.sessions import require_main_agent
 from llm_bus.mailbox.models import (
@@ -15,8 +18,10 @@ from llm_bus.mailbox.models import (
 if TYPE_CHECKING:
     import sqlite3
 
+    from llm_bus.coordination.models import Direction
 
-def send_in_transaction(  # noqa: PLR0913  # pylint: disable=too-many-arguments
+
+def send_in_transaction(  # noqa: PLR0913, C901  # pylint: disable=too-many-arguments
     db: sqlite3.Connection,
     sender: str,
     recipient: str,
@@ -24,6 +29,7 @@ def send_in_transaction(  # noqa: PLR0913  # pylint: disable=too-many-arguments
     *,
     cross_folder: bool = False,
     reply_to: int | None = None,
+    direction: Direction | None = None,
 ) -> Message:
     """Persist for an already registered sender without changing its activity or lifecycle."""
     if not body.strip():
@@ -48,6 +54,18 @@ def send_in_transaction(  # noqa: PLR0913  # pylint: disable=too-many-arguments
     if sender_scope != recipient_row[1] and not cross_folder:
         raise BusError("Recipient is in another repository or folder; use --cross-folder")
     validate_reply(db, reply_to, (sender, sender_scope), (recipient, recipient_row[1]))
+    if direction is not None:
+        require_coordinator(db, sender, sender_scope, direction)
+        decision = authorize(
+            db,
+            sender=sender,
+            recipient=recipient,
+            scope=recipient_row[1],
+            direction=direction,
+            now=datetime.now(UTC),
+        )
+        if not decision.verified:
+            raise BusError(f"Direction denied: {decision.reason}")
     cursor = db.execute(
         "INSERT INTO messages(sender, recipient, body, sender_cwd, recipient_cwd, "
         "sender_scope, recipient_scope, reply_to) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -65,6 +83,8 @@ def send_in_transaction(  # noqa: PLR0913  # pylint: disable=too-many-arguments
     message_id = cursor.lastrowid
     if message_id is None:
         raise RuntimeError("SQLite did not return a message ID")
+    if direction is not None:
+        persist(db, message_id, direction)
     request_dispatch(db, recipient)
     row = cast(
         "tuple[int, str, str, str, str | None, str | None, str] | None",

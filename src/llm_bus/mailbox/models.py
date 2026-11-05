@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Literal, NamedTuple, TypedDict
+from typing import Literal, NamedTuple, NotRequired, TypedDict
 
 from llm_bus.errors import BusError
 
@@ -33,6 +33,7 @@ class Message(TypedDict):
     recipient_cwd: str | None
     sent_at: str
     reply_to: int | None
+    coordination: NotRequired[dict[str, object]]
 
 
 class HistoryMessage(Message):

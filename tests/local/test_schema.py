@@ -124,3 +124,18 @@ def test_migration_concurrent_openers_preserve_history(tmp_path: Path) -> None:
     assert stores[1].inbox(recipient) == [message]
     with stores[1].transaction() as db:
         assert db.execute("PRAGMA user_version").fetchone() == (SCHEMA_VERSION,)
+
+
+def test_coordination_v7_upgrade_preserves_messages(tmp_path: Path) -> None:
+    store = Store(tmp_path / "v7.sqlite3")
+    recipient = store.register("codex", "recipient", "/project")
+    sent = store.send(SenderContext("claude", "sender", "/project"), recipient, "retained")
+    with store.transaction() as db:
+        for table in ("projects", "grants", "generations", "enrollments", "messages", "targets"):
+            db.execute(f"DROP TABLE coordination_{table}")
+        db.execute("PRAGMA user_version=7")
+    reopened = Store(store.path)
+    assert reopened.inbox(recipient) == [sent]
+    with reopened.transaction() as db:
+        assert db.execute("PRAGMA user_version").fetchone() == (8,)
+        assert db.execute("SELECT count(*) FROM coordination_messages").fetchone() == (0,)

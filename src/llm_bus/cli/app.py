@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import llm_bus.collab.cli
+import llm_bus.coordination.cli
 from llm_bus.cli.commands import human_command, registered_command, send
 from llm_bus.cli.hooks import claude_socket, hook
 from llm_bus.cli.installation import configure_host_hooks
@@ -87,7 +88,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         kind, session_id = host_identity(dict(os.environ))
         require_main_agent(f"{kind}:{session_id}")
         project = str(Path.cwd().resolve())
-        if command == "send":
+        if command in {"coordinate", "join", "coordination"}:
+            result = llm_bus.coordination.cli.run(store, args, f"{kind}:{session_id}", project)
+        elif command == "send":
             result = send(store, args, SenderContext(kind, session_id, project))
         else:
             agent_address = store.register(

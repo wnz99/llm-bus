@@ -4,18 +4,20 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+from llm_bus.coordination import store as coordination_store
 from llm_bus.mailbox import migrations
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from sqlite3 import Connection
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 SYNC_SCHEMA_VERSION = 2
 WAKE_SCHEMA_VERSION = 3
 LOCK_SCHEMA_VERSION = 5
 LOCK_CATALOG_SCHEMA_VERSION = 6
 LOCK_SEEN_SCHEMA_VERSION = 7
 REPLY_SCHEMA_VERSION = 4
+COORDINATION_SCHEMA_VERSION = 8
 SYNC_WORK_TABLE = (
     "CREATE TABLE IF NOT EXISTS remote_sync_work (kind TEXT NOT NULL, key TEXT NOT NULL, "
     "attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT, last_attempt_at TEXT, "
@@ -172,7 +174,7 @@ def _lock_migrations(db: Connection, version: int) -> None:
     )
 
 
-def ensure_schema(db: Connection, resolve_scope: Callable[[str], str]) -> None:
+def ensure_schema(db: Connection, resolve_scope: Callable[[str], str]) -> None:  # noqa: C901
     """Serialize migrations; reopening the current version performs only a version read."""
     version = _version(db)
     if version == SCHEMA_VERSION:
@@ -196,6 +198,8 @@ def ensure_schema(db: Connection, resolve_scope: Callable[[str], str]) -> None:
             db.execute("CREATE INDEX IF NOT EXISTS messages_reply_to ON messages(reply_to,id)")
         if version < LOCK_SEEN_SCHEMA_VERSION:
             _lock_migrations(db, version)
+        if version < COORDINATION_SCHEMA_VERSION:
+            coordination_store.create_tables(db)
         if version < SCHEMA_VERSION:
             db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         db.commit()

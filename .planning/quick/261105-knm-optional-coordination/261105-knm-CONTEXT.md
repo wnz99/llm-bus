@@ -9,10 +9,11 @@ No GSD planner or executor was dispatched during registration. Subsequent approv
 implementation completed T1–T5 sequentially. All five independent task reviews
 passed with no findings. Integrated verification and planner conformance passed
 on 669459e9ddf29bd05dd004311eebabe8ed217d81. PR #60 is open into main:
-https://github.com/wnz99/llm-bus/pull/60. Phase 11 remains active; complete-branch
-aggregate/PR review, current-head CI, merge and final completion gates remain open.
-This premerge update does not declare the quick task completed or replace the
-final GSD summary. Canonical task evidence is in the executor ledger.
+https://github.com/wnz99/llm-bus/pull/60. Complete-branch aggregate/PR review passed
+on 0d98da7263fc2b32c1dd4d5d81632232edce00a2 with no findings. The final summary
+records completed implementation and verification; current-head CI and merge
+remain premerge gates. Phase 11 remains active until merge; phase 13 follows it.
+Canonical task evidence is in the executor ledger.
 The approved plan is preserved verbatim in 261105-knm-PLAN.md; its historical planning-only wording remains unchanged.
 The execution coordinator records the subsequent user approval and implementation authority in the canonical executor ledger:
  /Users/davidfava/.local/state/llm-bus/planning/optional-coordination/LEDGER.md

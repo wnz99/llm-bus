@@ -39,8 +39,11 @@ def test_bridge_lost_receipt_replays_once_then_syncs_ack(
 
     def request(_self: object, method: str, path: str, data: object = None) -> object:
         nonlocal pending, lose_receipt, acknowledged
-        if path == "/v1/sessions":
-            return {"address": "b/xyz/claude:recipient"}
+        if path in {"/v1/sessions", "/v2/coordination/capabilities"}:
+            return {
+                "/v1/sessions": {"address": "b/xyz/claude:recipient"},
+                "/v2/coordination/capabilities": {"version": 0},
+            }[path]
         if path.startswith("/v1/sessions?"):
             return []
         if path.startswith("/v1/inbox?"):

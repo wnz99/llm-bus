@@ -21,4 +21,5 @@ export interface MessageRow {
   received_at: string | null;
   acknowledged_at: string | null;
   reply_to: string | null;
+  coordination: string | null;
 }

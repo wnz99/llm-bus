@@ -144,8 +144,6 @@ def send(store: Store, args: dict[str, object], sender: SenderContext) -> object
     configured_body = args["body"]
     body = cast("str", configured_body) if configured_body is not None else sys.stdin.read()
     if "/" in cast("str", args["to"]):
-        if direction is not None:
-            raise BusError("Remote directions require coordination transport support")
         config = load_config()
         if config is None:
             raise BusError("Remote sending requires a remote configuration file")
@@ -156,6 +154,7 @@ def send(store: Store, args: dict[str, object], sender: SenderContext) -> object
             cast("str", args["to"]),
             body,
             reply_to=cast("int | None", args["reply_to"]),
+            **({"direction": direction} if direction is not None else {}),
         )
     sent = store.send(
         sender,

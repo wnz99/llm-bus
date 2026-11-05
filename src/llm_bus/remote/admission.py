@@ -1,10 +1,16 @@
 """Admission ownership."""
 
+# pylint: disable=clean-code-commented-out-code
+
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
+from llm_bus.coordination.authority import authorize
+from llm_bus.coordination.delivery import persist
+from llm_bus.coordination.models import Direction
 from llm_bus.errors import BusError
 from llm_bus.hosts.sessions import is_subagent
 from llm_bus.policy.inbound import receive_mode
@@ -42,10 +48,11 @@ def incoming_parent(self: RemoteStore, db: Connection, item: Delivery, scope: st
     return parent[0]
 
 
-def admit_message(
+def admit_message(  # noqa: PLR0911 - explicit transport and authority denials
     self: RemoteStore, item: Delivery, scope: str
 ) -> tuple[str, int | None, bool] | None:
     """Commit exactly one delivery class under the current machine policy."""
+    # pylint: disable=too-many-locals,too-many-return-statements
     native = item["recipient"].split("/", 2)[2]
     payload = json.dumps(item, sort_keys=True)
     with self.store.transaction() as db:
@@ -62,6 +69,20 @@ def admit_message(
             return None
         mode = receive_mode(item, scope, recipient[1], self.connection)
         if mode == "deny":
+            return None
+        direction = Direction.parse(item["coordination"]) if "coordination" in item else None
+        if (
+            direction is not None
+            and mode == "inbox"
+            and not authorize(
+                db,
+                sender=item["sender"],
+                recipient=native,
+                scope=scope,
+                direction=direction,
+                now=datetime.now(UTC),
+            ).verified
+        ):
             return None
         prior = cast(
             "tuple[str, int | None, str] | None",
@@ -105,6 +126,8 @@ def admit_message(
         local_id = cursor.lastrowid
         if local_id is None:
             raise RuntimeError("SQLite did not return an imported message ID")
+        if direction is not None:
+            persist(db, local_id, direction)
         db.execute(
             "INSERT INTO remote_imports(id,local_id,envelope) VALUES (?,?,?)",
             (item["id"], local_id, payload),

@@ -47,6 +47,8 @@ class RelayError(BusError):
             message = "Invalid relay response"
         elif code == "unsupported_reply_link":
             message = "Relay does not support reply links; linked message remains queued"
+        elif code == "unsupported_coordination":
+            message = "Relay does not support coordination; direction remains queued"
         else:
             message = "Relay unavailable; local transport state retained"
         super().__init__(message)

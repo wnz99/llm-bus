@@ -14,6 +14,9 @@ export default {
       const route = `${request.method} ${url.pathname}`;
       switch (route) {
         case 'GET /v1/capabilities': return Response.json({reply_to:true,batch_status:true,batch_reports:true});
+        case 'GET /v2/coordination/capabilities': return Response.json({version:1});
+        case 'POST /v2/coordination/messages': return await send(request, env, machine, true);
+        case 'GET /v2/coordination/inbox': return await inbox(url, env, machine, true);
         case 'POST /v1/sessions': return await register(request, env, machine);
         case 'GET /v1/sessions': return await sessions(url, env, machine);
         case 'POST /v1/messages': return await send(request, env, machine);

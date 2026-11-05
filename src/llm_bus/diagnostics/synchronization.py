@@ -16,8 +16,17 @@ SYNC_READ_SECONDS = 30
 SYNC_KINDS = frozenset({"upload", "status", "report_read", "report_submit", "receipt", "ack"})
 
 
+# Fixed wire vocabulary, shared by status validators and transport retry records.
+# pylint: disable=clean-code-business-policy-literal
 SYNC_ERRORS = frozenset(
-    {"unavailable", "not_allowed", "protocol_error", "rejected", "unsupported_reply_link"}  # pylint: disable=clean-code-business-policy-literal
+    {
+        "unavailable",
+        "not_allowed",
+        "protocol_error",
+        "rejected",
+        "unsupported_reply_link",
+        "unsupported_coordination",
+    }  # pylint: disable=clean-code-business-policy-literal
 )
 
 

@@ -33,7 +33,7 @@ def add_parsers(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     _references(coordinate, required=False)
     add_parser("join", help="Enroll this granted main session").add_argument("project")
     actions = add_parser("coordination").add_subparsers(dest="action", required=True)
-    for name in ("show", "setup", "grant", "revoke", "replace", "leave"):
+    for name in ("show", "setup", "grant", "revoke", "replace", "leave", "target"):
         action = actions.add_parser(name)
         action.add_argument("project")
         if name == "setup":
@@ -44,8 +44,10 @@ def add_parsers(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
         if name == "replace":
             action.add_argument("--generation", required=True)
             action.add_argument("--coordinator", required=True)
-        if name in {"grant", "revoke"}:
-            action.add_argument("--recipient", required=name == "grant")
+        if name in {"grant", "revoke", "target"}:
+            action.add_argument("--recipient", required=name != "revoke")
+        if name == "target":
+            action.add_argument("--grant-id", required=True)
         if name == "grant":
             lifetime = action.add_mutually_exclusive_group(required=True)
             lifetime.add_argument("--expires-at")
@@ -193,6 +195,18 @@ def _transition(  # noqa: C901, PLR0912 - bounded CLI action dispatch
                 record["coordinator"],
                 json.dumps(OPERATIONS),
                 expiry,
+            ),
+        )
+    elif action == "target":
+        db.execute(
+            "INSERT INTO coordination_targets VALUES (?,?,?,?,?) "
+            "ON CONFLICT(scope,project_id,recipient) DO UPDATE SET "
+            "grant_id=excluded.grant_id,generation=excluded.generation",
+            (
+                *key,
+                _address(args["recipient"]),
+                uuid4_string(str(args["grant_id"])),
+                record["generation"],
             ),
         )
     elif action == "leave":

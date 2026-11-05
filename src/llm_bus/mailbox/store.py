@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     import sqlite3
     from pathlib import Path
 
+    from llm_bus.coordination.models import Direction
+
 
 class Store:  # pylint: disable=too-many-public-methods
     """Durable messages; inbox reads leave items pending until acknowledged."""
@@ -71,7 +73,7 @@ class Store:  # pylint: disable=too-many-public-methods
         with self.transaction() as db:
             return agents.is_ended(db, agent_address)
 
-    def send(
+    def send(  # noqa: PLR0913 - supported optional send metadata
         self,
         sender_context: SenderContext,
         recipient: str,
@@ -79,8 +81,10 @@ class Store:  # pylint: disable=too-many-public-methods
         *,
         cross_folder: bool = False,
         reply_to: int | None = None,
+        direction: Direction | None = None,
     ) -> Message:
         """Atomically register sender, check folder, and persist message."""
+        # pylint: disable=too-many-arguments
         with self.transaction() as db:
             db.execute("BEGIN IMMEDIATE")
             sender = agents.upsert_agent(
@@ -91,7 +95,13 @@ class Store:  # pylint: disable=too-many-public-methods
                 routing_scope(sender_context.project),
             )
             return writes.send_in_transaction(
-                db, sender, recipient, body, cross_folder=cross_folder, reply_to=reply_to
+                db,
+                sender,
+                recipient,
+                body,
+                cross_folder=cross_folder,
+                reply_to=reply_to,
+                direction=direction,
             )
 
     def send_in_transaction(  # noqa: PLR0913  # pylint: disable=too-many-arguments
@@ -103,10 +113,17 @@ class Store:  # pylint: disable=too-many-public-methods
         *,
         cross_folder: bool = False,
         reply_to: int | None = None,
+        direction: Direction | None = None,
     ) -> Message:
         """Persist for an already registered sender without changing its activity or lifecycle."""
         return writes.send_in_transaction(
-            db, sender, recipient, body, cross_folder=cross_folder, reply_to=reply_to
+            db,
+            sender,
+            recipient,
+            body,
+            cross_folder=cross_folder,
+            reply_to=reply_to,
+            direction=direction,
         )
 
     @staticmethod

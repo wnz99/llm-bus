@@ -8,6 +8,7 @@ import llm_bus.collab.exposure
 import llm_bus.collab.models
 import llm_bus.policy.fields
 import llm_bus.policy.inbound
+from llm_bus.coordination.delivery import exposure_allowed, verification
 from llm_bus.errors import BusError
 from llm_bus.hosts.sessions import is_subagent
 from llm_bus.mailbox.models import (
@@ -37,6 +38,10 @@ def pending_members(db: sqlite3.Connection, recipient: str) -> list[tuple[int, s
 
 
 def _pending_permitted(row: PendingRow, db: sqlite3.Connection) -> bool:
+    return exposure_allowed(db, row.id) and _transport_permitted(row, db)
+
+
+def _transport_permitted(row: PendingRow, db: sqlite3.Connection) -> bool:
     if row.sender.startswith(llm_bus.collab.models.SENDER_PREFIX):
         return llm_bus.collab.exposure.exposure_allowed(row.sender, row.recipient)
     if "/" not in row.sender:
@@ -144,18 +149,22 @@ def inbox(db: sqlite3.Connection, recipient: str, limit: int = MAX_BATCH) -> lis
         for page in pages:
             for row in page:
                 if _pending_permitted(row, db):
-                    messages.append(
-                        Message(
-                            id=row.id,
-                            sender=row.sender,
-                            recipient=row.recipient,
-                            body=cast("str", row.body),
-                            sender_cwd=row.sender_cwd,
-                            recipient_cwd=row.recipient_cwd,
-                            sent_at=cast("str", row.sent_at),
-                            reply_to=row.reply_to,
-                        )
+                    message = Message(
+                        id=row.id,
+                        sender=row.sender,
+                        recipient=row.recipient,
+                        body=cast("str", row.body),
+                        sender_cwd=row.sender_cwd,
+                        recipient_cwd=row.recipient_cwd,
+                        sent_at=cast("str", row.sent_at),
+                        reply_to=row.reply_to,
                     )
+                    authority = verification(db, row.id)
+                    if authority is not None:
+                        if authority["verified"] is not True:
+                            continue
+                        message["coordination"] = authority
+                    messages.append(message)
                     if len(messages) == limit:
                         return messages
     return messages

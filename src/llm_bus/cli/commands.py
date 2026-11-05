@@ -8,15 +8,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from llm_bus.cli.guidance import guidance
+from llm_bus.coordination.delivery import outgoing
 from llm_bus.errors import BusError
 from llm_bus.locks.models import Key, Request
 from llm_bus.locks.service import Locks
 from llm_bus.locks.timer import detach, run_timer
+from llm_bus.mailbox.models import address
 from llm_bus.policy.config import load_config, optional_config, require_config
 from llm_bus.remote.discovery import remote_peers
 from llm_bus.remote.outgoing import enqueue_remote
 from llm_bus.remote.store import RemoteStore
 from llm_bus.reports.store import Reports
+from llm_bus.routing import routing_scope
 from llm_bus.wake.dispatch import dispatch_pending
 
 if TYPE_CHECKING:
@@ -124,9 +127,25 @@ def _monitor(store: Store, args: dict[str, object]) -> None:
 
 
 def send(store: Store, args: dict[str, object], sender: SenderContext) -> object:
+    label, operation = args.get("project"), args.get("direction")
+    if (label is None) != (operation is None):
+        raise BusError("Use --project and --direction together")
+    direction = None
+    if label is not None:
+        with store.transaction() as db:
+            direction = outgoing(
+                db,
+                sender=address(sender.kind, sender.session_id),
+                scope=routing_scope(sender.project),
+                label=str(label),
+                recipient=str(args["to"]),
+                operation=str(operation),
+            )
     configured_body = args["body"]
     body = cast("str", configured_body) if configured_body is not None else sys.stdin.read()
     if "/" in cast("str", args["to"]):
+        if direction is not None:
+            raise BusError("Remote directions require coordination transport support")
         config = load_config()
         if config is None:
             raise BusError("Remote sending requires a remote configuration file")
@@ -144,6 +163,7 @@ def send(store: Store, args: dict[str, object], sender: SenderContext) -> object
         body,
         cross_folder=cast("bool", args["cross_folder"]),
         reply_to=cast("int | None", args["reply_to"]),
+        **({"direction": direction} if direction is not None else {}),
     )
     try:
         wake_result = dispatch_pending(store, sent["recipient"], trigger_id=sent["id"])

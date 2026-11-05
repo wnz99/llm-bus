@@ -120,10 +120,17 @@ def _snapshot(store: Store, recipient: str, claim: Claim) -> Batch:
 
 
 def _native(store: Store, recipient: str, members: list[tuple[int, str]]) -> WakeResult:
-    key, sender = members[0]
     try:
+        socket = store.messaging_socket(recipient) if recipient.startswith("claude:") else None
+        # Keep coverage identical to the permitted native batch. A later revocation cannot
+        # recall an already submitted wake; subsequent exposure still checks current policy.
+        # pylint: disable=clean-code-output-argument-mutation
+        members[:] = [member for member in members if store.pending_allowed(member[0])]
+        if not members:
+            return COALESCED.copy()
+        key, sender = members[0]
         if recipient.startswith("claude:"):
-            return wake(recipient, key, sender, claude_socket=store.messaging_socket(recipient))
+            return wake(recipient, key, sender, claude_socket=socket)
         return wake(recipient, key, sender)
     except Exception as error:  # pylint: disable=broad-exception-caught
         return {

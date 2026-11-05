@@ -9,7 +9,7 @@ import llm_bus.coordination.cli
 from llm_bus.reports.protocol import REPORT_REASONS
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - explicit CLI declarations
     # pylint: disable=too-many-statements
     parser = argparse.ArgumentParser(description="Local durable mailbox for Claude and Codex")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -25,6 +25,10 @@ def build_parser() -> argparse.ArgumentParser:
     send.add_argument("to", help="Recipient address from `llm-bus list`")
     send.add_argument("--body", help="Message text; otherwise read standard input")
     send.add_argument("--reply-to", type=int, help="Retained local parent message ID")
+    send.add_argument("--project", help="Coordination project; requires --direction")
+    send.add_argument(
+        "--direction", choices=("assign", "reprioritize", "clarify", "pause", "cancel", "review")
+    )
     send.add_argument(
         "--cross-folder", action="store_true", help="Allow sending to another repository or folder"
     )

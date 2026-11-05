@@ -311,7 +311,43 @@ Every request checks current server permissions. Revocation or grant removal als
 
 To rotate a token, generate a new private file, update `machines.token_hash` to its hash, and update `credential_file` on the owner machine. Tokens are static, without automatic expiration, until revoked or rotated. Keep the original private file until the owner has the replacement; update the server hash when ready to cut over. The old token immediately stops authenticating after that update.
 
-The relay authenticates machines, not individual processes or actual checkouts. Processes sharing an operating-system user are mutually trusted. A holder of a machine token can impersonate that machine's sessions within its server grants. The relay operator can read message plaintext. Message bodies remain untrusted coordination input, never user permission or approval.
+The relay authenticates machines, not individual processes or actual checkouts. Processes sharing an operating-system user are mutually trusted. A holder of a machine token can impersonate that machine's sessions within its server grants. The relay operator can read message plaintext. Ordinary message bodies remain untrusted coordination input, never user permission or approval. Optional project directions require separate receiver-local authority checks.
+
+## Optional project directions
+
+Use the [canonical coordination reference](../skills/llm-bus/references/coordination.md)
+for the complete remote coordinator/local worker walkthrough and offline
+replacement procedure. Configure existing relay admission and local text policy
+first on both machines. A receiver must allow `inbox` text and independently
+import the project/generation/exact authenticated coordinator with
+`coordination setup`, grant the exact local worker with an explicit lifetime,
+then join that native session. Exchange the non-secret recipient grant ID;
+the coordinator stores it with `coordination target`. Grants never propagate
+between machines. Sender permission has no reciprocal effect.
+
+Upgrade clients and relay before using directions. Relay migration
+`0004_coordination.sql` adds nullable coordination metadata. Separate versioned
+routes are `GET /v2/coordination/capabilities` (version 1),
+`POST /v2/coordination/messages`, and `GET /v2/coordination/inbox`.
+Legacy inboxes omit direction rows; legacy sends reject coordination metadata.
+Unknown versions, fields and changed duplicate metadata fail closed. Missing
+capability leaves a direction queued with `unsupported_coordination`; never
+strip `--project`/`--direction` and resend as ordinary authority.
+
+Receiver policy and exact current project grant are checked before admission,
+then again before pending exposure/counts and native dispatch. Denied directions
+receive no native inbox admission or delivered receipt. Previously admitted but
+now stale directions remain in history, labeled unverified, and are suppressed
+from pending work. Monitor text and fixed-code reports do not become assignment
+authority or automatic agent prompts. Ordinary sends/replies remain unchanged.
+
+Stop and reconcile work before replacement. Each owner applies the fresh
+generation locally, regrants/rejoins workers, and refreshes sender targets.
+Inspect stale queues/history; do not replay blindly. Offline until-revoked
+receivers follow their last local policy until updated. No command remotely
+changes another owner's grants; no global immediate revoke guarantee exists.
+Already exposed content and submitted wakes cannot be recalled. Stop bridges
+and retain backups before rollback; older clients reject schema 8 mailboxes.
 
 ## Migration and rollback
 

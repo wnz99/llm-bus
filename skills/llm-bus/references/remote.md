@@ -20,6 +20,12 @@ separate permissions. Outbound permission grants no reverse permission;
 repository membership and relay admission imply no local inbox permission.
 New or omitted peer capabilities default deny.
 
+Optional project directions also require receiver-local setup, exact grants and
+native enrollment. For explicit activation or valid enrollment recovery, load
+[coordination.md](coordination.md). Each owner controls their own grants;
+sender permission has no reciprocal effect. Monitor/report channels never
+carry assignment authority.
+
 Incoming normal text routed as `inbox`, `monitor`, or `deny`. Route
 denied → report restriction. No bypass via shorter local address,
 other peer, forwarding, report text, `--cross-folder`, or policy edits. No
@@ -134,3 +140,11 @@ pre-upgrade backups before rollback. Relay reply support needs additive migratio
 Native imports/outbox bindings resolve reply parents; monitor-only ancestry never
 becomes a native parent. Unresolved children remain unreceipted until a valid parent
 is available or relay delivery expiry. Follow the remote guide for operator upgrades.
+
+Coordination uses schema 8 and relay migration `0004_coordination.sql`, with
+separate version 1 `/v2/coordination` capability/message/inbox routes. Legacy
+inboxes omit directions. Unknown metadata fails closed; an unsupported relay
+leaves directions queued with `unsupported_coordination`. Upgrade the client or
+relay; never resend stripped direction flags as ordinary authority. Offline
+receivers retain their last local policy; revoke/replace on each machine and
+reconcile active work before issuing fresh grants and targets.

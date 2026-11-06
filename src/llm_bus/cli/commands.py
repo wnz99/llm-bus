@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from llm_bus.cli.guidance import guidance
+from llm_bus.cli.output import serialize
 from llm_bus.coordination.delivery import outgoing
 from llm_bus.errors import BusError
 from llm_bus.locks.models import Key, Request
@@ -61,7 +62,13 @@ def human_command(store: Store, command: object, args: dict[str, object]) -> boo
             run_timer(store, Key(cast("str", args["scope"]), cast("str", args["resource"])))
         return True
     if command == "status":
-        print(json.dumps(store.message_status(cast("int", args["message_id"]))))
+        print(
+            serialize(
+                store.message_status(cast("int", args["message_id"])),
+                str(command),
+                str(args.get("format", "json")),
+            )
+        )
         return True
     if command == "monitor":
         _monitor(store, args)
@@ -72,7 +79,7 @@ def human_command(store: Store, command: object, args: dict[str, object]) -> boo
         else:
             config = require_config()
             result = Reports(store, config.connection).statuses()
-        print(json.dumps(result))
+        print(serialize(result, str(command), str(args.get("format", "json"))))
         return True
     if command == "history":
         selected_folder = cast("str | None", args["folder"])
@@ -86,7 +93,7 @@ def human_command(store: Store, command: object, args: dict[str, object]) -> boo
             str(Path(selected_repository).resolve()) if selected_repository is not None else None
         )
         print(
-            json.dumps(
+            serialize(
                 store.history(
                     folder=folder,
                     repository=repository,
@@ -95,7 +102,9 @@ def human_command(store: Store, command: object, args: dict[str, object]) -> boo
                     limit=cast("int", args["limit"]),
                     conversation=cast("int | None", args["conversation"]),
                     peer=cast("str | None", args["peer"]),
-                )
+                ),
+                str(command),
+                str(args.get("format", "json")),
             )
         )
         return True
@@ -173,12 +182,13 @@ def send(store: Store, args: dict[str, object], sender: SenderContext) -> object
             "via": "wake coordinator",
             "reason": f"wake recording failed: {type(exc).__name__}",
         }
-        print(
-            f"llm-bus: message #{sent['id']} stored; could not record wake result: "
-            f"{type(exc).__name__}",
-            file=sys.stderr,
-        )
-    if wake_result["status"] != "requested":
+        if args.get("format") != "agent":
+            print(
+                f"llm-bus: message #{sent['id']} stored; could not record wake result: "
+                f"{type(exc).__name__}",
+                file=sys.stderr,
+            )
+    if wake_result["status"] != "requested" and args.get("format") != "agent":
         print(
             f"llm-bus: message #{sent['id']} stored; wake {wake_result['status']}: "
             f"{wake_result.get('reason', 'no details')}",

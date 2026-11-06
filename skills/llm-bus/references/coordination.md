@@ -47,12 +47,12 @@ paths with existing absolute local paths, and IDs with actual returned values.
 Run commands in the project scope from the indicated main session. Only execute
 owner setup commands after the corresponding direct owner authorization.
 
-1. Owner starts both sessions. Each runs `llm-bus whoami`. In Codex, validate
+1. Owner starts both sessions. Each runs `llm-bus --format agent whoami`. In Codex, validate
    Beads memory, then create the project:
 
    ```sh
-   llm-bus coordinate PROJECT --objective 'Owner-approved objective' --beads-workspace /absolute/project --memory-ticket MEMORY_ID --reference /absolute/project/AGENTS.md
-   llm-bus coordination show PROJECT
+   llm-bus --format agent coordinate PROJECT --objective 'Owner-approved objective' --beads-workspace /absolute/project --memory-ticket MEMORY_ID --reference /absolute/project/AGENTS.md
+   llm-bus --format agent coordination show PROJECT
    ```
 
    New projects get random UUIDv4 project/generation IDs. `coordinate PROJECT`
@@ -63,7 +63,7 @@ owner setup commands after the corresponding direct owner authorization.
 2. Owner grants the exact Claude worker locally, choosing an explicit lifetime:
 
    ```sh
-   llm-bus coordination grant PROJECT --recipient claude:WORKER_ID --until-revoked
+   llm-bus --format agent coordination grant PROJECT --recipient claude:WORKER_ID --until-revoked
    ```
 
    Alternatively use `--expires-at RFC3339` with a future timestamp and timezone.
@@ -71,7 +71,7 @@ owner setup commands after the corresponding direct owner authorization.
    the returned recipient grant UUID. In Claude, after direct owner request:
 
    ```sh
-   llm-bus join PROJECT
+   llm-bus --format agent join PROJECT
    ```
 
    Join requires a current exact grant. It assigns no specialty and creates no
@@ -81,21 +81,21 @@ owner setup commands after the corresponding direct owner authorization.
    Beads, then send its ticket ID, constraints and evidence requirements:
 
    ```sh
-   llm-bus coordination target PROJECT --recipient claude:WORKER_ID --grant-id GRANT_UUID
-   llm-bus send claude:WORKER_ID --project PROJECT --direction assign --body 'Task TASK_ID. Read acceptance criteria and dependencies; report evidence.'
+   llm-bus --format agent coordination target PROJECT --recipient claude:WORKER_ID --grant-id GRANT_UUID
+   llm-bus --format agent send claude:WORKER_ID --project PROJECT --direction assign --body 'Task TASK_ID. Read acceptance criteria and dependencies; report evidence.'
    ```
 
    Both `--project` and `--direction` are required together. Targets are routing
    references, not grants. Ordinary sends never inherit authority from enrollment.
 
-4. Worker reads `llm-bus inbox`. Check the structured `coordination` field has
+4. Worker reads `llm-bus --format agent inbox`. Check the structured `coordination` field has
    `verified: true` and `reason: verified`, matching project, generation and operation. Read current
    memory, assigned ticket and repository rules. Follow existing review gates;
    ack the local message ID after handling. Persist progress, then send an
    ordinary linked result:
 
    ```sh
-   llm-bus send codex:COORDINATOR_ID --reply-to LOCAL_ASSIGNMENT_ID --body 'TASK_ID result. Evidence: references. Remaining blockers: none.'
+   llm-bus --format agent send codex:COORDINATOR_ID --reply-to LOCAL_ASSIGNMENT_ID --body 'TASK_ID result. Evidence: references. Remaining blockers: none.'
    ```
 
    Replies and acknowledgements grant no authority and prove no completion.
@@ -112,9 +112,9 @@ Receiver owner imports the coordinator's project UUID, generation UUID and exact
 authenticated qualified address. Local paths belong to the receiver:
 
 ```sh
-llm-bus coordination setup PROJECT --project-id PROJECT_UUID --generation GENERATION_UUID --coordinator MACHINE/REPO/codex:COORDINATOR_ID --objective 'Owner-approved objective' --beads-workspace /absolute/local/project --memory-ticket MEMORY_ID --reference /absolute/local/project/AGENTS.md
-llm-bus coordination grant PROJECT --recipient claude:WORKER_ID --until-revoked
-llm-bus join PROJECT
+llm-bus --format agent coordination setup PROJECT --project-id PROJECT_UUID --generation GENERATION_UUID --coordinator MACHINE/REPO/codex:COORDINATOR_ID --objective 'Owner-approved objective' --beads-workspace /absolute/local/project --memory-ticket MEMORY_ID --reference /absolute/local/project/AGENTS.md
+llm-bus --format agent coordination grant PROJECT --recipient claude:WORKER_ID --until-revoked
+llm-bus --format agent join PROJECT
 ```
 
 `setup` cannot overwrite an existing binding. Exchange the non-secret returned
@@ -151,10 +151,10 @@ presence, delivery and acknowledgement do not prove availability or results.
 ## Revocation, replacement and recovery
 
 ```sh
-llm-bus coordination revoke PROJECT --recipient claude:WORKER_ID
-llm-bus coordination revoke PROJECT
-llm-bus coordination leave PROJECT
-llm-bus coordination replace PROJECT --coordinator codex:NEW_ID --generation FRESH_UUID
+llm-bus --format agent coordination revoke PROJECT --recipient claude:WORKER_ID
+llm-bus --format agent coordination revoke PROJECT
+llm-bus --format agent coordination leave PROJECT
+llm-bus --format agent coordination replace PROJECT --coordinator codex:NEW_ID --generation FRESH_UUID
 ```
 
 Recipient revoke removes that enrollment; project revoke suspends the project.
@@ -174,8 +174,8 @@ Already exposed text or a submitted wake cannot be recalled.
 
 After compaction, SessionStart restores full references when emitted;
 UserPromptSubmit rereads current enrollment every real prompt. Compact reminders
-retain authority state and recovery command. Use `llm-bus guidance` and
-`llm-bus coordination show PROJECT` to recover full current local state. Read
+retain authority state and recovery command. Use `llm-bus --format agent guidance` and
+`llm-bus --format agent coordination show PROJECT` to recover full current local state. Read
 this reference, official Beads skill, project-scoped `bd prime`, memory, assigned
 tickets and actual worktree/evidence before resuming. An expired/revoked grant
 suspends directions; ticket summaries and frozen context cannot restore it.

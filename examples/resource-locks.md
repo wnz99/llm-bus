@@ -2,7 +2,7 @@
 
 These examples require the advisory lock implementation proposed in
 [PR #51](https://github.com/wnz99/llm-bus/pull/51). It is not yet available on
-`main`. With a build containing that implementation, check `llm-bus lock --help`
+`main`. With a build containing that implementation, check `llm-bus --format agent lock --help`
 before adopting the instructions below.
 
 Locks are acquired by agents following instructions. The bus does not detect
@@ -22,8 +22,8 @@ The table is a naming convention, not executable configuration or a grant of acc
 ## Shared resource locks
 
 Before an operation in the table below, acquire its exact lock name with
-`llm-bus lock acquire NAME --check DURATION`. Choose an honest estimate of when
-you can release it. Run `llm-bus lock list` first to find the existing description.
+`llm-bus --format agent lock acquire NAME --check DURATION`. Choose an honest estimate of when
+you can release it. Run `llm-bus --format agent lock list` first to find the existing description.
 On first use, add `--describe` explaining what the resource protects.
 
 | Operation | Lock name | Scope |
@@ -40,13 +40,13 @@ resource. Carry `--shared` through acquire, status, renewal, and release when
 the table specifies machine scope.
 
 Proceed only when acquisition returns `acquired` or `renewed`, or ownership has
-been granted to this session and confirmed with `llm-bus lock status NAME`.
+been granted to this session and confirmed with `llm-bus --format agent lock status NAME`.
 If acquisition returns `waiting`, do other independent work. Do not access the
 resource while waiting. Use `--notify` only when you need to ask the holder now.
 
 On a grant, set your own estimate with `acquire NAME --check DURATION` before
 starting. On a lock check, release if finished; otherwise renew with a new
-estimate. Release promptly with `llm-bus lock release NAME` when done, including
+estimate. Release promptly with `llm-bus --format agent lock release NAME` when done, including
 when abandoning the task. Recheck ownership before resuming interrupted work;
 if ownership was lost, acquire again before continuing.
 
@@ -60,8 +60,8 @@ Both agents use the same local bus database and repository scope. Agent A starts
 the database operation only after this returns `acquired`:
 
 ```sh
-llm-bus lock list
-llm-bus lock acquire db:orders-dev --check 45m \
+llm-bus --format agent lock list
+llm-bus --format agent lock acquire db:orders-dev --check 45m \
   --describe "Local shared Orders development database" \
   --reason "Apply development migrations"
 ```
@@ -71,20 +71,20 @@ command. `--notify` sends A a request and attempts a wake; omit it to queue quie
 Repeated notifications are limited to once per five minutes per waiter.
 
 ```sh
-llm-bus lock acquire db:orders-dev --notify --reason "Reset development fixtures"
+llm-bus --format agent lock acquire db:orders-dev --notify --reason "Reset development fixtures"
 ```
 
 After 45 minutes, A receives a check asking whether it can release. This is a
 reminder, not automatic release. If A still needs the database, it renews:
 
 ```sh
-llm-bus lock acquire db:orders-dev --check 30m
+llm-bus --format agent lock acquire db:orders-dev --check 30m
 ```
 
 When finished, A releases:
 
 ```sh
-llm-bus lock release db:orders-dev
+llm-bus --format agent lock release db:orders-dev
 ```
 
 Ownership passes to the earliest live waiter. B receives a grant message with
@@ -92,8 +92,8 @@ a wake attempt. A requested wake does not prove the agent handled the message.
 B confirms ownership and sets its estimate before operating:
 
 ```sh
-llm-bus lock status db:orders-dev
-llm-bus lock acquire db:orders-dev --check 20m
+llm-bus --format agent lock status db:orders-dev
+llm-bus --format agent lock acquire db:orders-dev --check 20m
 ```
 
 B releases the same lock when finished.
@@ -109,10 +109,10 @@ Repository scope lets linked worktrees coordinate. Machine scope requires
 `--shared` on each applicable command, for example:
 
 ```sh
-llm-bus lock acquire deploy:staging --shared --check 15m \
+llm-bus --format agent lock acquire deploy:staging --shared --check 15m \
   --describe "Staging deployment target shared by local repositories"
-llm-bus lock status deploy:staging --shared
-llm-bus lock release deploy:staging --shared
+llm-bus --format agent lock status deploy:staging --shared
+llm-bus --format agent lock release deploy:staging --shared
 ```
 
 ## Reminder and expiry behavior

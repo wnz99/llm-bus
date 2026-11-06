@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
+from llm_bus.cli.references import resolve_reference
 from llm_bus.coordination import store
 from llm_bus.coordination.authority import authorize
 from llm_bus.coordination.models import OPERATIONS, Direction, timestamp, uuid4_string
@@ -85,6 +86,10 @@ def _path(value: object) -> str:
 def run(mailbox: Store, args: dict[str, object], address: str, cwd: str) -> dict[str, object]:
     """Use app-selected native identity. These commands grant no remote owner power."""
     scope = routing_scope(cwd)
+    args = dict(args)
+    for field in ("coordinator", "recipient"):
+        if args.get(field) is not None:
+            args[field] = resolve_reference(mailbox, str(args[field]), cwd)
     label = _text(args["project"])
     action = str(args["command"] if args["command"] != "coordination" else args["action"])
     with mailbox.transaction() as db:

@@ -101,7 +101,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = send(store, args, SenderContext(kind, session_id, project))
         else:
             agent_address = store.register(
-                kind, session_id, project, messaging_socket=claude_socket(kind)
+                kind,
+                session_id,
+                project,
+                messaging_socket=claude_socket(kind),
+                label=cast("str | None", args.get("label")) if command == "whoami" else None,
             )
             result = registered_command(store, command, args, agent_address, project)
         print(serialize(result, str(command), str(args["format"])))

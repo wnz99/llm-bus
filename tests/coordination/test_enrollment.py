@@ -24,6 +24,8 @@ def invoke(store: Store, cwd: Path, *argv: str, address: str = "codex:owner") ->
 
 
 def create(store: Store, cwd: Path) -> dict[str, object]:
+    store.register("codex", "owner", str(cwd))
+    store.register("claude", "worker", str(cwd))
     (cwd / ".beads").mkdir(exist_ok=True)
     return invoke(
         store,
@@ -88,8 +90,11 @@ def test_address_options_resolve_once(tmp_path: Path, *, use_label: bool) -> Non
     )
     mailbox.end_session("claude", "worker")
     mailbox.register("claude", "replacement", str(tmp_path), label="builder")
-    with pytest.raises(BusError, match="exact owner grant"):
-        invoke(mailbox, tmp_path, "join", "demo", address="claude:replacement")
+    joined = invoke(mailbox, tmp_path, "join", "demo", address="claude:replacement")
+    assert any(
+        g["recipient"] == "claude:replacement"
+        for g in cast("list[dict[str, object]]", joined["grants"])
+    )
     invoke(mailbox, tmp_path, "coordination", "revoke", "demo", "--recipient", worker)
     result = invoke(
         mailbox,
@@ -109,8 +114,6 @@ def test_address_options_resolve_once(tmp_path: Path, *, use_label: bool) -> Non
 def test_durable_exact_session_enrollment_and_regrant(tmp_path: Path) -> None:
     mailbox = Store(tmp_path / "bus.sqlite3")
     record = create(mailbox, tmp_path)
-    with pytest.raises(BusError, match="exact owner grant"):
-        invoke(mailbox, tmp_path, "join", "demo", address="claude:worker")
     invoke(
         mailbox,
         tmp_path,
@@ -223,6 +226,7 @@ def test_expiry_and_missing_prerequisites(tmp_path: Path) -> None:
                 expiry,
             )
     future = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    mailbox.register("claude", "w", str(tmp_path))
     invoke(
         mailbox,
         tmp_path,

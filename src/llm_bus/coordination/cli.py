@@ -11,10 +11,11 @@ from uuid import uuid4
 
 from llm_bus.cli.references import resolve_reference
 from llm_bus.coordination import store
-from llm_bus.coordination.authority import authorize
-from llm_bus.coordination.models import OPERATIONS, Direction, timestamp, uuid4_string
+from llm_bus.coordination.availability import record_local
+from llm_bus.coordination.models import OPERATIONS, timestamp, uuid4_string
 from llm_bus.errors import BusError
 from llm_bus.routing import routing_scope
+from llm_bus.wake.dispatch import dispatch_pending
 
 if TYPE_CHECKING:
     import argparse
@@ -32,7 +33,7 @@ def add_parsers(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     coordinate = add_parser("coordinate", help="Owner enrolls this coordinator")
     coordinate.add_argument("project")
     _references(coordinate, required=False)
-    add_parser("join", help="Enroll this granted main session").add_argument("project")
+    add_parser("join", help="Owner consents and enrolls this main session").add_argument("project")
     actions = add_parser("coordination").add_subparsers(dest="action", required=True)
     for name in ("show", "setup", "grant", "revoke", "replace", "leave", "target"):
         action = actions.add_parser(name)
@@ -110,8 +111,13 @@ def run(mailbox: Store, args: dict[str, object], address: str, cwd: str) -> dict
             return store.show(db, record)
         if action in {"coordinate", "join", "grant"} and record["revoked_at"] is not None:
             raise BusError("Project revoked; owner must replace coordinator binding")
-        _transition(db, action, record, args, address)
-        return store.show(db, store.project(db, scope, label))
+        notice_id = _transition(db, action, record, args, address)
+        result = store.show(db, store.project(db, scope, label))
+    if notice_id is not None:
+        result["availability_wake"] = dispatch_pending(
+            mailbox, str(record["coordinator"]), trigger_id=notice_id
+        )
+    return result
 
 
 def _create(
@@ -150,7 +156,7 @@ def _transition(  # noqa: C901, PLR0912 - bounded CLI action dispatch
     record: dict[str, object],
     args: dict[str, object],
     address: str,
-) -> None:
+) -> int | None:
     # pylint: disable=too-many-branches
     key = (record["scope"], record["project_id"])
     if action == "coordinate":
@@ -158,30 +164,15 @@ def _transition(  # noqa: C901, PLR0912 - bounded CLI action dispatch
             raise BusError("Different coordinator; owner must use coordination replace")
         store.enroll(db, record, address, "coordinator")
     elif action == "join":
-        grant = cast(
-            "tuple[str] | None",
+        grant_id = store.join_session(db, record, address)
+        if "/" not in str(record["coordinator"]):
             db.execute(
-                "SELECT grant_id FROM coordination_grants WHERE scope=? "
-                "AND project_id=? AND recipient=? AND revoked_at IS NULL",
-                (*key, address),
-            ).fetchone(),
-        )
-        if grant is None:
-            raise BusError("Current session needs exact owner grant")
-        # Enrollment and grant verification share the same transaction; denial rolls back.
-        store.enroll(db, record, address, "worker")
-        decision = authorize(
-            db,
-            sender=str(record["coordinator"]),
-            recipient=address,
-            scope=str(record["scope"]),
-            now=datetime.now(UTC),
-            direction=Direction(
-                1, str(record["project_id"]), str(record["generation"]), grant[0], "assign"
-            ),
-        )
-        if not decision.verified:
-            raise BusError(f"Cannot join: {decision.reason}")
+                "INSERT INTO coordination_targets(scope,project_id,recipient,grant_id,generation) "
+                "VALUES (?,?,?,?,?) ON CONFLICT(scope,project_id,recipient) DO UPDATE SET "
+                "grant_id=excluded.grant_id,generation=excluded.generation",
+                (*key, address, grant_id, record["generation"]),
+            )
+            return record_local(db, record, address, grant_id)
     elif action == "grant":
         expiry = args.get("expires_at")
         if expiry is None and args.get("until_revoked") is not True:
@@ -215,6 +206,15 @@ def _transition(  # noqa: C901, PLR0912 - bounded CLI action dispatch
             ),
         )
     elif action == "leave":
+        if (
+            db.execute(
+                "SELECT 1 FROM coordination_enrollments "
+                "WHERE scope=? AND project_id=? AND address=?",
+                (*key, address),
+            ).fetchone()
+            is not None
+        ):
+            store.end_session_consents(db, address)
         db.execute(
             "DELETE FROM coordination_enrollments WHERE scope=? AND project_id=? AND address=?",
             (*key, address),
@@ -236,6 +236,7 @@ def _transition(  # noqa: C901, PLR0912 - bounded CLI action dispatch
         )
         if coordinator == address:
             store.enroll(db, {**record, "generation": generation}, address, "coordinator")
+    return None
 
 
 def _revoke(db: Connection, record: dict[str, object], recipient: object) -> None:
@@ -248,6 +249,15 @@ def _revoke(db: Connection, record: dict[str, object], recipient: object) -> Non
         "UPDATE coordination_grants SET revoked_at=? "  # noqa: S608
         "WHERE scope=? AND project_id=?" + clause,
         (now, *values),
+    )
+    db.execute(
+        "UPDATE coordination_session_consents SET ended_at=? WHERE ended_at IS NULL "
+        "AND grant_id IN (SELECT grant_id FROM coordination_grants WHERE revoked_at IS NOT NULL)",
+        (now,),
+    )
+    db.execute(
+        "DELETE FROM coordination_targets WHERE grant_id IN "
+        "(SELECT grant_id FROM coordination_grants WHERE revoked_at IS NOT NULL)"
     )
     if recipient is None:
         db.execute(

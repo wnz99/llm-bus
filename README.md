@@ -242,8 +242,15 @@ The [instruction snippet](examples/agent-instructions.md) includes coordination 
 
 Project direction is a separate, opt-in workflow. The owner manually starts
 sessions, requests `/llm-bus coordinate PROJECT` in one main session and
-`/llm-bus join PROJECT` in each worker, and approves exact grants with explicit
-lifetimes. Joining assigns no specialty. Defaults and ordinary messages remain
+`/llm-bus join PROJECT` in each worker. A direct owner join records consent to
+the current exact coordinator and objective. Automatic consent ends at session
+close, 24-hour inactivity expiry, leave, revoke or generation replacement;
+turn completion and compaction preserve it. Existing explicit owner grants keep
+their selected lifetimes. Local joins record the assignment target and one
+durable informational arrival per grant, even if the coordinator is offline.
+Native wake support determines whether the coordinator resumes automatically.
+Remote automatic arrival exchange remains pending; use the advanced remote
+grant/target workflow. Joining assigns no specialty. Defaults and ordinary messages remain
 unchanged. Directions cannot bypass owner instructions, host permissions or
 existing review/approval gates.
 

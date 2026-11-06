@@ -68,6 +68,13 @@ def test_coordination_recovery_reads_current_records(
     monkeypatch.setenv("LLM_BUS_CONFIG", str(tmp_path / "missing.toml"))
     store = Store(path)
     (tmp_path / ".beads").mkdir()
+    store.register("codex", "owner", str(tmp_path))
+    store.register(kind, "worker", str(tmp_path))
+
+    def no_host_wake(*_args: object, **_kwargs: object) -> dict[str, str]:
+        return {"status": "unsupported"}
+
+    monkeypatch.setattr("llm_bus.coordination.cli.dispatch_pending", no_host_wake)
 
     def command(*args: str, address: str = "codex:owner") -> None:
         run(store, vars(build_parser().parse_args(args)), address, str(tmp_path))

@@ -1,10 +1,14 @@
 """Local owner records. Callers serialize mutations with BEGIN IMMEDIATE."""
 
 # ruff: noqa: ISC004 - adjacent SQL fragments form individual table definitions
+# Lifecycle ends consent here; join invokes lifecycle and authority lazily.
+# pylint: disable=cyclic-import,clean-code-commented-out-code
 
 import json
+from datetime import UTC, datetime
 from sqlite3 import Connection
 from typing import cast
+from uuid import uuid4
 
 from llm_bus.errors import BusError
 
@@ -32,6 +36,11 @@ def create_tables(db: Connection) -> None:
         "CREATE TABLE IF NOT EXISTS coordination_targets (scope TEXT NOT NULL, "
         "project_id TEXT NOT NULL, recipient TEXT NOT NULL, grant_id TEXT NOT NULL, "
         "generation TEXT NOT NULL, PRIMARY KEY(scope,project_id,recipient))",
+        "CREATE TABLE IF NOT EXISTS coordination_session_consents (grant_id TEXT PRIMARY KEY "
+        "REFERENCES coordination_grants(grant_id), address TEXT NOT NULL, ended_at TEXT)",
+        "CREATE TABLE IF NOT EXISTS coordination_local_availability (grant_id TEXT PRIMARY KEY "
+        "REFERENCES coordination_grants(grant_id), message_id INTEGER NOT NULL UNIQUE "
+        "REFERENCES messages(id))",
     ):
         db.execute(statement)
 
@@ -59,6 +68,95 @@ def enroll(db: Connection, record: dict[str, object], address: str, role: str) -
         "INSERT OR REPLACE INTO coordination_enrollments VALUES (?,?,?,?,?)",
         (record["scope"], record["project_id"], address, role, record["generation"]),
     )
+
+
+def end_session_consents(db: Connection, address: str) -> None:
+    """End automatic consent without altering explicit owner grant lifetimes."""
+    now = datetime.now(UTC).isoformat()
+    db.execute(
+        "UPDATE coordination_grants SET revoked_at=? WHERE grant_id IN "
+        "(SELECT grant_id FROM coordination_session_consents WHERE address=? AND ended_at IS NULL)",
+        (now, address),
+    )
+    db.execute(
+        "DELETE FROM coordination_targets WHERE grant_id IN "
+        "(SELECT grant_id FROM coordination_session_consents WHERE address=? AND ended_at IS NULL)",
+        (address,),
+    )
+    db.execute(
+        "DELETE FROM coordination_enrollments WHERE address=? AND EXISTS "
+        "(SELECT 1 FROM coordination_session_consents WHERE address=? AND ended_at IS NULL)",
+        (address, address),
+    )
+    db.execute(
+        "UPDATE coordination_session_consents SET ended_at=? WHERE address=? AND ended_at IS NULL",
+        (now, address),
+    )
+
+
+def join_session(db: Connection, record: dict[str, object], address: str) -> str:
+    """Record an owner-directed join inside the caller's immediate transaction."""
+    # Deferred imports keep the lifecycle owner usable during mailbox import.
+    # pylint: disable=import-outside-toplevel,clean-code-redundant-comment
+    from llm_bus.coordination.authority import authorize  # noqa: PLC0415
+    from llm_bus.coordination.models import OPERATIONS, Direction  # noqa: PLC0415
+    from llm_bus.mailbox.agents import expire_idle_agents  # noqa: PLC0415
+
+    expire_idle_agents(db)
+    if (
+        db.execute(
+            "SELECT 1 FROM agents WHERE address=? AND scope=? AND ended_at IS NULL",
+            (address, record["scope"]),
+        ).fetchone()
+        is None
+    ):
+        raise BusError("Join requires live native session in current scope")
+    if record["revoked_at"] is not None:
+        raise BusError("Project revoked; owner must replace coordinator binding")
+    enroll(db, record, address, "worker")
+    grant = cast(
+        "tuple[str] | None",
+        db.execute(
+            "SELECT g.grant_id FROM coordination_grants g "
+            "LEFT JOIN coordination_session_consents c ON c.grant_id=g.grant_id "
+            "WHERE g.scope=? AND g.project_id=? AND g.recipient=? AND g.generation=? "
+            "AND g.revoked_at IS NULL AND c.ended_at IS NULL ORDER BY g.rowid DESC LIMIT 1",
+            (record["scope"], record["project_id"], address, record["generation"]),
+        ).fetchone(),
+    )
+    grant_id = grant[0] if grant else str(uuid4())
+    if grant is None:
+        db.execute(
+            "INSERT INTO coordination_grants "
+            "(scope,project_id,recipient,grant_id,generation,coordinator,operations_json) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (
+                record["scope"],
+                record["project_id"],
+                address,
+                grant_id,
+                record["generation"],
+                record["coordinator"],
+                json.dumps(OPERATIONS),
+            ),
+        )
+        db.execute(
+            "INSERT INTO coordination_session_consents(grant_id,address) VALUES (?,?)",
+            (grant_id, address),
+        )
+    decision = authorize(
+        db,
+        sender=str(record["coordinator"]),
+        recipient=address,
+        scope=str(record["scope"]),
+        direction=Direction(
+            1, str(record["project_id"]), str(record["generation"]), grant_id, "assign"
+        ),
+        now=datetime.now(UTC),
+    )
+    if not decision.verified:
+        raise BusError(f"Cannot join: {decision.reason}")
+    return grant_id
 
 
 def show(db: Connection, record: dict[str, object]) -> dict[str, object]:

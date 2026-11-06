@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+from llm_bus.coordination.store import end_session_consents
 from llm_bus.hosts.sessions import is_subagent
 from llm_bus.mailbox import labels
 from llm_bus.mailbox.models import (
@@ -28,6 +29,14 @@ def expire_idle_agents(db: sqlite3.Connection) -> None:
         "DELETE FROM agent_labels WHERE address IN "
         "(SELECT address FROM agents WHERE ended_at IS NOT NULL)"
     )
+    for (ended_address,) in cast(
+        "list[tuple[str]]",
+        db.execute(
+            "SELECT DISTINCT c.address FROM coordination_session_consents c JOIN agents a "
+            "ON a.address=c.address WHERE a.ended_at IS NOT NULL AND c.ended_at IS NULL"
+        ).fetchall(),
+    ):
+        end_session_consents(db, str(ended_address))
 
 
 def register(  # noqa: PLR0913 - explicit optional registration metadata
@@ -69,6 +78,12 @@ def upsert_agent(
 ) -> str:
     agent_address = address(kind, session_id)
     expire_idle_agents(db)
+    previous = cast(
+        "tuple[str] | None",
+        db.execute("SELECT scope FROM agents WHERE address=?", (agent_address,)).fetchone(),
+    )
+    if previous is not None and previous[0] != scope:
+        end_session_consents(db, agent_address)
     db.execute("DELETE FROM agent_labels WHERE address=? AND scope<>?", (agent_address, scope))
     db.execute(
         "INSERT INTO agents(address, kind, project, scope, last_seen, ended_at) "
@@ -83,6 +98,7 @@ def upsert_agent(
 
 def end_session(db: sqlite3.Connection, kind: str, session_id: str) -> None:
     """Mark a registered session closed without consuming its pending messages."""
+    end_session_consents(db, address(kind, session_id))
     db.execute("DELETE FROM agent_labels WHERE address=?", (address(kind, session_id),))
     db.execute(
         "UPDATE agents SET ended_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), "

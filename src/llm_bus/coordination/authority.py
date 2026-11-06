@@ -7,6 +7,7 @@ from typing import cast
 
 from llm_bus.coordination.models import OPERATIONS, AuthorityDecision, Direction, timestamp
 from llm_bus.errors import BusError
+from llm_bus.mailbox.agents import expire_idle_agents
 
 
 def authorize(  # noqa: PLR0913, C901, PLR0911, PLR0912 - explicit denial precedence
@@ -26,6 +27,7 @@ def authorize(  # noqa: PLR0913, C901, PLR0911, PLR0912 - explicit denial preced
     def deny(reason: str) -> AuthorityDecision:
         return AuthorityDecision(verified=False, reason=reason)
 
+    expire_idle_agents(db)
     try:
         direction.validate()
     except (BusError, AttributeError, TypeError):
@@ -53,6 +55,23 @@ def authorize(  # noqa: PLR0913, C901, PLR0911, PLR0912 - explicit denial preced
         return deny("stale_generation")
     if coordinator != sender:
         return deny("wrong_coordinator")
+    consent = cast(
+        "tuple[str, str | None, str | None, str | None] | None",
+        db.execute(
+            "SELECT c.address,c.ended_at,a.scope,a.ended_at FROM coordination_session_consents c "
+            "LEFT JOIN agents a ON a.address=c.address WHERE c.grant_id=?",
+            (direction.grant_id,),
+        ).fetchone(),
+    )
+    if consent is not None:
+        owner, ended, current_scope, session_ended = consent
+        if (
+            owner != recipient
+            or ended is not None
+            or current_scope != scope
+            or session_ended is not None
+        ):
+            return deny("revoked")
     enrolled = cast(
         "tuple[str] | None",
         db.execute(

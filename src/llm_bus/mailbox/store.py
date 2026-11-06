@@ -4,7 +4,7 @@ from contextlib import AbstractContextManager, closing
 from typing import TYPE_CHECKING
 
 from llm_bus.diagnostics.messages import message_status
-from llm_bus.mailbox import agents, connection, history, pending, writes
+from llm_bus.mailbox import agents, connection, history, labels, pending, writes
 from llm_bus.mailbox.models import MAX_BATCH, Agent, HistoryMessage, Message, SenderContext
 from llm_bus.routing import routing_scope
 
@@ -42,11 +42,27 @@ class Store:  # pylint: disable=too-many-public-methods
         return connection.transaction(self._connect)
 
     def register(
-        self, kind: str, session_id: str, project: str, *, messaging_socket: str | None = None
+        self,
+        kind: str,
+        session_id: str,
+        project: str,
+        *,
+        messaging_socket: str | None = None,
+        label: str | None = None,
     ) -> str:
         """Upsert session address without deleting its pending messages."""
         with self.transaction() as db:
-            return agents.register(db, kind, session_id, project, messaging_socket=messaging_socket)
+            db.execute("BEGIN IMMEDIATE")
+            return agents.register(
+                db, kind, session_id, project, messaging_socket=messaging_socket, label=label
+            )
+
+    def resolve_label(self, label: str, project: str) -> str:
+        """Expire and resolve a label atomically in the selected routing scope."""
+        with self.transaction() as db:
+            db.execute("BEGIN IMMEDIATE")
+            agents.expire_idle_agents(db)
+            return labels.lookup(db, routing_scope(project), label)
 
     def messaging_socket(self, agent_address: str) -> str | None:
         """Read the native endpoint reported by the recipient's own hook."""

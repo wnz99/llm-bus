@@ -20,6 +20,7 @@ class Agent(TypedDict):
     project: str
     last_seen: str
     ended_at: str | None
+    label: NotRequired[str | None]
 
 
 class Message(TypedDict):

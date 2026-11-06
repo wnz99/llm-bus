@@ -3,6 +3,23 @@ import worker from '../src/index';
 import { dispatch, repair } from '../src/messages';
 import { bindings, request, register, send } from './relay-fixture';
 describe('machine and repository boundary', () => {
+  it('orders labels and releases independently from activity and legacy clients', async () => {
+    const base = {repo_id:'xyz',native_address:'codex:a',last_seen:new Date().toISOString(),ended:false};
+    expect((await request('a','sessions',{...base,label:'Worker',revision:2})).status).toBe(200);
+    expect((await request('a','sessions',{...base,label:'Stale',revision:1})).status).toBe(200);
+    expect((await request('a','sessions',{...base,label:'Conflict',revision:2})).status).toBe(200);
+    expect((await request('a','sessions',{...base,ended:true})).status).toBe(200);
+    let row=await bindings.DB.prepare('SELECT * FROM sessions WHERE address=?').bind('a/xyz/codex:a').first();
+    expect(row).toMatchObject({label:'Worker',revision:2,ended:0});
+    expect((await request('a','sessions',{...base,label:'Worker',revision:3,ended:true})).status).toBe(200);
+    row=await bindings.DB.prepare('SELECT * FROM sessions WHERE address=?').bind('a/xyz/codex:a').first();
+    expect(row).toMatchObject({label:null,revision:3,ended:1});
+    for (const metadata of [{label:'bad/name',revision:4},{label:'Worker',revision:0},{revision:true},{revision:-1}]) {
+      expect((await request('a','sessions',{...base,...metadata})).status).toBe(400);
+    }
+    await bindings.DB.prepare("DELETE FROM repo_grants WHERE machine_id='a'").run();
+    expect((await request('a','sessions',{...base,revision:1})).status).toBe(403);
+  });
   it('isolates versioned directions and compares every immutable authority field', async () => {
     const call = (path:string, data?:object) => worker.fetch(new Request(`https://bus.test/v2/coordination/${path}`, {
       method:data ? 'POST' : 'GET', headers:{Authorization:`Bearer ${'a'.repeat(43)}`,'Content-Type':'application/json'}, body:data ? JSON.stringify(data) : undefined,

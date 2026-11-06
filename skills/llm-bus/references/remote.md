@@ -12,6 +12,16 @@ grants, complementary local sender/receiver capabilities, and running bridges
 on both machines. Local bridge alone cannot establish connectivity. `list`
 uses cache; listed remote address not prove current access or liveness.
 
+Remote labels also accept `MACHINE/REPO/NAME`, for example
+`llm-bus --format agent send build-server/project/Builder --body 'Inspect the API.'`.
+They resolve from the policy-eligible cached roster. Bare labels never search
+remote machines. Duplicate remote names are refused as ambiguous. A reused name
+selects its current exact owner and transfers no grants, enrollment or replies.
+Native addresses remain usable without label discovery. Labels require upgraded
+bridges and relay migration `0005_session_labels.sql`; old peers remain visible
+by native address. Ordered publication prevents stale snapshots or legacy
+updates from restoring released revisioned labels. Discovery is not liveness.
+
 ## Respect each owner's policy
 
 Each machine owner controls exact per-repository, per-peer capabilities.

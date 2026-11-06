@@ -22,6 +22,52 @@ from llm_bus.remote.store import RemoteStore
 
 from .support import FakeClock, delivery, setup_machine
 
+
+def test_session_label_revision_survives_restart_and_release(tmp_path: Path) -> None:
+    store, config = setup_machine(tmp_path, "a")
+    project = str(tmp_path / "repo")
+    store.register("codex", "labels", project, label="Worker")
+    remote = RemoteStore(store, config.connection)
+    first = next(row for row in remote.sessions() if row["native_address"] == "codex:labels")
+    assert first["label"] == "Worker"
+    assert first["revision"] == 1
+    assert RemoteStore(Store(store.path), config.connection).sessions() == remote.sessions()
+    store.end_session("codex", "labels")
+    ended = next(row for row in remote.sessions() if row["native_address"] == "codex:labels")
+    assert ended["label"] is None
+    assert ended["revision"] == 2
+    assert remote.sessions() == [ended]
+
+
+@pytest.mark.parametrize("version", [8, 9])
+def test_publication_migration_preserves_sessions(tmp_path: Path, version: int) -> None:
+    store, config = setup_machine(tmp_path, "a")
+    project = str(tmp_path / "repo")
+    store.register("codex", "old", project)
+    with store.transaction() as db:
+        db.execute("DROP TABLE session_publications")
+        if version == 8:
+            db.execute("DROP TABLE agent_labels")
+        db.execute(f"PRAGMA user_version={version}")
+    reopened = Store(store.path)
+    sessions = RemoteStore(reopened, config.connection).sessions()
+    assert sessions[0]["native_address"] == "codex:old"
+    assert sessions[0]["revision"] == 1
+
+
+def test_publication_clears_expired_label(tmp_path: Path) -> None:
+    store, config = setup_machine(tmp_path, "a")
+    store.register("codex", "old", str(tmp_path / "repo"), label="Worker")
+    remote = RemoteStore(store, config.connection)
+    assert remote.sessions()[0]["label"] == "Worker"
+    with store.transaction() as db:
+        db.execute("UPDATE agents SET last_seen='2000-01-01'")
+    ended = remote.sessions()[0]
+    assert ended["label"] is None
+    assert ended["ended_at"] is not None
+    assert ended["revision"] == 2
+
+
 if TYPE_CHECKING:
     from pathlib import Path
 

@@ -7,6 +7,12 @@ join or use the bus; they report through their parent's native channel.
 
 ## Prerequisites and authority
 
+Agent-address options accept local labels or fully qualified
+`MACHINE/REPO/NAME` references. Resolution selects an exact native identity once;
+the stored coordinator, grants and targets keep that identity. Label reuse never
+transfers enrollment or authorization. Duplicate remote names are refused.
+Use exact native addresses when diagnosing an earlier owner's history.
+
 Discover the installed official `beads` skill and read it. Run `bd prime` in the
 canonical project workspace for current command guidance; use its memory,
 resumability and worktree resources as needed. Do not duplicate its command

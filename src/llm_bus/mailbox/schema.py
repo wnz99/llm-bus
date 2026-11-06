@@ -10,7 +10,7 @@ from llm_bus.mailbox import migrations
 if TYPE_CHECKING:
     from collections.abc import Callable
     from sqlite3 import Connection
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 SYNC_SCHEMA_VERSION = 2
 WAKE_SCHEMA_VERSION = 3
 LOCK_SCHEMA_VERSION = 5
@@ -19,6 +19,7 @@ LOCK_SEEN_SCHEMA_VERSION = 7
 REPLY_SCHEMA_VERSION = 4
 COORDINATION_SCHEMA_VERSION = 8
 LABEL_SCHEMA_VERSION = 9
+PUBLICATION_SCHEMA_VERSION = 10
 SYNC_WORK_TABLE = (
     "CREATE TABLE IF NOT EXISTS remote_sync_work (kind TEXT NOT NULL, key TEXT NOT NULL, "
     "attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT, last_attempt_at TEXT, "
@@ -207,6 +208,11 @@ def ensure_schema(db: Connection, resolve_scope: Callable[[str], str]) -> None: 
                 "label_key TEXT NOT NULL, label TEXT NOT NULL, "
                 "address TEXT NOT NULL UNIQUE REFERENCES agents(address), "
                 "PRIMARY KEY(scope,label_key))"
+            )
+        if version < PUBLICATION_SCHEMA_VERSION:
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS session_publications (address TEXT PRIMARY KEY "
+                "REFERENCES agents(address), revision INTEGER NOT NULL, payload TEXT NOT NULL)"
             )
         if version < SCHEMA_VERSION:
             db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")

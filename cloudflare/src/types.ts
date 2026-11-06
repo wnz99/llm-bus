@@ -3,6 +3,8 @@ export interface Env {
   DELIVERY: Queue<string>;
 }
 export interface Session {
+  label: string | null;
+  revision: number;
   address: string;
   machine_id: string;
   repo_id: string;

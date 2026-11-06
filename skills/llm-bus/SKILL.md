@@ -65,6 +65,18 @@ llm-bus --format agent whoami
 llm-bus --format agent list
 ```
 
+`whoami --label NAME` explicitly claims or renames a repository-scoped session
+label. Use 1–64 ASCII letters, digits, underscores or hyphens, starting with a
+letter or digit. Matching ignores case; duplicate claims fail atomically.
+Linked worktrees share claims. Implicit registration preserves existing claims.
+Close, scope movement or 24-hour inactivity releases the claim; turns and
+compaction do not. Resume requires an explicit claim after release. Configured
+hooks do not guarantee every live host close event; activity inspection applies
+expiry. Send to `NAME` locally or `MACHINE/REPO/NAME` remotely. Labels select exact
+identities once and confer no authority. Reuse transfers no history, replies or
+grants; inspect old history using its exact native address. Remote roster cache
+does not prove reachability; duplicate remote names are ambiguous and refused.
+
 `whoami` registers current session, reports its address. `list` discovers
 peers in current Git repository, including linked worktrees, or current
 folder outside Git. Also includes permitted cached remote peers when configured.

@@ -31,6 +31,7 @@ class Envelope(TypedDict):
 
 
 class Peer(TypedDict):
+    label: NotRequired[str | None]
     address: str
     machine_id: str
     repo_id: str

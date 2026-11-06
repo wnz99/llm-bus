@@ -73,7 +73,10 @@ def test_claude_hook_uses_same_session_address(
     monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
     monkeypatch.delenv("CODEX_SESSION_ID", raising=False)
     assert main(["whoami"]) == 0
-    assert json.loads(capsys.readouterr().out) == {"address": "claude:claude-session"}
+    assert json.loads(capsys.readouterr().out) == {
+        "address": "claude:claude-session",
+        "label": None,
+    }
 
 
 @pytest.mark.parametrize("kind", ["codex", "claude"])

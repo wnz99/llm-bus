@@ -75,7 +75,7 @@ class RemoteStore:
                     "This mailbox is bound to another relay/machine; use another LLM_BUS_DB"
                 )
 
-    def sessions(self) -> list[dict[str, str | None]]:
+    def sessions(self) -> list[dict[str, str | int | None]]:
         return discovery_store.sessions(self)
 
     def published(self, key: str, payload: str | None = None) -> bool:

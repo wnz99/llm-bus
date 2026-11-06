@@ -11,15 +11,80 @@ from uuid import uuid4
 import pytest
 
 from llm_bus import main
+from llm_bus.cli.references import resolve_reference
+from llm_bus.errors import BusError
 from llm_bus.mailbox.models import SenderContext
 from llm_bus.mailbox.store import Store
 from llm_bus.policy.config import load_config
 from llm_bus.remote.bridge import Bridge
 from llm_bus.remote.outgoing import enqueue_remote
+from llm_bus.remote.protocol import parse_peer
 from llm_bus.remote.store import RemoteStore
 from tests.support import hook_input
 
 from .support import assert_config_scope, assert_inbox_admission, delivery, setup_machine
+
+
+def test_remote_labels_refuse_duplicates_and_denied_sender_policy(tmp_path: Path) -> None:
+    store, config = setup_machine(tmp_path, "b")
+    remote = RemoteStore(store, config.connection)
+
+    def peer(native: str, label: str | None) -> object:
+        return {
+            "address": f"a/xyz/{native}",
+            "machine_id": "a",
+            "repo_id": "xyz",
+            "native_address": native,
+            "last_seen": "2026-11-06T00:00:00Z",
+            "label": label,
+            "revision": 1,
+        }
+
+    one = parse_peer(peer("codex:one", "Worker"), "xyz", "b")
+    remote.cache("xyz", [one])
+    assert resolve_reference(store, "a/xyz/worker", str(tmp_path / "repo")) == one["address"]
+    remote.cache("xyz", [one, parse_peer(peer("codex:two", "WORKER"), "xyz", "b")])
+    with pytest.raises(BusError, match="ambiguous"):
+        resolve_reference(store, "a/xyz/worker", str(tmp_path / "repo"))
+    remote.cache("xyz", [parse_peer(peer("codex:new", "Worker"), "xyz", "b")])
+    assert resolve_reference(store, "a/xyz/worker", str(tmp_path / "repo")) == "a/xyz/codex:new"
+    path = Path(os.environ["LLM_BUS_CONFIG"])
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("send_messages = true", "send_messages = false"),
+        encoding="utf-8",
+    )
+    with pytest.raises(BusError, match="ambiguous"):
+        resolve_reference(store, "a/xyz/worker", str(tmp_path / "repo"))
+
+
+@pytest.mark.parametrize("metadata", [{}, {"label": None}, {"label": "Worker", "revision": 1}])
+def test_peer_metadata_legacy_and_new(metadata: dict[str, object]) -> None:
+    peer = {
+        "address": "a/xyz/codex:one",
+        "machine_id": "a",
+        "repo_id": "xyz",
+        "native_address": "codex:one",
+        "last_seen": "2026-11-06",
+        **metadata,
+    }
+    assert parse_peer(peer, "xyz", "b").get("label") == metadata.get("label")
+
+
+@pytest.mark.parametrize("metadata", [{"label": "bad/name"}, {"revision": True}, {"revision": -1}])
+def test_peer_rejects_invalid_metadata(metadata: dict[str, object]) -> None:
+    with pytest.raises(BusError):
+        parse_peer(
+            {
+                "address": "a/xyz/codex:one",
+                "machine_id": "a",
+                "repo_id": "xyz",
+                "native_address": "codex:one",
+                "last_seen": "2026-11-06",
+                **metadata,
+            },
+            "xyz",
+            "b",
+        )
 
 
 @pytest.mark.parametrize("mode", ["deny", "monitor"])

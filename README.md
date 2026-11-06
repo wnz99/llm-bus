@@ -297,6 +297,36 @@ Under each collaborator's **Change permissions**, choose **Responder context**: 
 
 Forked responders can repeat anything already in your session's context. Summary responders receive only your supplied summary and repository access; include only information that collaborator may receive. Replies that look like secrets are held for your review, and you can choose to review every reply. See the [collaboration plan](docs/collab-plan.md) for the threat model, enforcement details, and known gaps. The optional [skill](skills/llm-bus/references/collab.md) walks agents through setup.
 
+## Agent labels
+
+Claim a readable name in your current repository or folder:
+
+```sh
+llm-bus whoami --label Builder
+llm-bus send Builder --body 'Inspect the shared API before editing.'
+llm-bus send MACHINE/REPO/Builder --body 'Inspect the shared API before editing.'
+```
+
+Names contain 1–64 ASCII letters, digits, underscores or hyphens and start with
+a letter or digit. Matching ignores case; the claimed spelling is displayed.
+Linked worktrees share repository scope. Duplicate claims fail without changing
+the existing claim. Run `whoami --label NEW_NAME` to rename atomically.
+
+A clean session close, movement to another scope, or 24 hours of inactivity
+releases the name. Configured close hooks provide coverage, not a guarantee that
+every live host sends a close event. Expiry applies when activity is inspected.
+Turns and compaction retain an active claim. A resumed ended session must
+explicitly claim again; implicit registration does not reclaim a released name.
+
+Names select exact session addresses once per command. They grant no permissions
+and never transfer history, reply participation or coordination grants on reuse.
+Use `history --peer codex:OLD_SESSION_ID` to inspect the previous owner's history.
+Bare names resolve only in the selected local scope. Remote names require full
+`MACHINE/REPO/NAME` qualification and a policy-eligible cached roster; duplicate
+remote claims fail as ambiguous. Cache presence does not prove reachability.
+Exact native addresses remain supported. Remote discovery needs upgraded bridges
+and relay migration `0005_session_labels.sql`; no deployment is implied here.
+
 ## Browse message history
 
 `llm-bus status MESSAGE_ID` reads body-free diagnostics for one retained local integer message ID. Replace `MESSAGE_ID` with an ID from `send`, `inbox`, or `history`. It needs no host identity, configuration, token, network, or running bridge, and remains readable after blocking a peer or removing configuration. It never registers a session, migrates the mailbox, acknowledges a message, or requests a wake. A missing mailbox or unknown/nonpositive ID fails without creating data.

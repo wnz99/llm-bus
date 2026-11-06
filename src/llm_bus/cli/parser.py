@@ -12,6 +12,12 @@ from llm_bus.reports.protocol import REPORT_REASONS
 def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - explicit CLI declarations
     # pylint: disable=too-many-statements
     parser = argparse.ArgumentParser(description="Local durable mailbox for Claude and Codex")
+    parser.add_argument(
+        "--format",
+        choices=("json", "agent"),
+        default="json",
+        help="Output format (before command): expanded json, or concise agent output",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     llm_bus.coordination.cli.add_parsers(commands.add_parser)
     commands.add_parser("whoami", help="Show this session's bus address")

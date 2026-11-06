@@ -75,6 +75,26 @@ If a hook exits with code 127, inspect its command in the active user hook file.
 
 ## Send, read, and acknowledge
 
+Agents should use `llm-bus --format agent COMMAND ...` for concise output. For
+example, `llm-bus --format agent inbox --limit 20`. Put `--format` before the
+command. Use `llm-bus --format json COMMAND ...` when expanded metadata is needed
+for inspection. Omitting the flag preserves the existing expanded JSON contract.
+
+Agent output is compact JSON: send receipts omit the already-known body and
+sender context; peer lists omit the kind already encoded in the address; lock
+catalogs omit creator and last-use metadata. Message reads omit null optional
+fields and historical wake-check timestamps. Message bodies, reply IDs, current
+coordination verification, wake results, lock ownership and expiry remain intact.
+Collections with repeated context can return `{"shared": {...}, "items": [...]}`;
+the shared fields apply to every item. Other collections remain arrays, including
+empty results. No message text is truncated. Unicode text stays readable while
+terminal control and directional formatting characters remain escaped.
+
+This changes presentation only: reads do not acknowledge messages, grants are
+not inferred from omitted fields, and stored data is unchanged. Hook, bridge and
+human-only monitor output retain their dedicated formats. The flag does not
+change page sizes; use `--limit` for smaller inbox/history reads.
+
 Each agent uses its host-generated session ID as its bus address. Inside an agent's shell tool:
 
 ```text

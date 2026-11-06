@@ -1,10 +1,10 @@
 # Remote messaging, reports, and monitoring
 
-Use full address exactly as `llm-bus list` shows:
+Use full address exactly as `llm-bus --format agent list` shows:
 
 ```sh
-llm-bus send MACHINE/REPO/claude:SESSION_ID --body 'The shared API schema changed on branch feature-api. Update your client before resuming integration.'
-llm-bus remote-status
+llm-bus --format agent send MACHINE/REPO/claude:SESSION_ID --body 'The shared API schema changed on branch feature-api. Update your client before resuming integration.'
+llm-bus --format agent remote-status
 ```
 
 Remote messaging needs matching shared repository ID, relay admission
@@ -40,7 +40,7 @@ Remote `send` commits locally, returns `queued_local`; networking happens
 later. `remote-status` shows up to 100 outgoing messages and latest
 synchronized states, not live connectivity guarantee.
 
-For one retained native message, use `llm-bus status LOCAL_MESSAGE_ID`, replacing
+For one retained native message, use `llm-bus --format agent status LOCAL_MESSAGE_ID`, replacing
 the placeholder with an integer from send/inbox/history. It reads retained data
 without current configuration, identity, credentials, registration, migration,
 network, or wake, even after blocking. Relay UUIDs and monitor IDs are separate
@@ -82,7 +82,7 @@ permit operation.
 Example, when work actually begins:
 
 ```sh
-llm-bus report 123 --status proceeding --reason started
+llm-bus --format agent report 123 --status proceeding --reason started
 ```
 
 Pick status matching observed work:

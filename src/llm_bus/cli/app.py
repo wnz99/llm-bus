@@ -15,6 +15,7 @@ import llm_bus.coordination.cli
 from llm_bus.cli.commands import human_command, registered_command, send
 from llm_bus.cli.hooks import claude_socket, hook
 from llm_bus.cli.installation import configure_host_hooks
+from llm_bus.cli.output import serialize
 from llm_bus.cli.parser import build_parser
 from llm_bus.collab.models import CollabError
 from llm_bus.errors import BusError
@@ -65,7 +66,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     command = args["command"]
     try:
         if command in {"install", "uninstall"}:
-            print(json.dumps(configure_host_hooks(install=command == "install")))
+            print(
+                serialize(
+                    configure_host_hooks(install=command == "install"),
+                    str(command),
+                    str(args["format"]),
+                )
+            )
             return 0
         store = Store.read_only(default_path()) if command == "status" else Store(default_path())
         if command in {"bridge", "hook"}:
@@ -83,7 +90,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if command == "collab":
             result = llm_bus.collab.cli.run(args, _optional_address())
             if result is not None:
-                print(json.dumps(result))
+                print(serialize(result, str(command), str(args["format"])))
             return 0
         kind, session_id = host_identity(dict(os.environ))
         require_main_agent(f"{kind}:{session_id}")
@@ -97,7 +104,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 kind, session_id, project, messaging_socket=claude_socket(kind)
             )
             result = registered_command(store, command, args, agent_address, project)
-        print(json.dumps(result))
+        print(serialize(result, str(command), str(args["format"])))
     except (
         BusError,
         CollabError,

@@ -41,6 +41,10 @@ def create_tables(db: Connection) -> None:
         "CREATE TABLE IF NOT EXISTS coordination_local_availability (grant_id TEXT PRIMARY KEY "
         "REFERENCES coordination_grants(grant_id), message_id INTEGER NOT NULL UNIQUE "
         "REFERENCES messages(id))",
+        "CREATE TABLE IF NOT EXISTS coordination_availability_events "
+        "(message_id INTEGER PRIMARY KEY REFERENCES messages(id), grant_id TEXT NOT NULL, "
+        "sender TEXT NOT NULL, sent_at TEXT NOT NULL, event_id TEXT NOT NULL, "
+        "UNIQUE(sender,grant_id))",
     ):
         db.execute(statement)
 

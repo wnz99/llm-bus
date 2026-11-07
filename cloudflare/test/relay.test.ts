@@ -1,8 +1,46 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import worker from '../src/index';
 import { dispatch, repair } from '../src/messages';
 import { bindings, request, register, send } from './relay-fixture';
 describe('machine and repository boundary', () => {
+  it('adds availability metadata to the prior schema without changing history', async () => {
+    await bindings.DB.prepare('ALTER TABLE messages DROP COLUMN availability').run();
+    const id=crypto.randomUUID();
+    await bindings.DB.prepare('INSERT INTO messages(id,sender,recipient,repo_id,body) VALUES (?,?,?,?,?)')
+      .bind(id,'a/xyz/codex:a','b/xyz/codex:b','xyz','retained').run();
+    const migration=readFileSync(new URL('../migrations/0006_coordination_availability.sql',import.meta.url),'utf8');
+    await bindings.DB.prepare(migration).run();
+    expect(await bindings.DB.prepare('SELECT body,availability FROM messages WHERE id=?').bind(id).first())
+      .toEqual({body:'retained',availability:null});
+    expect((await request('a','messages',{id,sender:'codex:a',recipient:'b/xyz/codex:b',repo_id:'xyz',body:'retained'})).status).toBe(200);
+  });
+  it('isolates strict availability events from ordinary messages and directions', async () => {
+    const call = (machine:string, path:string, data?:object) => worker.fetch(new Request(`https://bus.test/v2/coordination/${path}`, {
+      method:data ? 'POST' : 'GET', headers:{Authorization:`Bearer ${machine.repeat(43)}`,'Content-Type':'application/json'}, body:data ? JSON.stringify(data) : undefined,
+    }),bindings);
+    expect(await (await call('a','availability/capabilities')).json()).toEqual({availability_version:1});
+    const metadata={version:1,project_id:crypto.randomUUID(),generation:crypto.randomUUID(),grant_id:crypto.randomUUID(),kind:'joined'};
+    const message={id:crypto.randomUUID(),sender:'codex:a',recipient:'b/xyz/codex:b',repo_id:'xyz',body:'joined',availability:metadata};
+    expect((await request('a','messages',message)).status).toBe(400);
+    expect((await call('a','messages',message)).status).toBe(400);
+    expect((await call('a','availability/messages',message)).status).toBe(202);
+    expect((await call('a','availability/messages',message)).status).toBe(200);
+    for (const key of ['grant_id','generation','project_id']) {
+      expect((await call('a','availability/messages',{...message,availability:{...metadata,[key]:crypto.randomUUID()}})).status).toBe(409);
+    }
+    for (const bad of [{...metadata,version:true},{...metadata,extra:true},{...metadata,kind:'assign'},{...metadata,grant_id:'bad'},null]) {
+      expect((await call('a','availability/messages',{...message,id:crypto.randomUUID(),availability:bad})).status).toBe(400);
+    }
+    expect((await call('a','availability/messages',{...message,coordination:{}})).status).toBe(400);
+    expect((await call('c','availability/messages',{...message,id:crypto.randomUUID()})).status).toBe(403);
+    await dispatch(bindings,message.id);
+    expect(await (await request('b','inbox?repo_id=xyz')).json()).toEqual([]);
+    expect(await (await call('b','inbox?repo_id=xyz')).json()).toEqual([]);
+    const page=await (await call('b','availability/inbox?repo_id=xyz')).json() as Record<string,unknown>[];
+    expect(page).toMatchObject([{id:message.id,availability:metadata,sender:'a/xyz/codex:a'}]);
+    expect(page[0]).not.toHaveProperty('coordination');
+  });
   it('orders labels and releases independently from activity and legacy clients', async () => {
     const base = {repo_id:'xyz',native_address:'codex:a',last_seen:new Date().toISOString(),ended:false};
     expect((await request('a','sessions',{...base,label:'Worker',revision:2})).status).toBe(200);
@@ -46,7 +84,7 @@ describe('machine and repository boundary', () => {
     const reply = {id:crypto.randomUUID(),sender:'codex:b',recipient:'a/xyz/codex:a',repo_id:'xyz',body:'reply',reply_to:message.id};
     expect((await request('b','messages',reply)).status).toBe(202);
     const original=bindings.DB;
-    for (const linked of [true,false]) {
+    for (const variant of ['same','reply','availability']) {
       let hidePrior=true;
       bindings.DB=new Proxy(original,{get(target,key) {
         if (key!=='prepare') return Reflect.get(target,key,target);
@@ -69,8 +107,9 @@ describe('machine and repository boundary', () => {
         };
       }});
       try {
-        const result=await request('b','messages',{...reply,reply_to:linked ? message.id : undefined});
-        expect(result.status).toBe(linked ? 200 : 409);
+        if (variant === 'availability') await original.prepare('UPDATE messages SET availability=? WHERE id=?').bind('{}',reply.id).run();
+        const result=await request('b','messages',{...reply,reply_to:variant === 'reply' ? undefined : message.id});
+        expect(result.status).toBe(variant === 'same' ? 200 : 409);
       } finally {bindings.DB=original;}
     }
   });

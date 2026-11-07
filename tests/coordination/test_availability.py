@@ -96,7 +96,7 @@ def test_concurrent_joins_queue_one_arrival_without_live_coordinator(tmp_path: P
         assert db.execute("SELECT requested_generation FROM wake_dispatch").fetchone()[0] == 1
 
 
-@pytest.mark.parametrize("version", [8, 9, 10])
+@pytest.mark.parametrize("version", [8, 9, 10, 11])
 def test_additive_schema_upgrade(tmp_path: Path, version: int) -> None:
     mailbox = Store(tmp_path / "bus.db")
     create(mailbox, tmp_path)
@@ -113,10 +113,14 @@ def test_additive_schema_upgrade(tmp_path: Path, version: int) -> None:
     with mailbox.transaction() as db:
         db.execute("DROP TABLE coordination_local_availability")
         db.execute("DROP TABLE coordination_session_consents")
+        db.execute("DROP TABLE IF EXISTS coordination_availability_events")
         db.execute(f"PRAGMA user_version={version}")
     mailbox = Store(mailbox.path)
     with mailbox.transaction() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 11
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 12
+        assert (
+            db.execute("SELECT count(*) FROM coordination_availability_events").fetchone()[0] == 0
+        )
         assert db.execute("SELECT count(*) FROM coordination_grants").fetchone()[0] == 1
         assert db.execute("SELECT count(*) FROM coordination_session_consents").fetchone()[0] == 0
         assert db.execute("SELECT count(*) FROM coordination_local_availability").fetchone()[0] == 0

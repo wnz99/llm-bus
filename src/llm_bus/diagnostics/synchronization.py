@@ -26,6 +26,7 @@ SYNC_ERRORS = frozenset(
         "rejected",
         "unsupported_reply_link",
         "unsupported_coordination",
+        "unsupported_availability",
     }  # pylint: disable=clean-code-business-policy-literal
 )
 

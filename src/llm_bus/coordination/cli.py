@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from llm_bus.cli.references import resolve_reference
 from llm_bus.coordination import store
-from llm_bus.coordination.availability import record_local
+from llm_bus.coordination.availability import record_local, record_remote
 from llm_bus.coordination.models import OPERATIONS, timestamp, uuid4_string
 from llm_bus.errors import BusError
 from llm_bus.routing import routing_scope
@@ -84,7 +84,9 @@ def _path(value: object) -> str:
     return str(path.resolve())
 
 
-def run(mailbox: Store, args: dict[str, object], address: str, cwd: str) -> dict[str, object]:
+def run(  # noqa: C901 - owner action dispatch
+    mailbox: Store, args: dict[str, object], address: str, cwd: str
+) -> dict[str, object]:
     """Use app-selected native identity. These commands grant no remote owner power."""
     scope = routing_scope(cwd)
     args = dict(args)
@@ -111,8 +113,16 @@ def run(mailbox: Store, args: dict[str, object], address: str, cwd: str) -> dict
             return store.show(db, record)
         if action in {"coordinate", "join", "grant"} and record["revoked_at"] is not None:
             raise BusError("Project revoked; owner must replace coordinator binding")
-        notice_id = _transition(db, action, record, args, address)
+        remote_notice = None
+        if action == "join" and "/" in str(record["coordinator"]):
+            grant_id = store.join_session(db, record, address)
+            remote_notice = record_remote(db, mailbox, record, address, grant_id, cwd=cwd)
+            notice_id = None
+        else:
+            notice_id = _transition(db, action, record, args, address)
         result = store.show(db, store.project(db, scope, label))
+        if remote_notice is not None:
+            result["availability"] = remote_notice
     if notice_id is not None:
         result["availability_wake"] = dispatch_pending(
             mailbox, str(record["coordinator"]), trigger_id=notice_id

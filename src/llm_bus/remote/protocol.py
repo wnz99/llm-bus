@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
-from llm_bus.coordination.models import Direction
+from llm_bus.coordination.models import Availability, Direction
 from llm_bus.errors import BusError
 from llm_bus.mailbox.labels import validate_label
 from llm_bus.mailbox.models import MAX_MESSAGE_BYTES
@@ -86,6 +86,10 @@ def parse_delivery(value: object, repo: Repository, machine: str) -> Delivery:
         parent = required_text(data["reply_to"])
         validate_reply_uuid(parent)
         result["reply_to"] = parent
+    if "coordination" in data and "availability" in data:
+        raise BusError("Conflicting remote message classes")
+    if "availability" in data:
+        result["availability"] = asdict(Availability.parse(data["availability"]))
     if "coordination" in data:
         result["coordination"] = asdict(Direction.parse(data["coordination"]))
     return result

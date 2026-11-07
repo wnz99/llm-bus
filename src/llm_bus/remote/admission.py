@@ -9,8 +9,9 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 from llm_bus.coordination.authority import authorize
+from llm_bus.coordination.availability import accept
 from llm_bus.coordination.delivery import persist
-from llm_bus.coordination.models import Direction
+from llm_bus.coordination.models import Availability, Direction
 from llm_bus.errors import BusError
 from llm_bus.hosts.sessions import is_subagent
 from llm_bus.policy.inbound import receive_mode
@@ -48,7 +49,7 @@ def incoming_parent(self: RemoteStore, db: Connection, item: Delivery, scope: st
     return parent[0]
 
 
-def admit_message(  # noqa: PLR0911 - explicit transport and authority denials
+def admit_message(  # noqa: C901, PLR0911 - explicit transport and authority denials
     self: RemoteStore, item: Delivery, scope: str
 ) -> tuple[str, int | None, bool] | None:
     """Commit exactly one delivery class under the current machine policy."""
@@ -70,6 +71,9 @@ def admit_message(  # noqa: PLR0911 - explicit transport and authority denials
         mode = receive_mode(item, scope, recipient[1], self.connection)
         if mode == "deny":
             return None
+        if "coordination" in item and "availability" in item:
+            raise BusError("Conflicting remote message classes")
+        event = Availability.parse(item["availability"]) if "availability" in item else None
         direction = Direction.parse(item["coordination"]) if "coordination" in item else None
         if (
             direction is not None
@@ -107,6 +111,7 @@ def admit_message(  # noqa: PLR0911 - explicit transport and authority denials
                 (item["id"], payload, scope, self.connection),
             )
             return "monitor", None, True
+        db.execute("SAVEPOINT availability_admission")
         outbox.proxy(db, item["sender"], item["repo_id"])
         cursor = db.execute(
             "INSERT INTO messages(sender,recipient,body,recipient_cwd,"
@@ -126,6 +131,19 @@ def admit_message(  # noqa: PLR0911 - explicit transport and authority denials
         local_id = cursor.lastrowid
         if local_id is None:
             raise RuntimeError("SQLite did not return an imported message ID")
+        if event is not None and not accept(
+            db,
+            sender=item["sender"],
+            recipient=native,
+            scope=scope,
+            event=event,
+            message_id=local_id,
+            sent_at=item["sent_at"],
+            event_id=item["id"],
+        ):
+            db.execute("ROLLBACK TO availability_admission")
+            db.execute("RELEASE availability_admission")
+            return None
         if direction is not None:
             persist(db, local_id, direction)
         db.execute(
@@ -133,6 +151,7 @@ def admit_message(  # noqa: PLR0911 - explicit transport and authority denials
             (item["id"], local_id, payload),
         )
         self.store.request_dispatch(db, native)
+        db.execute("RELEASE availability_admission")
         return "inbox", local_id, True
 
 

@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from sqlite3 import Connection
 
-    from llm_bus.coordination.models import Direction
+    from llm_bus.coordination.models import Availability, Direction
     from llm_bus.mailbox.models import SenderContext
 
 if TYPE_CHECKING:
@@ -47,8 +47,37 @@ def enqueue(  # noqa: PLR0913 - additive public API preserves optional keywords
     reply_to: int | None = None,
     direction: Direction | None = None,
 ) -> dict[str, object]:
-    # Preserve the existing scope keyword and add an optional public parent ID.
     # pylint: disable=too-many-arguments
+    with self.store.transaction() as db:
+        db.execute("BEGIN IMMEDIATE")
+        return enqueue_in_transaction(
+            self,
+            db,
+            sender=sender,
+            recipient=recipient,
+            repo_id=repo_id,
+            body=body,
+            scope=scope,
+            reply_to=reply_to,
+            direction=direction,
+        )
+
+
+def enqueue_in_transaction(  # noqa: PLR0913, PLR0917 - shared transaction writer
+    self: RemoteStore,
+    db: Connection,
+    sender: SenderContext,
+    recipient: str,
+    repo_id: str,
+    body: str,
+    *,
+    scope: str | None = None,
+    reply_to: int | None = None,
+    direction: Direction | None = None,
+    availability: Availability | None = None,
+) -> dict[str, object]:
+    """Caller owns the immediate transaction; public enqueue shares this writer."""
+    # pylint: disable=too-many-arguments,too-many-locals,too-many-positional-arguments
     if not body.strip() or len(body.encode("utf-8")) > MAX_MESSAGE_BYTES:
         raise BusError("Message body must contain 1-65536 UTF-8 bytes")
     native = address(sender.kind, sender.session_id)
@@ -57,48 +86,51 @@ def enqueue(  # noqa: PLR0913 - additive public API preserves optional keywords
     envelope = Envelope(
         id=str(uuid4()), sender=native, recipient=recipient, repo_id=repo_id, body=body
     )
-    with self.store.transaction() as db:
-        db.execute("BEGIN IMMEDIATE")
-        if direction is not None:
-            require_coordinator(db, native, scope, direction)
-            envelope["coordination"] = asdict(direction)
-        self.store.validate_reply(db, reply_to, (native, scope), (recipient, f"remote:{repo_id}"))
-        if reply_to is not None:
-            parent = cast(
-                "tuple[str, str] | None",
-                db.execute(
-                    "SELECT id,envelope FROM remote_outbox WHERE local_id=? UNION ALL "
-                    "SELECT id,envelope FROM remote_imports WHERE local_id=?",
-                    (reply_to, reply_to),
-                ).fetchone(),
-            )
-            if parent is None:
-                raise BusError("Remote reply requires a remote parent")
-            validate_parent_envelope(self, parent[1], native, recipient, repo_id)
-            envelope["reply_to"] = parent[0]
-        db.execute(
-            "INSERT INTO agents(address,kind,project,scope,last_seen,ended_at) "
-            "VALUES (?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'),NULL) "
-            "ON CONFLICT(address) DO UPDATE SET project=excluded.project,scope=excluded.scope, "
-            "last_seen=excluded.last_seen,ended_at=NULL",
-            (native, sender.kind, sender.project, scope),
+    if availability is not None:
+        availability.validate()
+        if direction is not None or reply_to is not None:
+            raise BusError("Availability cannot carry direction or reply metadata")
+        envelope["availability"] = asdict(availability)
+    if direction is not None:
+        require_coordinator(db, native, scope, direction)
+        envelope["coordination"] = asdict(direction)
+    self.store.validate_reply(db, reply_to, (native, scope), (recipient, f"remote:{repo_id}"))
+    if reply_to is not None:
+        parent = cast(
+            "tuple[str, str] | None",
+            db.execute(
+                "SELECT id,envelope FROM remote_outbox WHERE local_id=? UNION ALL "
+                "SELECT id,envelope FROM remote_imports WHERE local_id=?",
+                (reply_to, reply_to),
+            ).fetchone(),
         )
-        proxy(db, recipient, repo_id)
-        cursor = db.execute(
-            "INSERT INTO messages(sender,recipient,body,sender_cwd,"
-            "sender_scope,recipient_scope,reply_to) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (native, recipient, body, sender.project, scope, f"remote:{repo_id}", reply_to),
-        )
-        local_id = cursor.lastrowid
-        if local_id is None:
-            raise RuntimeError("SQLite did not return an outgoing message ID")
-        if direction is not None:
-            persist(db, local_id, direction)
-        db.execute(
-            "INSERT INTO remote_outbox VALUES (?,?,?,'queued_local')",
-            (envelope["id"], local_id, json.dumps(envelope)),
-        )
+        if parent is None:
+            raise BusError("Remote reply requires a remote parent")
+        validate_parent_envelope(self, parent[1], native, recipient, repo_id)
+        envelope["reply_to"] = parent[0]
+    db.execute(
+        "INSERT INTO agents(address,kind,project,scope,last_seen,ended_at) "
+        "VALUES (?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'),NULL) "
+        "ON CONFLICT(address) DO UPDATE SET project=excluded.project,scope=excluded.scope, "
+        "last_seen=excluded.last_seen,ended_at=NULL",
+        (native, sender.kind, sender.project, scope),
+    )
+    proxy(db, recipient, repo_id)
+    cursor = db.execute(
+        "INSERT INTO messages(sender,recipient,body,sender_cwd,"
+        "sender_scope,recipient_scope,reply_to) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (native, recipient, body, sender.project, scope, f"remote:{repo_id}", reply_to),
+    )
+    local_id = cursor.lastrowid
+    if local_id is None:
+        raise RuntimeError("SQLite did not return an outgoing message ID")
+    if direction is not None:
+        persist(db, local_id, direction)
+    db.execute(
+        "INSERT INTO remote_outbox VALUES (?,?,?,'queued_local')",
+        (envelope["id"], local_id, json.dumps(envelope)),
+    )
     return {
         "id": local_id,
         "remote_id": envelope["id"],

@@ -144,7 +144,7 @@ llm-bus --format agent join PROJECT
 exchange structured availability automatically, installing the exact target only
 for the current binding. Relay migration `0006_coordination_availability.sql` must
 precede the matching Worker deployment. Unsupported relays leave availability
-queued with `unsupported_coordination`; never strip metadata to bypass it.
+queued with `unsupported_availability`; never strip metadata to bypass it.
 No deployment or trust change follows from join. Advanced explicit grants remain
 available. For an older compatible direction transport, exchange the non-secret returned
 recipient grant UUID out of band or as ordinary data. Coordinator stores it with

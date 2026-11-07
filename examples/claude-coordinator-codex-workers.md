@@ -9,7 +9,9 @@ No installation or live activation follows from this example.
 
 Start one Claude Code main session and three Codex main sessions in the same
 repository manually. Native subagents do not join the bus. Install llm-bus,
-host hooks and the shared llm-bus and official Beads skills first. An existing,
+host hooks, the shared llm-bus and official Beads skills, and the default and
+coordination rule files first, following
+[Install agent instructions](agent-instructions.md). An existing,
 readable Beads workspace and project memory must be available. Workers use their
 own worktrees under the repository workflow.
 

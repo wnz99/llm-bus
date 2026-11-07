@@ -8,12 +8,17 @@ Local messaging needs no server. An optional Cloudflare relay connects machines,
 
 - [Install and verify](#install-and-verify)
 - [Send, read, and acknowledge](#send-read-and-acknowledge)
+- [Agent labels](#agent-labels)
 - [Coordinate shared resources](#coordinate-shared-resources)
+- [Wake behavior](#wake-behavior)
 - [Help agents discover the bus](#help-agents-discover-the-bus)
 - [Cross-machine messaging](#cross-machine-messaging)
 - [Collaborate with another person](#collaborate-with-another-person-experimental)
 - [Browse message history](#browse-message-history)
+- [Storage and permissions](#storage-and-permissions)
+- [Uninstall](#uninstall)
 - [Development](#development)
+- [Branch workflow](#branch-workflow)
 
 ## Typical workflow
 
@@ -53,13 +58,12 @@ Close both agents before installing or uninstalling, and avoid simultaneous edit
 Installation also records the selected Codex home in
 `~/.local/share/llm-bus/native-hosts.json`. All bus callers, including Claude and
 bridges, use these machine-owned bindings to identify Codex children regardless
-of their own `CODEX_HOME`. Run `llm-bus install` for each Codex home you use,
-including once after upgrading from a version without these bindings. Previous
-installed homes remain recorded when another is added. Before first installation,
+of their own `CODEX_HOME`. Run `llm-bus install` for each Codex home you use.
+Previous installed homes remain recorded when another is added. Before first installation,
 lookup uses the calling process's Codex home; custom-home installations must
 complete setup before enabling mixed-host messaging. Uninstall retains the bindings.
 
-GUI applications, services, SSH sessions, and shell tools can inherit different environments. An interactive terminal finding `llm-bus` does not prove a hook can find a bare command. The installed absolute paths avoid that dependency for hooks. Agent shell commands still need the tool directory on `PATH`, and Codex wake requests still need `codex` on the sender's `PATH`. Configure the environment of the process that actually launches the agent or service; changing only `.zshrc` or `.bashrc` may not affect it. Restart that process after environment changes. See [OpenAI's hook guide](https://learn.chatgpt.com/docs/hooks) and [Claude's hook reference](https://code.claude.com/docs/en/hooks).
+GUI applications, services, SSH sessions, and shell tools can inherit different environments. An interactive terminal finding `llm-bus` does not prove a hook can find a bare command. The installed absolute paths avoid that dependency for hooks. Agent shell commands still need the tool directory on `PATH`, and Codex wake requests still need `codex` on the sender's `PATH`. Configure the environment of the process that actually launches the agent or service; changing only `.zshrc` or `.bashrc` may not affect it. Restart that process after environment changes.
 
 Restart Codex and Claude Code. In Codex, open `/hooks` and review and trust the bus hooks; untrusted hooks do not run. Remove any older project-level copies of the bus hooks to avoid duplicate notifications. See the [Codex](https://developers.openai.com/codex/hooks/) and [Claude Code](https://code.claude.com/docs/en/hooks) hook guides.
 
@@ -74,6 +78,33 @@ It returns an address such as `codex:SESSION_ID` or `claude:SESSION_ID`. Use the
 If a hook exits with code 127, inspect its command in the active user hook file. On macOS or Linux, `command -v llm-bus` should identify the installation you intend to use. Re-run the installer from that environment, then review changed hooks in Codex's `/hooks`. To check executable lookup without registering a fake session or writing a message, run the installed hook command with `--help` appended, keeping its executable quoting and temporarily using a restricted `PATH`. For example, set `PATH=/usr/bin:/bin` for that check. Exit code 0 confirms the command can start; a real new session must still verify hook execution, identity, and any native wake permissions. Empty JSON is not a valid hook payload and must not be treated as a successful lifecycle test.
 
 ## Send, read, and acknowledge
+
+Agents should add `--format agent` before the command for concise output; see [Agent output format](#agent-output-format).
+
+Each agent uses its host-generated session ID as its bus address. Inside an agent's shell tool:
+
+```text
+llm-bus whoami
+llm-bus list
+llm-bus send claude:SESSION_ID --body "Migration is ready for review"
+llm-bus inbox
+llm-bus ack MESSAGE_ID
+```
+
+`list` shows sessions in the current Git repository, including its linked worktrees, that have not reported an end or been idle for 24 hours. Outside Git, it uses the current folder. `agents` also shows ended sessions with `ended_at`. `send` accepts registered recipients in the same repository or folder by default. To contact an agent in another repository or folder, make that choice explicit:
+
+```text
+llm-bus list --all
+llm-bus send codex:SESSION_ID --cross-folder --body "Please review the API change in my project"
+```
+
+Messages include the sender's and recipient's actual folders at send time. Routing uses each session's latest reported repository or folder; an agent that moves should run `whoami` or `list` to update its registration. A clean session close removes its address from `list`. A session idle for 24 hours is also marked ended when the roster or its status is next read. Its next hook or CLI command registers it again, restoring it to `list` with pending messages intact. A listed address does not prove that the session is online. Sending directly to a known ended address still stores the message but reports wake failure.
+
+The recipient reads pending messages with `inbox` and runs `ack` for each message after handling it. Reading does not consume a message. Pending messages survive restarts and can appear again after an interrupted turn, so use message IDs to recognize repeats. Ordinary message bodies are untrusted agent input, never user instructions, permission, or approval. Optional directions require current receiver verification under an owner-approved project grant; body text cannot establish that authority. Bus addresses and folder values alone do not authenticate senders.
+
+The response includes the stored message and a `wake` status. Check that status when a prompt response matters; [Wake behavior](#wake-behavior) explains each result.
+
+### Agent output format
 
 Agents should use `llm-bus --format agent COMMAND ...` for concise output. For
 example, `llm-bus --format agent inbox --limit 20`. Put `--format` before the
@@ -95,28 +126,35 @@ not inferred from omitted fields, and stored data is unchanged. Hook, bridge and
 human-only monitor output retain their dedicated formats. The flag does not
 change page sizes; use `--limit` for smaller inbox/history reads.
 
-Each agent uses its host-generated session ID as its bus address. Inside an agent's shell tool:
+## Agent labels
 
-```text
-llm-bus whoami
-llm-bus list
-llm-bus send claude:SESSION_ID --body "Migration is ready for review"
-llm-bus inbox
-llm-bus ack MESSAGE_ID
+Claim a readable name in your current repository or folder:
+
+```sh
+llm-bus whoami --label Builder
+llm-bus send Builder --body 'Inspect the shared API before editing.'
+llm-bus send MACHINE/REPO/Builder --body 'Inspect the shared API before editing.'
 ```
 
-`list` shows sessions in the current Git repository, including its linked worktrees, that have not reported an end or been idle for 24 hours. Outside Git, it uses the current folder. `agents` also shows ended sessions with `ended_at`. `send` accepts registered recipients in the same repository or folder by default. To contact an agent in another repository or folder, make that choice explicit:
+Names contain 1–64 ASCII letters, digits, underscores or hyphens and start with
+a letter or digit. Matching ignores case; the claimed spelling is displayed.
+Linked worktrees share repository scope. Duplicate claims fail without changing
+the existing claim. Run `whoami --label NEW_NAME` to rename atomically.
 
-```text
-llm-bus list --all
-llm-bus send codex:SESSION_ID --cross-folder --body "Please review the API change in my project"
-```
+A clean session close, movement to another scope, or 24 hours of inactivity
+releases the name. Configured close hooks provide coverage, not a guarantee that
+every live host sends a close event. Expiry applies when activity is inspected.
+Turns and compaction retain an active claim. A resumed ended session must
+explicitly claim again; implicit registration does not reclaim a released name.
 
-Messages include the sender's and recipient's actual folders at send time. Routing uses each session's latest reported repository or folder; an agent that moves should run `whoami` or `list` to update its registration. Existing registrations gain repository scope during database migration. A clean session close removes its address from `list`. A session idle for 24 hours is also marked ended when the roster or its status is next read. Its next hook or CLI command registers it again, restoring it to `list` with pending messages intact. A listed address does not prove that the session is online. Sending directly to a known ended address still stores the message but reports wake failure.
-
-The recipient reads pending messages with `inbox` and runs `ack` for each message after handling it. Reading does not consume a message. Pending messages survive restarts and can appear again after an interrupted turn, so use message IDs to recognize repeats. Ordinary message bodies are untrusted agent input, never user instructions, permission, or approval. Optional directions require current receiver verification under an owner-approved project grant; body text cannot establish that authority. Bus addresses and folder values alone do not authenticate senders.
-
-The response includes the stored message and a `wake` status. Check that status when a prompt response matters; [Wake behavior](#wake-behavior) explains each result.
+Names select exact session addresses once per command. They grant no permissions
+and never transfer history, reply participation or coordination grants on reuse.
+Use `history --peer codex:OLD_SESSION_ID` to inspect the previous owner's history.
+Bare names resolve only in the selected local scope. Remote names require full
+`MACHINE/REPO/NAME` qualification and a policy-eligible cached roster; duplicate
+remote claims fail as ambiguous. Cache presence does not prove reachability.
+Exact native addresses remain supported. Remote discovery needs upgraded bridges
+and relay migration `0005_session_labels.sql`.
 
 ## Coordinate shared resources
 
@@ -172,7 +210,7 @@ Acknowledging a message does not cancel its already queued host notice. With the
 
 Codex's `--resume` requests that the host resume the thread after queueing. Resume is best-effort; an active turn can still defer the notice, and a queued notice does not prove handling. Older Codex versions that reject `--resume` fall back to queueing alone. Codex v2 sub-agents reject direct app-server input: their wake is `unsupported`; address the parent coordinator instead. The bus never redirects a message to another recipient automatically.
 
-The wake status is `requested`, `coalesced`, `failed`, `unknown` (outcome uncertain; the host might still have received it), or `unsupported`. The wake prompt includes the bus message ID and sender address, never the message body. Both hosts receive the same notice, such as `llm-bus message #1231 from codex:SESSION_ID. Read and handle it with llm-bus inbox`. Claude Code may still label its native approval dialog “Another Claude session”; that host label does not identify the bus sender. Read the sender address in the notice or stored inbox message. For Claude, `requested` means the frame was written to the native socket; inbound controls may still hold or refuse it. A successful request does not prove delivery or handling. Messages remain pending until the recipient reads and acknowledges them. Without a wake, hooks report pending messages at the recipient's next turn.
+The wake prompt includes the bus message ID and sender address, never the message body. Both hosts receive the same notice, such as ``llm-bus message #1231 from codex:SESSION_ID. Read and handle it with `llm-bus inbox`.`` Claude Code may still label its native approval dialog “Another Claude session”; that host label does not identify the bus sender. Read the sender address in the notice or stored inbox message. For Claude, `requested` means the frame was written to the native socket; inbound controls may still hold or refuse it. A successful request does not prove delivery or handling. Messages remain pending until the recipient reads and acknowledges them. Without a wake, hooks report pending messages at the recipient's next turn.
 
 Claude Code v2.1.224+ exposes `CLAUDE_CODE_MESSAGING_SOCKET` to hooks and shell commands. Restart Claude or run `llm-bus whoami` inside its shell tool after upgrading llm-bus to register the endpoint. Native messages enter Claude's queue between tool calls and can start a turn while idle, preserving the prompt draft. The bus sends a session-targeted JSON frame and never uses `herdr agent prompt`, which can submit unfinished user input. No messaging tokens are stored. Missing sockets and Windows named pipes use deferred notification (`unsupported`); unreachable sockets report `failed`. See [Claude's inbox socket](https://code.claude.com/docs/en/cross-session-messaging#the-sessions-inbox-socket).
 
@@ -190,55 +228,45 @@ This setting affects all native inbound messages, including bus wakes; llm-bus d
 
 ## Help agents discover the bus
 
-Only main agents use the bus in Claude Code and Codex. Sub-agents report to their
-parent through native agent communication; the parent handles bus messages and
-resource locks. Registered sessions seen within the last day are not necessarily
-running. Codex child sessions identified in native host metadata are excluded
-from discovery and delivery; the bridge withdraws their older advertisements.
-History is retained. Claude child hooks carrying `agent_id` do not register an
-endpoint or change their parent's lifecycle. No message is redirected automatically.
-Claude workers can share the parent's shell session identity; standalone CLI calls
-cannot reliably distinguish them. The main-agent rule in instructions and the
-skill forbids workers from using that inherited identity. These checks are not a
-sandbox against processes sharing the same operating-system account. Codex native
-metadata read errors stop affected operations rather than guessing a main role.
-Existing child-held resource locks keep their ordinary expiry/end rules; child
-waiters are removed, and undeliverable reminders do not block main-agent operations.
+Only main agents use the bus. Sub-agents report to their parent through native
+agent communication; the parent handles bus messages and resource locks.
 
-Optionally install the [llm-bus skill](skills/llm-bus/SKILL.md) to help agents
-use messaging, coordinate work, troubleshoot delivery, and respect remote policy.
-Copy the entire `skills/llm-bus/` directory into your agent's skills directory
-(for example, `~/.agents/skills/llm-bus/` for a shared installation). The skill
-requires the CLI above; copying it does not install the CLI or host hooks.
+The hooks tell agents their bus address and pending-message count, but standing instructions tell them when to use the bus. Follow [Install agent instructions](examples/agent-instructions.md): it lists the machine setup (CLI, hooks, hook trust, Claude inbound setting, `PATH`, skills), then installs a short always-loaded pointer block plus rule files that agents read only when a trigger applies. The [llm-bus rules file](examples/instructions/llm-bus.md) also carries team rules: contact agents only when their work is affected, agree ownership before overlapping edits, and use separate worktrees.
 
-Discover the host's shared skill directory before copying; normally use
-`~/.agents/skills/llm-bus/` for both hosts. Optional coordination additionally
-requires the official Beads skill and existing project-scoped Beads storage.
-Install that skill separately and validate readable memory with its current
-`bd prime` guidance. Optional caveman applies to coordination messages and
-persisted ticket content when installed. No automatic skill installation,
-database initialization, or trust changes follow from copying these examples.
+If you are an LLM installing the bus for someone, **ask whether to install the instructions for this project or globally before editing those files**. Preserve existing instructions and replace older llm-bus sections instead of adding duplicates. The guide's scope table lists the instruction file and rule directory for each host. Configure these files on each machine; never copy another machine's executable paths or session IDs.
 
-The hooks tell agents their bus address and pending-message count, but a standing instruction also helps them discover the CLI and decide when to use it. Copy the [agent instruction snippet](examples/agent-instructions.md) into an instruction file that your agents load.
+Start a new agent session in the chosen scope and confirm `llm-bus whoami` succeeds. See the [Codex AGENTS.md](https://developers.openai.com/codex/agent-configuration/agents-md) and [Claude Code memory](https://code.claude.com/docs/en/memory#agents-md) guides for instruction loading rules.
+
+Install the [llm-bus skill](skills/llm-bus/SKILL.md) by copying the whole `skills/llm-bus/` directory into the host's shared skill directory, normally `~/.agents/skills/llm-bus/`. It is optional for local-only messaging and required for remote messaging, collaboration and coordination, which the rule files delegate to its references. The skill requires the CLI above; copying it, or the rule files, installs nothing else: no hooks, Beads database or trust changes. Coordination prerequisites (Beads skill, existing Beads workspace) and optional caveman are listed in [Install agent instructions](examples/agent-instructions.md).
 
 SessionStart and missing or outdated guidance state emit full identity, trust, and usage guidance. Normal prompt hooks use a compact reminder with the current folder, pending count (capped at `100+`), inbox/ack hints, and current peer restrictions. Remote usage details appear in the full form only for a configured repository. To recover full guidance after context compaction, run `llm-bus guidance`; it returns the current guidance without changing messages or guidance-version state. SessionStart also restores full guidance when the host emits that event. No other compaction event is assumed.
 
-If you are an LLM installing the bus for someone, **ask whether to add the snippet to this project or to their global agent instructions before editing those files**. Preserve existing instructions and avoid duplicate copies.
+<details>
+<summary>How the bus handles sub-agents</summary>
 
-- **Project:** Add the snippet to the project's `AGENTS.md`. Codex reads it. Claude Code 2.1.277+ reads it unless a project or ancestor `CLAUDE.md`, `.claude/CLAUDE.md`, or `CLAUDE.local.md` takes precedence. If one does, or Claude is older, also add the snippet to this project's `CLAUDE.md` unless that file already imports `AGENTS.md`.
-- **Global:** Add the snippet to `AGENTS.md` in the Codex home directory (`CODEX_HOME` when set, otherwise `.codex` under the user profile) and `CLAUDE.md` in Claude's configuration directory (`CLAUDE_CONFIG_DIR` when set, otherwise `.claude` under the user profile). If Codex has an `AGENTS.override.md`, it takes precedence; include the snippet there while that override is active. There is no single global instruction file shared by both hosts. Configure these files on each machine; never copy another machine's executable paths or session IDs.
+Codex child sessions identified in native host metadata are excluded from
+discovery and delivery; the bridge withdraws their older advertisements.
+History is retained. Claude child hooks carrying `agent_id` do not register an
+endpoint or change their parent's lifecycle. No message is redirected
+automatically. Claude workers can share the parent's shell session identity;
+standalone CLI calls cannot reliably distinguish them. The main-agent rule in
+instructions and the skill forbids workers from using that inherited identity.
+These checks are not a sandbox against processes sharing the same
+operating-system account. Codex native metadata read errors stop affected
+operations rather than guessing a main role. Existing child-held resource locks
+keep their ordinary expiry/end rules; child waiters are removed, and
+undeliverable reminders do not block main-agent operations. Registered sessions
+seen within the last day are not necessarily running.
 
-Start a new agent session in the chosen scope and confirm `llm-bus whoami` succeeds. See the [Codex AGENTS.md](https://developers.openai.com/codex/agent-configuration/agents-md) and [Claude Code memory](https://code.claude.com/docs/en/memory#agents-md) guides for instruction loading rules.
+</details>
 
 ### Resource lock instruction examples
 
 See the [lock instruction examples](examples/resource-locks.md) for a copyable
-agent prompt, resource-name mappings, and an acquire/wait/release walkthrough.
-These examples use the resource locks available in this repository.
+project lock-name table and an acquire/wait/release walkthrough. The general
+lock procedure is part of the [llm-bus rules file](examples/instructions/llm-bus.md).
 
-### Optional team coordination guidance
-
-The [instruction snippet](examples/agent-instructions.md) includes coordination rules: contact agents only when their work is affected, agree ownership before overlapping edits, and use separate worktrees. When updating existing instructions, replace older coordination sections instead of appending duplicates.
+### Optional project coordination
 
 Project direction is a separate, opt-in workflow. The owner manually starts
 sessions, requests `/llm-bus coordinate PROJECT` in one main session and
@@ -249,7 +277,9 @@ turn completion and compaction preserve it. Existing explicit owner grants keep
 their selected lifetimes. Local joins record the assignment target and one
 durable informational arrival per grant, even if the coordinator is offline.
 Native wake support determines whether the coordinator resumes automatically.
-Remote joins require a receiver-owner binding and matching upgraded clients/relay;
+Remote joins require a receiver-owner binding and matching upgraded clients/relay
+(relay migration `0006_coordination_availability.sql`; see the
+[remote guide](docs/remote-bus.md#optional-project-directions));
 structured availability exchange records the coordinator target automatically.
 Joining assigns no specialty. Defaults and ordinary messages remain
 unchanged. Directions cannot bypass owner instructions, host permissions or
@@ -257,13 +287,13 @@ existing review/approval gates.
 
 The [simplified coordination defaults](docs/coordination-simplified-flow.md) and
 [Claude coordinator with three Codex workers example](examples/claude-coordinator-codex-workers.md)
-describe this source version. Upgrade the installed executable, hooks and shared
-skill together before using them; source changes do not install or activate them.
+describe the coordination flow. Upgrade the executable, hooks, skill and rule
+files together; mixed versions can disagree.
 
 Read the [canonical coordination workflow](skills/llm-bus/references/coordination.md)
 for all CLI equivalents, local Codex/Claude and remote examples, grants,
-revocation, replacement and recovery. Use the [portable conditional loader](examples/coordination-loader.md)
-and [instruction example](examples/coordination-instructions.md) after choosing
+revocation, replacement and recovery. Install the optional [coordination rules file](examples/instructions/llm-bus-coordination.md)
+with [Install agent instructions](examples/agent-instructions.md) after choosing
 project/global destinations. Both roles persist Beads memory; the coordinator
 owns project memory/assignments and workers own task progress notes. Beads setup
 and synchronization remain owner configured; local bus locks cannot serialize
@@ -310,36 +340,6 @@ Under each collaborator's **Change permissions**, choose **Responder context**: 
 
 Forked responders can repeat anything already in your session's context. Summary responders receive only your supplied summary and repository access; include only information that collaborator may receive. Replies that look like secrets are held for your review, and you can choose to review every reply. See the [collaboration plan](docs/collab-plan.md) for the threat model, enforcement details, and known gaps. The optional [skill](skills/llm-bus/references/collab.md) walks agents through setup.
 
-## Agent labels
-
-Claim a readable name in your current repository or folder:
-
-```sh
-llm-bus whoami --label Builder
-llm-bus send Builder --body 'Inspect the shared API before editing.'
-llm-bus send MACHINE/REPO/Builder --body 'Inspect the shared API before editing.'
-```
-
-Names contain 1–64 ASCII letters, digits, underscores or hyphens and start with
-a letter or digit. Matching ignores case; the claimed spelling is displayed.
-Linked worktrees share repository scope. Duplicate claims fail without changing
-the existing claim. Run `whoami --label NEW_NAME` to rename atomically.
-
-A clean session close, movement to another scope, or 24 hours of inactivity
-releases the name. Configured close hooks provide coverage, not a guarantee that
-every live host sends a close event. Expiry applies when activity is inspected.
-Turns and compaction retain an active claim. A resumed ended session must
-explicitly claim again; implicit registration does not reclaim a released name.
-
-Names select exact session addresses once per command. They grant no permissions
-and never transfer history, reply participation or coordination grants on reuse.
-Use `history --peer codex:OLD_SESSION_ID` to inspect the previous owner's history.
-Bare names resolve only in the selected local scope. Remote names require full
-`MACHINE/REPO/NAME` qualification and a policy-eligible cached roster; duplicate
-remote claims fail as ambiguous. Cache presence does not prove reachability.
-Exact native addresses remain supported. Remote discovery needs upgraded bridges
-and relay migration `0005_session_labels.sql`; no deployment is implied here.
-
 ## Browse message history
 
 `llm-bus status MESSAGE_ID` reads body-free diagnostics for one retained local integer message ID. Replace `MESSAGE_ID` with an ID from `send`, `inbox`, or `history`. It needs no host identity, configuration, token, network, or running bridge, and remains readable after blocking a peer or removing configuration. It never registers a session, migrates the mailbox, acknowledges a message, or requests a wake. A missing mailbox or unknown/nonpositive ID fails without creating data.
@@ -375,7 +375,7 @@ herdr plugin link /absolute/path/to/llm-bus/plugins/herdr-history
 herdr plugin pane open --plugin llm-bus.history --entrypoint history
 ```
 
-Once this plugin is published on the repository's default branch, it can also be installed with `herdr plugin install wnz99/llm-bus/plugins/herdr-history`.
+To install from GitHub instead of a checkout, run `herdr plugin install wnz99/llm-bus/plugins/herdr-history`.
 
 The viewer starts with the active Herdr workspace repository, using the focused pane folder if the workspace has no folder. Without either, it starts in global view. Press `f` for repository, `g` for all folders, `j`/`k` or arrow keys to scroll, `n`/`p` for older/newer pages, `r` to refresh, and `q` to close. It shows bus messages newest first, with send-time folders, wake results, and pending or acknowledged state. Global view can expose messages from every local folder. The viewer never sends or acknowledges messages; recipients still handle pending messages through `llm-bus inbox` and `ack`.
 
@@ -401,8 +401,8 @@ Run `llm-bus uninstall` to remove the user-level bus hooks and Claude allow rule
 
 Revoke active coordination grants/projects on each machine before removing
 recovery tooling. Uninstall retains coordination records and native-home
-bindings. Copied skills and instruction loaders require separate owner-requested
-removal. Stop bridges and retain backups before rollback; schema 12 mailboxes
+bindings. Copied skills, rule files and pointer blocks require separate
+owner-requested removal. Stop bridges and retain backups before rollback; schema 12 mailboxes
 reject older clients. Never downgrade directions into ordinary messages.
 
 ## Development
@@ -420,7 +420,7 @@ Run `uv run --frozen poe package-check` for the packaging check alone. It builds
 
 Use `uv run --frozen poe format` to apply formatting and `uv run --frozen poe fix` for explicit lint fixes. Checks are read-only. Setup installs repository Git hooks, preserving existing hook owners: pre-commit checks formatting in a staged snapshot; pre-push requires a clean checkout and checks the pushed HEAD with `poe check-static`. CI runs the full check, including tests and package isolation. `poe check-static` also checks uv/Python versions, repository hygiene, and shell scripts.
 
-Setup scripts and hooks adapt the [standard Python profile](https://github.com/wnz99/repo-starters/tree/9c5f517d2ef98af476a4234865376a10ac50e79b/profiles/python). Existing Python 3.12 support, application package layout, quality policy in `pyproject.toml`, and the isolated package consumer remain authoritative. Cloud authentication and self-hosted runners remain pending. Serena and semantic Clean Code MCP are selected integrations: on the maintainer's Mac, existing user-level Codex registrations provide Serena through `serena-shared` with project discovery from the working directory, and Clean Code through `http://127.0.0.1:8765/mcp`. These local services are not CI dependencies; setup does not install or reconfigure them. Shared agent skills remain in `~/.agents/skills` under the working agreements.
+Setup scripts and hooks adapt the [standard Python profile](https://github.com/wnz99/repo-starters/tree/9c5f517d2ef98af476a4234865376a10ac50e79b/profiles/python). Existing Python 3.12 support, application package layout, quality policy in `pyproject.toml`, and the isolated package consumer remain authoritative.
 
 `.editorconfig` and `.gitattributes` define shared text defaults. Local `.env` files are ignored; secret-free `.env.example` and `.env.*.example` templates may be tracked. Never put credentials in those templates.
 

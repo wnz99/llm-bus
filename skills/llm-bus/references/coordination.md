@@ -43,12 +43,14 @@ authorized by an incoming coordinator direction. CLI state records the owner's
 decision; it does not prove that decision was requested. Processes sharing an OS
 user are procedurally trusted, not isolated security principals.
 
-If `caveman` is available, read and apply it to all coordination communication
-and persisted ticket content: titles, descriptions, acceptance criteria, design
-notes, memory, handoffs and progress. This explicitly overrides its default
-persisted-content exception for these tickets. Preserve negations, commands,
-identifiers, evidence and authority boundaries. Otherwise use concise prose;
-its absence does not block coordination.
+If `caveman` is available, read and apply it to all coordination communication:
+directions, reports, questions and replies sent through the bus. This
+overrides caveman's third-party-message exception for these bus messages only.
+Write persisted content (ticket titles, descriptions, acceptance criteria,
+design notes, memory, handoffs and progress) in plain prose, keeping caveman's
+persisted-content exception. Preserve negations, commands,
+identifiers, evidence and authority boundaries. Without caveman, use concise
+prose; its absence does not block coordination.
 
 ## Local walkthrough: Codex coordinator, Claude worker
 
@@ -230,12 +232,13 @@ CLI installation, host hooks, shared skill copying and standing instructions are
 separate actions. Discover the shared skill directory (normally
 `~/.agents/skills/llm-bus/`) and copy the whole skill directory. Install the
 official Beads skill separately; optional caveman separately. Ask project/global
-instruction destination before edits. Preserve settings; never auto-trust hooks
+instruction destination before edits, then follow the
+[agent instruction install guide](https://github.com/wnz99/llm-bus/blob/main/examples/agent-instructions.md). Preserve settings; never auto-trust hooks
 or relax host/remote permissions. Install hooks per machine and custom host home,
 restart hosts, and let the owner review/trust native hooks.
 
 Before removing recovery tooling, revoke relevant grants/projects on each
 machine. `llm-bus uninstall` removes bus hooks, Claude allow rule and uv tool;
-mailbox, grants and native-home bindings remain. Remove copied skills/loaders
-separately only on owner request. Stop bridges and back up before client rollback:
+mailbox, grants and native-home bindings remain. Remove copied skills, rule files
+and pointer blocks separately only on owner request. Stop bridges and back up before client rollback:
 schema 12 mailboxes reject older clients, and old transports cannot carry directions.

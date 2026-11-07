@@ -61,8 +61,8 @@ includes the advanced grant/target alternative. Matching clients and relay excha
 
 ## Role guidance and existing gates
 
-Command results and recovery hooks supply role guidance. Shared skills and global
-loaders must match the installed executable; copying this documentation does not
+Command results and recovery hooks supply role guidance. Shared skills, rule files and
+pointer blocks must match the installed executable; copying this documentation does not
 install or activate them. Role guidance preserves these boundaries:
 
 - Only native main sessions join the bus. Native subagents report to their parent.

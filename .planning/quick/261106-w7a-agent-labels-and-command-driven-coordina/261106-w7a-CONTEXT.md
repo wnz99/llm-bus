@@ -19,7 +19,26 @@ Canonical execution evidence: /tmp/llm-bus-agent-labels.RRRIOf/
 - Six tasks execute sequentially in the owned feature worktree. No product implementation, global installation, remote trust change or live deployment occurs during registration.
 - Preserve sibling documentation work until Task 6. Repository guidance precedes any separately gated installed/global updates.
 
-## Progress
+## Current result
+
+PR #62 merged as fabcb4043dd47e9ef3e241c5a8eb890c7a7d3108. Owner then
+authorized installation on all configured systems. Four hosts now run that pin
+with guidance 8/schema 12; three existing bridges run and London remains inactive
+and remotely unconfigured. Skills, global markers, hooks, protected settings,
+policy/data retention and private backups passed bounded independent verification.
+Relay migrations 0001–0006 and matching Worker capability contracts passed.
+The SUMMARY records host versions, 28 installed-package smoke tests, evidence
+provenance and frontend trust/context-reload limits. No new trust or enrollment
+was inferred. The adjacent approved PLAN remains verbatim.
+
+This GSD-only follow-up reuses the qualified PR #62 aggregate review on
+a9259fe91853c740233396e64faa0ab68c706059 and subsequent f0db469 documentation
+reconciliation. Non-GSD files remain byte-identical to merged/runtime pin
+fabcb404. Prior 463 Python/41 relay receipts remain applicable; this docs head
+has no new independent code-review claim. Changed tracking text receives fresh
+status/reference validation and required current-head CI before merge.
+
+## Historical premerge progress
 
 Tasks 1–5 now implemented and independently reviewed. Task 5's accepted 26-file
 manifest was committed unchanged as c03e168. Task 6 role guidance, canonical

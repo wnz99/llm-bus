@@ -3,6 +3,8 @@ export interface Env {
   DELIVERY: Queue<string>;
 }
 export interface Session {
+  label: string | null;
+  revision: number;
   address: string;
   machine_id: string;
   repo_id: string;
@@ -22,4 +24,5 @@ export interface MessageRow {
   acknowledged_at: string | null;
   reply_to: string | null;
   coordination: string | null;
+  availability: string | null;
 }

@@ -242,10 +242,23 @@ The [instruction snippet](examples/agent-instructions.md) includes coordination 
 
 Project direction is a separate, opt-in workflow. The owner manually starts
 sessions, requests `/llm-bus coordinate PROJECT` in one main session and
-`/llm-bus join PROJECT` in each worker, and approves exact grants with explicit
-lifetimes. Joining assigns no specialty. Defaults and ordinary messages remain
+`/llm-bus join PROJECT` in each worker. A direct owner join records consent to
+the current exact coordinator and objective. Automatic consent ends at session
+close, 24-hour inactivity expiry, leave, revoke or generation replacement;
+turn completion and compaction preserve it. Existing explicit owner grants keep
+their selected lifetimes. Local joins record the assignment target and one
+durable informational arrival per grant, even if the coordinator is offline.
+Native wake support determines whether the coordinator resumes automatically.
+Remote joins require a receiver-owner binding and matching upgraded clients/relay;
+structured availability exchange records the coordinator target automatically.
+Joining assigns no specialty. Defaults and ordinary messages remain
 unchanged. Directions cannot bypass owner instructions, host permissions or
 existing review/approval gates.
+
+The [simplified coordination defaults](docs/coordination-simplified-flow.md) and
+[Claude coordinator with three Codex workers example](examples/claude-coordinator-codex-workers.md)
+describe this source version. Upgrade the installed executable, hooks and shared
+skill together before using them; source changes do not install or activate them.
 
 Read the [canonical coordination workflow](skills/llm-bus/references/coordination.md)
 for all CLI equivalents, local Codex/Claude and remote examples, grants,
@@ -296,6 +309,36 @@ Several GitHub accounts on one machine work too, for example to test both ends. 
 Under each collaborator's **Change permissions**, choose **Responder context**: **Fork** (the default) copies session history; **Summary** starts a fresh agent with a status summary you write on that page (up to 4000 characters). Summary context needs no bound Claude session, but still uses Claude as the responder. It preserves the mode's tool limits. Isolated mode never copies history; monitor and full ignore this setting. Update the summary manually as work changes.
 
 Forked responders can repeat anything already in your session's context. Summary responders receive only your supplied summary and repository access; include only information that collaborator may receive. Replies that look like secrets are held for your review, and you can choose to review every reply. See the [collaboration plan](docs/collab-plan.md) for the threat model, enforcement details, and known gaps. The optional [skill](skills/llm-bus/references/collab.md) walks agents through setup.
+
+## Agent labels
+
+Claim a readable name in your current repository or folder:
+
+```sh
+llm-bus whoami --label Builder
+llm-bus send Builder --body 'Inspect the shared API before editing.'
+llm-bus send MACHINE/REPO/Builder --body 'Inspect the shared API before editing.'
+```
+
+Names contain 1–64 ASCII letters, digits, underscores or hyphens and start with
+a letter or digit. Matching ignores case; the claimed spelling is displayed.
+Linked worktrees share repository scope. Duplicate claims fail without changing
+the existing claim. Run `whoami --label NEW_NAME` to rename atomically.
+
+A clean session close, movement to another scope, or 24 hours of inactivity
+releases the name. Configured close hooks provide coverage, not a guarantee that
+every live host sends a close event. Expiry applies when activity is inspected.
+Turns and compaction retain an active claim. A resumed ended session must
+explicitly claim again; implicit registration does not reclaim a released name.
+
+Names select exact session addresses once per command. They grant no permissions
+and never transfer history, reply participation or coordination grants on reuse.
+Use `history --peer codex:OLD_SESSION_ID` to inspect the previous owner's history.
+Bare names resolve only in the selected local scope. Remote names require full
+`MACHINE/REPO/NAME` qualification and a policy-eligible cached roster; duplicate
+remote claims fail as ambiguous. Cache presence does not prove reachability.
+Exact native addresses remain supported. Remote discovery needs upgraded bridges
+and relay migration `0005_session_labels.sql`; no deployment is implied here.
 
 ## Browse message history
 
@@ -359,7 +402,7 @@ Run `llm-bus uninstall` to remove the user-level bus hooks and Claude allow rule
 Revoke active coordination grants/projects on each machine before removing
 recovery tooling. Uninstall retains coordination records and native-home
 bindings. Copied skills and instruction loaders require separate owner-requested
-removal. Stop bridges and retain backups before rollback; schema 8 mailboxes
+removal. Stop bridges and retain backups before rollback; schema 12 mailboxes
 reject older clients. Never downgrade directions into ordinary messages.
 
 ## Development

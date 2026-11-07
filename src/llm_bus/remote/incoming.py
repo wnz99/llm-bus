@@ -5,11 +5,11 @@ from __future__ import annotations
 import urllib.parse
 from typing import TYPE_CHECKING
 
-from llm_bus.coordination.models import Direction
+from llm_bus.coordination.models import Availability, Direction
 from llm_bus.errors import BusError
 from llm_bus.policy.fields import array_values, object_fields
 from llm_bus.remote.http import HTTP_GET, HTTP_POST
-from llm_bus.remote.outgoing import supports_coordination
+from llm_bus.remote.outgoing import supports_availability, supports_coordination
 from llm_bus.remote.protocol import parse_delivery
 
 if TYPE_CHECKING:
@@ -38,10 +38,17 @@ def receive(self: Bridge, repo: Repository) -> int:
     imported = receive_route(self, repo, "/v1/inbox", coordination=False)
     if supports_coordination(self):
         imported += receive_route(self, repo, "/v2/coordination/inbox", coordination=True)
+    if supports_availability(self):
+        imported += receive_route(
+            self, repo, "/v2/coordination/availability/inbox", coordination=False, availability=True
+        )
     return imported
 
 
-def receive_route(self: Bridge, repo: Repository, route: str, *, coordination: bool) -> int:
+def receive_route(  # noqa: C901 - three message classes
+    self: Bridge, repo: Repository, route: str, *, coordination: bool, availability: bool = False
+) -> int:
+    # pylint: disable=too-many-locals
     # The cursor is scoped to one scan. Persisting it could skip late Queue jobs.
     after = 0
     imported = 0
@@ -60,15 +67,18 @@ def receive_route(self: Bridge, repo: Repository, route: str, *, coordination: b
             if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence <= after:
                 raise BusError("Remote mailbox cursor did not advance")
             after = sequence
-            if coordination:
+            if ("coordination" in data) != coordination or ("availability" in data) != availability:
+                raise BusError("Remote mailbox coordination class conflicts")
+            if coordination or availability:
                 try:
-                    Direction.parse(data.get("coordination"))
+                    if availability:
+                        Availability.parse(data.get("availability"))
+                    else:
+                        Direction.parse(data.get("coordination"))
                 except BusError:
                     # Invalid versions stay unreceipted, but cannot hide later rows.
                     continue
             item = parse_delivery(value, repo, self.config.machine_id)
-            if ("coordination" in item) != coordination:
-                raise BusError("Remote mailbox coordination class conflicts")
             admitted = self.remote.admit_message(item, repo.scope)
             if admitted is not None:
                 mode, local_id, created = admitted

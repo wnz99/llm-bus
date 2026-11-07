@@ -88,6 +88,47 @@ class Direction:
 
 
 @dataclass(frozen=True)
+class Availability:
+    """Authenticated observation; never a grant of authority."""
+
+    version: int
+    project_id: str
+    generation: str
+    grant_id: str
+    kind: str
+
+    def validate(self) -> None:
+        # bool is not a wire integer.
+        # pylint: disable=unidiomatic-typecheck
+        if type(self.version) is not int or self.version != 1 or self.kind != "joined":
+            raise BusError("Invalid availability")
+        for value in (self.project_id, self.generation, self.grant_id):
+            uuid4_string(value)
+
+    @classmethod
+    def parse(cls, value: object) -> "Availability":
+        # pylint: disable=unidiomatic-typecheck
+        if not isinstance(value, dict):
+            raise BusError("Invalid availability fields")
+        fields = cast("dict[str, object]", value)
+        if set(fields) != {"version", "project_id", "generation", "grant_id", "kind"}:
+            raise BusError("Invalid availability fields")
+        if type(fields["version"]) is not int or not all(
+            isinstance(fields[key], str) for key in ("project_id", "generation", "grant_id", "kind")
+        ):
+            raise BusError("Invalid availability types")
+        result = cls(
+            fields["version"],
+            cast("str", fields["project_id"]),
+            cast("str", fields["generation"]),
+            cast("str", fields["grant_id"]),
+            cast("str", fields["kind"]),
+        )
+        result.validate()
+        return result
+
+
+@dataclass(frozen=True)
 class AuthorityDecision:
     """Receiver-derived decision, never a sender assertion."""
 

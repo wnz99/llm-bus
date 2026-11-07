@@ -12,6 +12,16 @@ grants, complementary local sender/receiver capabilities, and running bridges
 on both machines. Local bridge alone cannot establish connectivity. `list`
 uses cache; listed remote address not prove current access or liveness.
 
+Remote labels also accept `MACHINE/REPO/NAME`, for example
+`llm-bus --format agent send build-server/project/Builder --body 'Inspect the API.'`.
+They resolve from the policy-eligible cached roster. Bare labels never search
+remote machines. Duplicate remote names are refused as ambiguous. A reused name
+selects its current exact owner and transfers no grants, enrollment or replies.
+Native addresses remain usable without label discovery. Labels require upgraded
+bridges and relay migration `0005_session_labels.sql`; old peers remain visible
+by native address. Ordered publication prevents stale snapshots or legacy
+updates from restoring released revisioned labels. Discovery is not liveness.
+
 ## Respect each owner's policy
 
 Each machine owner controls exact per-repository, per-peer capabilities.
@@ -141,10 +151,16 @@ Native imports/outbox bindings resolve reply parents; monitor-only ancestry neve
 becomes a native parent. Unresolved children remain unreceipted until a valid parent
 is available or relay delivery expiry. Follow the remote guide for operator upgrades.
 
-Coordination uses schema 8 and relay migration `0004_coordination.sql`, with
+Current mailboxes use schema 12. Directions require relay migration `0004_coordination.sql`, with
 separate version 1 `/v2/coordination` capability/message/inbox routes. Legacy
 inboxes omit directions. Unknown metadata fails closed; an unsupported relay
 leaves directions queued with `unsupported_coordination`. Upgrade the client or
 relay; never resend stripped direction flags as ordinary authority. Offline
 receivers retain their last local policy; revoke/replace on each machine and
 reconcile active work before issuing fresh grants and targets.
+Automatic remote join availability additionally requires migration
+`0006_coordination_availability.sql` and matching client/relay capability.
+Receiver-owner project setup and peer policy remain prerequisites; availability
+cannot create trust or authorization. Unsupported relays leave it queued with
+`unsupported_coordination`. Install/deploy separately; repository changes do not
+perform either operation.

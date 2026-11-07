@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
+from llm_bus.coordination.authority import authorize
 from llm_bus.coordination.delivery import require_coordinator
-from llm_bus.coordination.models import Direction
+from llm_bus.coordination.models import Availability, Direction
 from llm_bus.errors import BusError
 from llm_bus.hosts.sessions import is_subagent
 from llm_bus.policy.config import NATIVE, Config
@@ -64,7 +65,8 @@ def enqueue_remote(  # noqa: PLR0913 - additive reply keyword preserves callers
     )
 
 
-def permits_outgoing(self: Bridge, envelope: Envelope) -> bool:
+def permits_outgoing(self: Bridge, envelope: Envelope) -> bool:  # noqa: PLR0911 - explicit denials
+    # pylint: disable=too-many-return-statements,clean-code-commented-out-code
     try:
         if is_subagent(envelope["sender"]):
             return False
@@ -73,6 +75,23 @@ def permits_outgoing(self: Bridge, envelope: Envelope) -> bool:
         return False
     if current is None:
         return False
+    if "availability" in envelope:
+        try:
+            event = Availability.parse(envelope["availability"])
+            with self.store.transaction() as db:
+                if not authorize(
+                    db,
+                    sender=envelope["recipient"],
+                    recipient=envelope["sender"],
+                    scope=self.remote.source_scope(envelope["id"]) or "",
+                    direction=Direction(
+                        1, event.project_id, event.generation, event.grant_id, "assign"
+                    ),
+                    now=datetime.now(UTC),
+                ).verified:
+                    return False
+        except BusError:
+            return False
     if "coordination" in envelope:
         try:
             with self.store.transaction() as db:
@@ -98,6 +117,12 @@ def permits_outgoing(self: Bridge, envelope: Envelope) -> bool:
 
 
 def upload(self: Bridge, envelope: Envelope) -> bool:
+    if "availability" in envelope:
+        Availability.parse(envelope["availability"])
+        if "coordination" in envelope:
+            raise BusError("Conflicting remote message classes")
+        if not supports_availability(self):
+            raise RelayError("unsupported_availability")
     if "coordination" in envelope and not supports_coordination(self):
         raise RelayError("unsupported_coordination")
     if "reply_to" in envelope and not supports_reply(self):
@@ -106,9 +131,30 @@ def upload(self: Bridge, envelope: Envelope) -> bool:
     if not permits_outgoing(self, envelope):
         return False
     route = "/v2/coordination/messages" if "coordination" in envelope else "/v1/messages"
+    if "availability" in envelope:
+        route = "/v2/coordination/availability/messages"
     result = self.relay.request(HTTP_POST, route, envelope)
     apply_status(self, envelope, result)
     return True
+
+
+def supports_availability(self: Bridge) -> bool:
+    """Keep the exact older direction negotiation response unchanged."""
+    try:
+        value = self.relay.request(HTTP_GET, "/v2/coordination/availability/capabilities")
+    except RelayError as error:
+        if error.http_status not in UNSUPPORTED_BATCH:
+            raise
+        return False
+    if not isinstance(value, dict):
+        return False
+    data = object_fields(cast("object", value))
+    return (
+        set(data) == {"availability_version"}
+        and isinstance(data["availability_version"], int)
+        and not isinstance(data["availability_version"], bool)
+        and data["availability_version"] == 1
+    )
 
 
 def supports_coordination(self: Bridge) -> bool:

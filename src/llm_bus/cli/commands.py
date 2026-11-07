@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, cast
 
 from llm_bus.cli.guidance import guidance
 from llm_bus.cli.output import serialize
+from llm_bus.cli.references import resolve_reference
 from llm_bus.coordination.delivery import outgoing
 from llm_bus.errors import BusError
 from llm_bus.locks.models import Key, Request
@@ -92,6 +93,10 @@ def human_command(store: Store, command: object, args: dict[str, object]) -> boo
         repository = (
             str(Path(selected_repository).resolve()) if selected_repository is not None else None
         )
+        peer = cast("str | None", args["peer"])
+        # Collaboration senders are retained history identities, not native targets.
+        if peer is not None and not peer.startswith("collab:"):
+            peer = resolve_reference(store, peer, repository or folder or str(Path.cwd()))
         print(
             serialize(
                 store.history(
@@ -101,7 +106,7 @@ def human_command(store: Store, command: object, args: dict[str, object]) -> boo
                     after=cast("int | None", args["after"]),
                     limit=cast("int", args["limit"]),
                     conversation=cast("int | None", args["conversation"]),
-                    peer=cast("str | None", args["peer"]),
+                    peer=peer,
                 ),
                 str(command),
                 str(args.get("format", "json")),
@@ -136,6 +141,7 @@ def _monitor(store: Store, args: dict[str, object]) -> None:
 
 
 def send(store: Store, args: dict[str, object], sender: SenderContext) -> object:
+    args = {**args, "to": resolve_reference(store, str(args["to"]), sender.project)}
     label, operation = args.get("project"), args.get("direction")
     if (label is None) != (operation is None):
         raise BusError("Use --project and --direction together")
@@ -201,7 +207,8 @@ def registered_command(
     store: Store, command: object, args: dict[str, object], agent_address: str, project: str
 ) -> object:
     if command == "whoami":
-        result: object = {"address": agent_address}
+        current = next(peer for peer in store.agents(project) if peer["address"] == agent_address)
+        result: object = {"address": agent_address, "label": current.get("label")}
     elif command == "guidance":
         result = {"guidance": guidance(store, agent_address, project, full=True)}
     elif command == "list":

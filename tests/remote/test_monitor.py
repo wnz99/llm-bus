@@ -50,6 +50,8 @@ def test_monitor_is_durable_isolated_and_never_promoted(
             return []
         if route == "/v2/coordination/capabilities":
             return {"version": 0}
+        if route == "/v2/coordination/availability/capabilities":
+            return {"availability_version": 0}
         raise AssertionError(route)
 
     monkeypatch.setattr("llm_bus.remote.http.Relay.request", request)

@@ -73,7 +73,10 @@ def test_claude_hook_uses_same_session_address(
     monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
     monkeypatch.delenv("CODEX_SESSION_ID", raising=False)
     assert main(["whoami"]) == 0
-    assert json.loads(capsys.readouterr().out) == {"address": "claude:claude-session"}
+    assert json.loads(capsys.readouterr().out) == {
+        "address": "claude:claude-session",
+        "label": None,
+    }
 
 
 @pytest.mark.parametrize("kind", ["codex", "claude"])
@@ -86,7 +89,7 @@ def test_session_end_hook_marks_registered_agent_ended(
     path = tmp_path / "bus.sqlite3"
     monkeypatch.setenv("LLM_BUS_DB", str(path))
     store = Store(path)
-    address = store.register(kind, "session", str(tmp_path))
+    address = store.register(kind, "session", str(tmp_path), label="builder")
     monkeypatch.setattr(
         "sys.stdin",
         hook_input({"session_id": "session", "hook_event_name": "SessionEnd"}),
@@ -94,6 +97,37 @@ def test_session_end_hook_marks_registered_agent_ended(
     assert main(["hook", kind]) == 0
     assert capsys.readouterr().out == ""
     assert Store(path).is_ended(address)
+    replacement = store.register(kind, "replacement", str(tmp_path), label="builder")
+    monkeypatch.setattr(
+        "sys.stdin",
+        hook_input({"session_id": "session", "hook_event_name": "SessionEnd"}),
+    )
+    assert main(["hook", kind]) == 0
+    assert store.resolve_label("builder", str(tmp_path)) == replacement
+
+
+def test_child_close_and_prompt_preserve_parent_label(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "bus.sqlite3"
+    monkeypatch.setenv("LLM_BUS_DB", str(path))
+    store = Store(path)
+    parent = store.register("claude", "parent", str(tmp_path), label="builder")
+    for event, child in (("SessionEnd", "child"), ("UserPromptSubmit", "")):
+        monkeypatch.setattr(
+            "sys.stdin",
+            hook_input(
+                {
+                    "session_id": "parent",
+                    "hook_event_name": event,
+                    "agent_id": child,
+                    "cwd": str(tmp_path),
+                }
+            ),
+        )
+        assert main(["hook", "claude"]) == 0
+        capsys.readouterr()
+        assert store.resolve_label("builder", str(tmp_path)) == parent
 
 
 def test_claude_deferred_wake_preserves_message_for_next_prompt_hook(

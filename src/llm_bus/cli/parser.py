@@ -20,7 +20,9 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - explicit CLI d
     )
     commands = parser.add_subparsers(dest="command", required=True)
     llm_bus.coordination.cli.add_parsers(commands.add_parser)
-    commands.add_parser("whoami", help="Show this session's bus address")
+    commands.add_parser("whoami", help="Show this session's bus address").add_argument(
+        "--label", help="Claim a unique repository-scoped session label"
+    )
     commands.add_parser("guidance", help="Recover full current identity, trust, and usage guidance")
     peers = commands.add_parser("list", help="List agents in this Git repository or folder")
     peers.add_argument(

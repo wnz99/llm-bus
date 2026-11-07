@@ -53,6 +53,8 @@ def publish_sessions(self: Bridge) -> int:
                 "last_seen": session["last_seen"],
                 "ended": session["ended_at"] is not None
                 or is_subagent(str(session["native_address"])),
+                "label": session["label"],
+                "revision": session["revision"],
             }
             key = f"{repo.repo_id}/{session['native_address']}"
             serialized = json.dumps(payload, sort_keys=True)

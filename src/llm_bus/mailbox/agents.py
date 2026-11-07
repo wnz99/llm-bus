@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+from llm_bus.coordination.store import end_session_consents
 from llm_bus.hosts.sessions import is_subagent
+from llm_bus.mailbox import labels
 from llm_bus.mailbox.models import (
     Agent,
     address,
@@ -23,19 +25,35 @@ def expire_idle_agents(db: sqlite3.Connection) -> None:
         "strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)",
         (f"-{SESSION_IDLE_HOURS} hours",),
     )
+    db.execute(
+        "DELETE FROM agent_labels WHERE address IN "
+        "(SELECT address FROM agents WHERE ended_at IS NOT NULL)"
+    )
+    for (ended_address,) in cast(
+        "list[tuple[str]]",
+        db.execute(
+            "SELECT DISTINCT c.address FROM coordination_session_consents c JOIN agents a "
+            "ON a.address=c.address WHERE a.ended_at IS NOT NULL AND c.ended_at IS NULL"
+        ).fetchall(),
+    ):
+        end_session_consents(db, str(ended_address))
 
 
-def register(
+def register(  # noqa: PLR0913 - explicit optional registration metadata
     db: sqlite3.Connection,
     kind: str,
     session_id: str,
     project: str,
     *,
     messaging_socket: str | None = None,
+    label: str | None = None,
 ) -> str:
     """Upsert session address without deleting its pending messages."""
+    # pylint: disable=too-many-arguments
     scope = routing_scope(project)
     agent_address = upsert_agent(db, kind, session_id, project, scope)
+    if label is not None:
+        labels.claim(db, scope, agent_address, label)
     db.execute(
         "UPDATE agents SET messaging_socket = ? WHERE address = ?",
         (messaging_socket if kind == "claude" else None, agent_address),
@@ -59,6 +77,14 @@ def upsert_agent(
     db: sqlite3.Connection, kind: str, session_id: str, project: str, scope: str
 ) -> str:
     agent_address = address(kind, session_id)
+    expire_idle_agents(db)
+    previous = cast(
+        "tuple[str] | None",
+        db.execute("SELECT scope FROM agents WHERE address=?", (agent_address,)).fetchone(),
+    )
+    if previous is not None and previous[0] != scope:
+        end_session_consents(db, agent_address)
+    db.execute("DELETE FROM agent_labels WHERE address=? AND scope<>?", (agent_address, scope))
     db.execute(
         "INSERT INTO agents(address, kind, project, scope, last_seen, ended_at) "
         "VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL) "
@@ -72,6 +98,8 @@ def upsert_agent(
 
 def end_session(db: sqlite3.Connection, kind: str, session_id: str) -> None:
     """Mark a registered session closed without consuming its pending messages."""
+    end_session_consents(db, address(kind, session_id))
+    db.execute("DELETE FROM agent_labels WHERE address=?", (address(kind, session_id),))
     db.execute(
         "UPDATE agents SET ended_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), "
         "messaging_socket = NULL "
@@ -101,15 +129,26 @@ def all_agents(db: sqlite3.Connection) -> list[Agent]:
 
 def _read_agents(db: sqlite3.Connection, clauses: list[str], parameters: list[str]) -> list[Agent]:
     expire_idle_agents(db)
-    query = "SELECT address, kind, project, last_seen, ended_at FROM agents"
+    query = (
+        "SELECT address, kind, project, last_seen, ended_at, "
+        "(SELECT label FROM agent_labels WHERE agent_labels.address=agents.address) "
+        "FROM agents"
+    )
     if clauses:
         query += " WHERE " + " AND ".join(clauses)
     rows = cast(
-        "list[tuple[str, str, str, str, str | None]]",
+        "list[tuple[str, str, str, str, str | None, str | None]]",
         db.execute(query + " ORDER BY last_seen DESC", parameters).fetchall(),
     )
     return [
-        Agent(address=row[0], kind=row[1], project=row[2], last_seen=row[3], ended_at=row[4])
+        Agent(
+            address=row[0],
+            kind=row[1],
+            project=row[2],
+            last_seen=row[3],
+            ended_at=row[4],
+            label=row[5],
+        )
         for row in rows
     ]
 

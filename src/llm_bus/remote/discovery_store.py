@@ -10,26 +10,46 @@ if TYPE_CHECKING:
     from llm_bus.remote.store import RemoteStore
 
 
-def sessions(self: RemoteStore) -> list[dict[str, str | None]]:
+def sessions(self: RemoteStore) -> list[dict[str, str | int | None]]:
     self.store.all_agents()  # Apply the native inactivity rule before exporting activity.
     with self.store.transaction() as db:
+        db.execute("BEGIN IMMEDIATE")
         rows = cast(
-            "list[tuple[str, str, str, str | None, str]]",
+            "list[tuple[str, str, str, str | None, str, str | None]]",
             db.execute(
-                "SELECT address, project, last_seen, ended_at, scope FROM agents "
-                "WHERE address NOT IN (SELECT address FROM remote_proxies)"
+                "SELECT a.address, a.project, a.last_seen, a.ended_at, a.scope, l.label "
+                "FROM agents a LEFT JOIN agent_labels l ON l.address=a.address "
+                "WHERE a.address NOT IN (SELECT address FROM remote_proxies)"
             ).fetchall(),
         )
-    return [
-        {
-            "native_address": row[0],
-            "project": row[1],
-            "last_seen": row[2],
-            "ended_at": row[3],
-            "scope": row[4],
-        }
-        for row in rows
-    ]
+        result: list[dict[str, str | int | None]] = []
+        for row in rows:
+            address, project, last_seen, ended_at, scope, label = row
+            session: dict[str, str | int | None] = {
+                "native_address": address,
+                "project": project,
+                "last_seen": last_seen,
+                "ended_at": ended_at,
+                "scope": scope,
+                "label": label if ended_at is None else None,
+            }
+            payload = json.dumps(session, sort_keys=True)
+            previous = cast(
+                "tuple[int, str] | None",
+                db.execute(
+                    "SELECT revision,payload FROM session_publications WHERE address=?", (address,)
+                ).fetchone(),
+            )
+            revision = 1 if previous is None else previous[0] + int(previous[1] != payload)
+            db.execute(
+                "INSERT INTO session_publications(address,revision,payload) VALUES (?,?,?) "
+                "ON CONFLICT(address) DO UPDATE SET "
+                "revision=excluded.revision,payload=excluded.payload",
+                (address, revision, payload),
+            )
+            session["revision"] = revision
+            result.append(session)
+    return result
 
 
 def published(self: RemoteStore, key: str, payload: str | None = None) -> bool:

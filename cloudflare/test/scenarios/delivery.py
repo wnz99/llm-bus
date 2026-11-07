@@ -117,4 +117,43 @@ for attempt in range(50):
 assert followups[0]['reply_to']==reply['id']
 assert len(stores['a'].history(folder=None,conversation=sent['id']))==3
 assert len(stores['b'].history(folder=None,conversation=inbox[0]['id']))==3
+# Receiver owners bind the same project once; no per-worker grant/target exchange.
+print('ordinary delivery/reply checks passed; starting coordination')
+from llm_bus.coordination import cli
+from llm_bus.coordination.delivery import outgoing
+workspace=root/'memory'; workspace.mkdir(); (workspace/'.beads').mkdir()
+common={'project':'demo','objective':'review','beads_workspace':str(workspace),'memory_ticket':'memory-1'}
+select('a')
+created=cli.run(stores['a'],{'command':'coordinate',**common},'codex:sender',str(repo))
+with stores['a'].transaction() as db:
+    project_id,generation=db.execute('SELECT project_id,generation FROM coordination_projects').fetchone()
+select('b')
+cli.run(stores['b'],{'command':'setup',**common,'coordinator':'a/xyz/codex:sender','project_id':project_id,'generation':generation},'claude:recipient',str(repo))
+joined=cli.run(stores['b'],{'command':'join','project':'demo'},'claude:recipient',str(repo))
+print('owner-bound join queued')
+assert bridge(select('b'),configs['b']).sync()['errors']==0
+for attempt in range(50):
+    assert bridge(select('a'),configs['a']).sync()['errors']==0
+    with stores['a'].transaction() as db:
+        target=db.execute('SELECT grant_id FROM coordination_targets WHERE recipient=?',('b/xyz/claude:recipient',)).fetchone()
+    if target: break
+    time.sleep(.05)
+assert target, 'availability did not create target'
+print('availability target received')
+with stores['a'].transaction() as db:
+    direction=outgoing(db,sender='codex:sender',scope=configs['a'].repositories[0].scope,label='demo',recipient='b/xyz/claude:recipient',operation='assign')
+assert direction.grant_id==target[0]
+assignment=enqueue_remote(stores['a'],configs['a'],SenderContext('codex','sender',str(repo)),'b/xyz/claude:recipient','assigned automatically',direction=direction)
+assert bridge(select('a'),configs['a']).sync()['errors']==0
+for attempt in range(50):
+    assert bridge(select('b'),configs['b']).sync()['errors']==0
+    assigned=[item for item in stores['b'].inbox('claude:recipient') if item['body']=='assigned automatically']
+    if assigned: break
+    time.sleep(.05)
+assert len(assigned)==1
+assert assigned[0]['coordination']['verified'] is True
+select('b')
+cli.run(stores['b'],{'command':'leave','project':'demo'},'claude:recipient',str(repo))
+assert not [item for item in stores['b'].inbox('claude:recipient') if item['body']=='assigned automatically']
 print('cross-machine delivery and acknowledgement passed')
+print('owner-bound join and automatic assignment passed')

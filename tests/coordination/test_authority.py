@@ -48,6 +48,8 @@ def test_empty_store_denies(tmp_path: Path) -> None:
 def test_authority_receiver_matrix(tmp_path: Path, mutation: str, reason: str) -> None:
     (tmp_path / ".beads").mkdir()
     mailbox = Store(tmp_path / "bus.sqlite3")
+    mailbox.register("codex", "owner", str(tmp_path))
+    mailbox.register("claude", "worker", str(tmp_path))
 
     def command(*argv: str, address: str = "codex:owner") -> dict[str, object]:
         return run(mailbox, vars(build_parser().parse_args(argv)), address, str(tmp_path))

@@ -320,9 +320,13 @@ for the complete remote coordinator/local worker walkthrough and offline
 replacement procedure. Configure existing relay admission and local text policy
 first on both machines. A receiver must allow `inbox` text and independently
 import the project/generation/exact authenticated coordinator with
-`coordination setup`, grant the exact local worker with an explicit lifetime,
-then join that native session. Exchange the non-secret recipient grant ID;
-the coordinator stores it with `coordination target`. Grants never propagate
+`coordination setup`, then accept a direct owner join for that native session.
+Matching clients and relay exchange structured availability to record the exact
+target automatically. Migration `0006_coordination_availability.sql` must precede
+the matching Worker deployment. Availability cannot establish a project binding
+or peer trust. Advanced explicit grants keep their chosen lifetimes; exchange
+the non-secret recipient grant ID and store it with `coordination target` when
+using that manual path. Grants never propagate
 between machines. Sender permission has no reciprocal effect.
 
 Upgrade clients and relay before using directions. Relay migration
@@ -347,7 +351,7 @@ Inspect stale queues/history; do not replay blindly. Offline until-revoked
 receivers follow their last local policy until updated. No command remotely
 changes another owner's grants; no global immediate revoke guarantee exists.
 Already exposed content and submitted wakes cannot be recalled. Stop bridges
-and retain backups before rollback; older clients reject schema 8 mailboxes.
+and retain backups before rollback; older clients reject schema 12 mailboxes.
 
 ## Migration and rollback
 

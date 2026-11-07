@@ -24,6 +24,8 @@ def invoke(store: Store, cwd: Path, *argv: str, address: str = "codex:owner") ->
 
 
 def create(store: Store, cwd: Path) -> dict[str, object]:
+    store.register("codex", "owner", str(cwd))
+    store.register("claude", "worker", str(cwd))
     (cwd / ".beads").mkdir(exist_ok=True)
     return invoke(
         store,
@@ -39,11 +41,79 @@ def create(store: Store, cwd: Path) -> dict[str, object]:
     )
 
 
+@pytest.mark.parametrize("use_label", [False, True])
+def test_address_options_resolve_once(tmp_path: Path, *, use_label: bool) -> None:
+    (tmp_path / ".beads").mkdir()
+    mailbox = Store(tmp_path / "bus.sqlite3")
+    mailbox.register("codex", "owner", str(tmp_path), label="leader")
+    mailbox.register("claude", "worker", str(tmp_path), label="builder")
+    owner = "leader" if use_label else "codex:owner"
+    worker = "builder" if use_label else "claude:worker"
+    invoke(
+        mailbox,
+        tmp_path,
+        "coordination",
+        "setup",
+        "demo",
+        "--project-id",
+        str(uuid4()),
+        "--generation",
+        str(uuid4()),
+        "--coordinator",
+        owner,
+        "--objective",
+        "Build",
+        "--beads-workspace",
+        str(tmp_path),
+        "--memory-ticket",
+        "bus-1",
+    )
+    invoke(
+        mailbox, tmp_path, "coordination", "grant", "demo", "--recipient", worker, "--until-revoked"
+    )
+    with mailbox.transaction() as db:
+        grant_id, recipient = cast(
+            "tuple[str, str]",
+            db.execute("SELECT grant_id,recipient FROM coordination_grants").fetchone(),
+        )
+    assert recipient == "claude:worker"
+    invoke(
+        mailbox,
+        tmp_path,
+        "coordination",
+        "target",
+        "demo",
+        "--recipient",
+        worker,
+        "--grant-id",
+        grant_id,
+    )
+    mailbox.end_session("claude", "worker")
+    mailbox.register("claude", "replacement", str(tmp_path), label="builder")
+    joined = invoke(mailbox, tmp_path, "join", "demo", address="claude:replacement")
+    assert any(
+        g["recipient"] == "claude:replacement"
+        for g in cast("list[dict[str, object]]", joined["grants"])
+    )
+    invoke(mailbox, tmp_path, "coordination", "revoke", "demo", "--recipient", worker)
+    result = invoke(
+        mailbox,
+        tmp_path,
+        "coordination",
+        "replace",
+        "demo",
+        "--generation",
+        str(uuid4()),
+        "--coordinator",
+        owner,
+    )
+    assert result["coordinator"] == "codex:owner"
+    invoke(mailbox, tmp_path, "coordination", "revoke", "demo")
+
+
 def test_durable_exact_session_enrollment_and_regrant(tmp_path: Path) -> None:
     mailbox = Store(tmp_path / "bus.sqlite3")
     record = create(mailbox, tmp_path)
-    with pytest.raises(BusError, match="exact owner grant"):
-        invoke(mailbox, tmp_path, "join", "demo", address="claude:worker")
     invoke(
         mailbox,
         tmp_path,
@@ -156,6 +226,7 @@ def test_expiry_and_missing_prerequisites(tmp_path: Path) -> None:
                 expiry,
             )
     future = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    mailbox.register("claude", "w", str(tmp_path))
     invoke(
         mailbox,
         tmp_path,

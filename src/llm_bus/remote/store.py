@@ -14,6 +14,7 @@ from llm_bus.remote import admission, discovery_store, monitor, outbox, scheduli
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from datetime import datetime
+    from sqlite3 import Connection
 
     from llm_bus.coordination.models import Direction
     from llm_bus.mailbox.models import SenderContext
@@ -61,21 +62,24 @@ class RemoteStore:
     def sleep_seconds(self, now: datetime) -> float:
         return scheduling.sleep_seconds(self, now)
 
-    def __init__(self, store: Store, connection: str) -> None:
+    def __init__(self, store: Store, connection: str, *, db: Connection | None = None) -> None:
         self.store = store
         self.connection = connection
-        with store.transaction() as db:
-            db.execute("INSERT OR IGNORE INTO remote_binding VALUES (1, ?)", (connection,))
-            row = cast(
-                "tuple[str]",
-                db.execute("SELECT connection FROM remote_binding WHERE id=1").fetchone(),
-            )
-            if row[0] != connection:
-                raise BusError(
-                    "This mailbox is bound to another relay/machine; use another LLM_BUS_DB"
-                )
+        if db is not None:
+            self._bind(db)
+        else:
+            with store.transaction() as transaction:
+                self._bind(transaction)
 
-    def sessions(self) -> list[dict[str, str | None]]:
+    def _bind(self, db: Connection) -> None:
+        db.execute("INSERT OR IGNORE INTO remote_binding VALUES (1, ?)", (self.connection,))
+        row = cast(
+            "tuple[str]", db.execute("SELECT connection FROM remote_binding WHERE id=1").fetchone()
+        )
+        if row[0] != self.connection:
+            raise BusError("This mailbox is bound to another relay/machine; use another LLM_BUS_DB")
+
+    def sessions(self) -> list[dict[str, str | int | None]]:
         return discovery_store.sessions(self)
 
     def published(self, key: str, payload: str | None = None) -> bool:

@@ -60,7 +60,7 @@ def _optional_address() -> str | None:
     return agent_address
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901 - bounded command dispatch
     """Run command, returning nonzero for input and storage errors."""
     args = cast("dict[str, object]", vars(build_parser().parse_args(argv)))
     command = args["command"]
@@ -96,12 +96,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         require_main_agent(f"{kind}:{session_id}")
         project = str(Path.cwd().resolve())
         if command in {"coordinate", "join", "coordination"}:
+            if command in {"coordinate", "join"}:
+                store.register(kind, session_id, project, messaging_socket=claude_socket(kind))
             result = llm_bus.coordination.cli.run(store, args, f"{kind}:{session_id}", project)
         elif command == "send":
             result = send(store, args, SenderContext(kind, session_id, project))
         else:
             agent_address = store.register(
-                kind, session_id, project, messaging_socket=claude_socket(kind)
+                kind,
+                session_id,
+                project,
+                messaging_socket=claude_socket(kind),
+                label=cast("str | None", args.get("label")) if command == "whoami" else None,
             )
             result = registered_command(store, command, args, agent_address, project)
         print(serialize(result, str(command), str(args["format"])))

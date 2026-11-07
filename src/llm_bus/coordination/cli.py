@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
+from llm_bus.cli.guidance import guidance
 from llm_bus.cli.references import resolve_reference
 from llm_bus.coordination import store
 from llm_bus.coordination.availability import record_local, record_remote
@@ -127,6 +128,9 @@ def run(  # noqa: C901 - owner action dispatch
         result["availability_wake"] = dispatch_pending(
             mailbox, str(record["coordinator"]), trigger_id=notice_id
         )
+    if action in {"coordinate", "join"}:
+        # Reuse hook recovery text; command success must teach the same role duties.
+        result["guidance"] = guidance(mailbox, address, cwd, full=True)
     return result
 
 

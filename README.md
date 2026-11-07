@@ -249,10 +249,16 @@ turn completion and compaction preserve it. Existing explicit owner grants keep
 their selected lifetimes. Local joins record the assignment target and one
 durable informational arrival per grant, even if the coordinator is offline.
 Native wake support determines whether the coordinator resumes automatically.
-Remote automatic arrival exchange remains pending; use the advanced remote
-grant/target workflow. Joining assigns no specialty. Defaults and ordinary messages remain
+Remote joins require a receiver-owner binding and matching upgraded clients/relay;
+structured availability exchange records the coordinator target automatically.
+Joining assigns no specialty. Defaults and ordinary messages remain
 unchanged. Directions cannot bypass owner instructions, host permissions or
 existing review/approval gates.
+
+The [simplified coordination defaults](docs/coordination-simplified-flow.md) and
+[Claude coordinator with three Codex workers example](examples/claude-coordinator-codex-workers.md)
+describe this source version. Upgrade the installed executable, hooks and shared
+skill together before using them; source changes do not install or activate them.
 
 Read the [canonical coordination workflow](skills/llm-bus/references/coordination.md)
 for all CLI equivalents, local Codex/Claude and remote examples, grants,
@@ -396,7 +402,7 @@ Run `llm-bus uninstall` to remove the user-level bus hooks and Claude allow rule
 Revoke active coordination grants/projects on each machine before removing
 recovery tooling. Uninstall retains coordination records and native-home
 bindings. Copied skills and instruction loaders require separate owner-requested
-removal. Stop bridges and retain backups before rollback; schema 8 mailboxes
+removal. Stop bridges and retain backups before rollback; schema 12 mailboxes
 reject older clients. Never downgrade directions into ordinary messages.
 
 ## Development

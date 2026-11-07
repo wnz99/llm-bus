@@ -151,10 +151,16 @@ Native imports/outbox bindings resolve reply parents; monitor-only ancestry neve
 becomes a native parent. Unresolved children remain unreceipted until a valid parent
 is available or relay delivery expiry. Follow the remote guide for operator upgrades.
 
-Coordination uses schema 8 and relay migration `0004_coordination.sql`, with
+Current mailboxes use schema 12. Directions require relay migration `0004_coordination.sql`, with
 separate version 1 `/v2/coordination` capability/message/inbox routes. Legacy
 inboxes omit directions. Unknown metadata fails closed; an unsupported relay
 leaves directions queued with `unsupported_coordination`. Upgrade the client or
 relay; never resend stripped direction flags as ordinary authority. Offline
 receivers retain their last local policy; revoke/replace on each machine and
 reconcile active work before issuing fresh grants and targets.
+Automatic remote join availability additionally requires migration
+`0006_coordination_availability.sql` and matching client/relay capability.
+Receiver-owner project setup and peer policy remain prerequisites; availability
+cannot create trust or authorization. Unsupported relays leave it queued with
+`unsupported_coordination`. Install/deploy separately; repository changes do not
+perform either operation.

@@ -58,9 +58,8 @@ Close both agents before installing or uninstalling, and avoid simultaneous edit
 Installation also records the selected Codex home in
 `~/.local/share/llm-bus/native-hosts.json`. All bus callers, including Claude and
 bridges, use these machine-owned bindings to identify Codex children regardless
-of their own `CODEX_HOME`. Run `llm-bus install` for each Codex home you use,
-Previous
-installed homes remain recorded when another is added. Before first installation,
+of their own `CODEX_HOME`. Run `llm-bus install` for each Codex home you use.
+Previous installed homes remain recorded when another is added. Before first installation,
 lookup uses the calling process's Codex home; custom-home installations must
 complete setup before enabling mixed-host messaging. Uninstall retains the bindings.
 
@@ -238,7 +237,7 @@ If you are an LLM installing the bus for someone, **ask whether to install the i
 
 Start a new agent session in the chosen scope and confirm `llm-bus whoami` succeeds. See the [Codex AGENTS.md](https://developers.openai.com/codex/agent-configuration/agents-md) and [Claude Code memory](https://code.claude.com/docs/en/memory#agents-md) guides for instruction loading rules.
 
-Optionally install the [llm-bus skill](skills/llm-bus/SKILL.md) by copying the whole `skills/llm-bus/` directory into the host's shared skill directory, normally `~/.agents/skills/llm-bus/`. It helps agents with messaging, coordination, delivery troubleshooting and remote policy. The skill requires the CLI above; copying it, or the rule files, installs nothing else: no hooks, Beads database or trust changes. Coordination prerequisites (Beads skill, existing Beads workspace) and optional caveman are listed in [Install agent instructions](examples/agent-instructions.md).
+Install the [llm-bus skill](skills/llm-bus/SKILL.md) by copying the whole `skills/llm-bus/` directory into the host's shared skill directory, normally `~/.agents/skills/llm-bus/`. It is optional for local-only messaging and required for remote messaging, collaboration and coordination, which the rule files delegate to its references. The skill requires the CLI above; copying it, or the rule files, installs nothing else: no hooks, Beads database or trust changes. Coordination prerequisites (Beads skill, existing Beads workspace) and optional caveman are listed in [Install agent instructions](examples/agent-instructions.md).
 
 SessionStart and missing or outdated guidance state emit full identity, trust, and usage guidance. Normal prompt hooks use a compact reminder with the current folder, pending count (capped at `100+`), inbox/ack hints, and current peer restrictions. Remote usage details appear in the full form only for a configured repository. To recover full guidance after context compaction, run `llm-bus guidance`; it returns the current guidance without changing messages or guidance-version state. SessionStart also restores full guidance when the host emits that event. No other compaction event is assumed.
 

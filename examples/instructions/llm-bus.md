@@ -100,6 +100,8 @@ before you deviate from an agreement.
 - A local send stores the message and then requests a wake. Inspect
   `wake.status` in the JSON result. `requested` does not prove that the peer
   received or handled the message.
+- Claude Code wakes need a registered inbox socket and inbound-message
+  permission; without them the message waits for the recipient's next turn.
 - A failed, unsupported or timed-out wake still leaves the message stored. Do
   not resend it blindly.
 - Roster entries can be stale: a listed session is not necessarily running.
@@ -110,7 +112,8 @@ before you deviate from an agreement.
   `llm-bus --format agent remote-status` shows whether the relay accepted it
   (`accepted_remote`), the destination stored it (`delivered_local`) or the
   recipient acknowledged it (`acknowledged`). None of these proves handling,
-  and a delay is no reason to resend. `--cross-folder` never bypasses remote
+  and a delay is no reason to resend. Remote status is the last synced
+  state, not a live guarantee. `--cross-folder` never bypasses remote
   policy.
 - Before your first remote send, or before working with another person's
   agents through `llm-bus collab`, load the llm-bus skill and follow its

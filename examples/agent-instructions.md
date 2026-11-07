@@ -49,8 +49,9 @@ Do this once per machine, as the operating-system user who runs the agents.
    agents.
 6. Copy the whole `skills/llm-bus/` directory into the skill directory each
    host discovers, normally the shared `~/.agents/skills/llm-bus/`; check that
-   both Codex and Claude Code list the skill. The rule files rely on its
-   references for remote messaging, collaboration and coordination.
+   both Codex and Claude Code list the skill. It is optional for local-only
+   messaging and required for remote messaging, collaboration and
+   coordination, which the rule files delegate to its references.
 7. Remote messaging only: configure the relay and run `llm-bus bridge` on both
    machines, as described in [Cross-machine messaging](../README.md#cross-machine-messaging).
 8. Coordination only: install the official Beads skill and `bd` CLI, and make

@@ -1,6 +1,6 @@
 # Project State
 
-Last activity: 2026-11-07 - Agent labels source/staging completed for PR #62; final documentation reconciliation prepared; current-head CI and merge pending.
+Last activity: 2026-11-07 - PR #62 merged; authorized four-host installation and relay rollout independently verified. Post-merge GSD results recorded; native frontend trust/context reload remain unobserved.
 
 ## Registered Work
 
@@ -11,7 +11,7 @@ Last activity: 2026-11-07 - Agent labels source/staging completed for PR #62; fi
 
 | # | Description | Status | Directory |
 |---|-------------|--------|-----------|
-| 261106-w7a | Agent labels and command-driven coordination — PR #62 | Source/staging implementation, verification and independent review passed; final documentation prepared; matching-head CI and merge pending; installation/live proof pending | [261106-w7a-agent-labels-and-command-driven-coordina](./quick/261106-w7a-agent-labels-and-command-driven-coordina/) |
+| 261106-w7a | Agent labels and command-driven coordination — PR #62 | Merged; all four hosts installed at fabcb404 (guidance 8/schema 12), matching relay deployed; bounded independent rollout PASS and 28 installed-package smokes passed; frontend trust/context reload unobserved | [261106-w7a-agent-labels-and-command-driven-coordina](./quick/261106-w7a-agent-labels-and-command-driven-coordina/) |
 | 261105-knm | Optional coordination — PR #60 | Implementation, verification and independent review passed; merge pending current-head CI | [261105-knm-optional-coordination](./quick/261105-knm-optional-coordination/) |
 
 T1–T5 implementation and independent task reviews passed. Integrated verification

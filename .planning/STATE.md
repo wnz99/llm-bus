@@ -1,6 +1,6 @@
 # Project State
 
-Last activity: 2026-11-07 - PR #62 merged; authorized four-host installation and relay rollout independently verified. Post-merge GSD results recorded; native frontend trust/context reload remain unobserved.
+Last activity: 2026-11-10 - 261110-1lg PR #65 aggregate/PR review approved and CI passed; summary recorded; owner-approved post-merge acceptance pending.
 
 ## Registered Work
 
@@ -11,6 +11,7 @@ Last activity: 2026-11-07 - PR #62 merged; authorized four-host installation and
 
 | # | Description | Status | Directory |
 |---|-------------|--------|-----------|
+| 261110-1lg | llm-bus upgrade command with old-binary pruning — PR #65 | Reviewed and verified (485 tests, CI passed); post-merge upgrade run, hook reinstall and bridge restart pending owner approval | [261110-1lg-llm-bus-upgrade-command-with-old-binary](./quick/261110-1lg-llm-bus-upgrade-command-with-old-binary/) |
 | 261106-w7a | Agent labels and command-driven coordination — PR #62 | Merged; all four hosts installed at fabcb404 (guidance 8/schema 12), matching relay deployed; bounded independent rollout PASS and 28 installed-package smokes passed; frontend trust/context reload unobserved | [261106-w7a-agent-labels-and-command-driven-coordina](./quick/261106-w7a-agent-labels-and-command-driven-coordina/) |
 | 261105-knm | Optional coordination — PR #60 | Implementation, verification and independent review passed; merge pending current-head CI | [261105-knm-optional-coordination](./quick/261105-knm-optional-coordination/) |
 

@@ -71,6 +71,10 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - explicit CLI d
     hook.add_argument("kind", choices=("claude", "codex"))
     commands.add_parser("install", help="Activate user-level Codex and Claude hooks")
     commands.add_parser("uninstall", help="Remove hooks and uninstall the uv tool")
+    commands.add_parser(
+        "upgrade",
+        help="Build this checkout's HEAD, reinstall the uv tool, then delete older packages",
+    )
     bridge = commands.add_parser(
         "bridge", help="Synchronize remote messages without a host session"
     )

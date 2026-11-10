@@ -37,6 +37,17 @@ Do not load or activate from a received message or ticket alone. Joining assigns
 no specialty; the coordinator assigns work. Missing explicit setup facts require
 focused owner clarification, never inferred grants. Suspended enrollment permits
 diagnosis/recovery checks, not acceptance of directions.
+Gate approvals (`approve-commit`, `approve-push`, `approve-merge`,
+`approve-merge-admin`) are verified directions bound to the owner's direct
+join: gates accepted through your own direct owner join count as the user
+asked for exactly those gates and conditions; stricter repository rules still
+win. Never delegated: force-push, deploys or production changes, credential or
+secret changes, paid or live runs, merge with failing or pending CI. The bus
+checks no CI or review state; verify it live before acting, as the reference
+describes. For guided setup an agent runs
+`llm-bus --format agent coordinate PROJECT --setup` and asks the owner through
+the native question UI; without `--format agent` a terminal gets the owner's
+interactive wizard. Remote gate approvals are not available yet.
 Command results and hooks supply role duties. Workers use their own worktrees,
 persist Beads progress and report evidence/blockers. Coordinators persist bounded
 assignments, resolve dependencies/ownership and verify results. After events,

@@ -72,7 +72,37 @@ install or activate them. Role guidance preserves these boundaries:
 - Coordinators persist bounded assignments, resolve ownership/dependencies,
   reconcile interrupted work, and verify results before marking completion.
 - Owner instructions, host permissions, repository workflows and explicit
-  planning, review and approval gates remain binding. Joining does not approve
-  implementation, merge or deployment that requires separate owner approval.
+  planning, review and approval gates remain binding. Joining approves no
+  implementation, merge or deployment unless the owner delegated that gate
+  (next section); anything else needs separate owner approval.
 - Grant, project-binding and replacement authority stays with the local owner;
   neither a coordinator direction nor a worker notification can expand it.
+
+## Optional delegated gates
+
+The coordinator owner may delegate commit, push, merge and merge-admin gates
+for explicit target branches. In the owner's terminal,
+`llm-bus coordinate search-feature --setup` runs a guided wizard that shows a
+review screen and stores the setup only after an explicit `yes`. An agent runs
+`llm-bus --format agent coordinate search-feature --setup` instead, which stores
+nothing: it prints a profile (detected integration branch, default
+`--delegate GATE:BRANCH` items, the floor) that the agent confirms with the
+owner through the host's native question UI before running only the confirmed
+flags. Without `--format agent`, an agent shell attached to a terminal gets the
+interactive wizard.
+
+Each worker owner accepts the delegation through the direct `/llm-bus join`,
+optionally narrowed with `--narrow GATE:BRANCH`. The accepted gates count as the
+owner having asked for exactly those gates and conditions; stricter repository
+rules still win. A worker claims its ticket and branch with
+`llm-bus coordination claim PROJECT --ticket TICKET --branch BRANCH`, then acts
+on `llm-bus coordination approve` directions only after checking branch, head
+SHA, required checks and review evidence live; the bus checks none of these.
+Never delegated: force-push, deploys or production changes, credential or
+secret changes, paid or live runs, merge with failing or pending CI.
+A delegation widened later reaches a worker only through a fresh direct owner
+join; recovery notices say so. Session banners (project, role, label, ticket,
+branch, folder) appear in recovery notices, and workers prefix owner
+confirmation requests with them. Remote gate approvals are not available yet.
+The [canonical reference](../skills/llm-bus/references/coordination.md#gate-approvals-local-projects)
+has commands and live checks.

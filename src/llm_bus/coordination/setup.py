@@ -58,6 +58,7 @@ def profile(cwd: str) -> dict[str, object]:
     branch, source = detect_integration_branch(cwd)
     return {
         "delegate": _items(branch),
+        "flags": [] if branch is None else [delegation.AUTO_MERGE],
         "integration_branch": {"name": branch, "source": source},
         "floor": list(delegation.FLOOR),
         "steps": [
@@ -67,14 +68,17 @@ def profile(cwd: str) -> dict[str, object]:
             ),
             (
                 "Ask the owner through the native question UI: objective, Beads workspace, "
-                "memory ticket, integration branch, and each delegated gate."
+                "memory ticket, integration branch, each delegated gate, and each flag "
+                "(auto-merge needs a merge or merge-admin gate; the coordinator still accepts "
+                "every gate record)."
             ),
             "The owner may disable items or change target branches, never add floor items.",
             "Run only the confirmed flags with the command below.",
         ],
         "command": (
             "llm-bus --format agent coordinate PROJECT --objective OBJECTIVE "
-            "--beads-workspace PATH --memory-ticket TICKET --delegate GATE:BRANCH ..."
+            "--beads-workspace PATH --memory-ticket TICKET --delegate GATE:BRANCH ... "
+            "--auto-merge"
         ),
     }
 
@@ -118,6 +122,7 @@ def run_wizard(  # noqa: PLR0913 - explicit inputs
     *,
     ask: Callable[[str], str] = input,
     say: Callable[[str], None] = print,
+    auto_merge: bool = False,
 ) -> dict[str, object] | None:
     """Ask, show a review screen and store only after an explicit yes."""
     # pylint: disable=too-many-locals,too-many-arguments
@@ -140,13 +145,18 @@ def run_wizard(  # noqa: PLR0913 - explicit inputs
         if branch
         else []
     )
-    chosen = delegation.Delegation.from_specs(specs) if specs else None
+    chosen = (
+        delegation.Delegation.from_specs(specs, auto_merge=auto_merge)
+        if specs or auto_merge
+        else None
+    )
     coordinator = _coordinator(store, cwd, identity, ask)
     args: dict[str, object] = {
         "objective": objective,
         "beads_workspace": workspace,
         "memory_ticket": ticket,
-        "delegate": list(chosen.items()) if chosen else [],
+        "delegate": specs,
+        "auto_merge": auto_merge,
     }
     _review(say, label, coordinator, args, chosen)
     if ask("Store this setup? (type yes): ").strip().lower() != YES:
@@ -172,4 +182,9 @@ def _review(
     if chosen is not None and chosen.targets("merge-admin"):
         targets = ", ".join(chosen.targets("merge-admin"))
         say(f"merge-admin bypasses only the required-approvals rule on: {targets}")
+    if chosen is not None and chosen.auto_merge:
+        say(
+            "auto-merge: each merge still needs the coordinator to accept the worker's gate "
+            "record, which sends the merge approval; the worker checks CI before merging."
+        )
     say("Never delegated (floor): " + ", ".join(delegation.FLOOR))

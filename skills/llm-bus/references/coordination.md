@@ -52,9 +52,11 @@ specs naming a floor item are rejected. An approval counts only while verified
 `remote_gate_unsupported`, `invalid_direction`, `revoked`, `stale_generation`)
 leave it historical and
 unverified. The bus never inspects CI, reviews or branches: the worker checks
-that evidence live (see "Gate approvals"). Remote gate approvals, durable gate
-records, amendments with instructions and decision requests are not available
-in this version.
+that evidence live (see "Gate approvals"). Merge gate records and auto-merge
+(see "Merge gate records") are available for local projects. Remote gate
+approvals, amendments with instructions and decision requests are not available
+in this version. `record_withdrawn` marks a record-bound approval whose gate
+record was rejected, superseded or is not accepted.
 
 Setup, grant, revoke and replacement are local owner actions, never actions
 authorized by an incoming coordinator direction. CLI state records the owner's
@@ -106,8 +108,12 @@ owner setup commands after the corresponding direct owner authorization.
    own terminal, `llm-bus coordinate PROJECT --setup` runs that wizard and
    stores the setup only after an explicit `yes`. `merge-admin` bypasses only
    the required-approvals rule; required checks must still pass on the exact
-   head. Resuming with `coordinate PROJECT --delegate ...` may only repeat the
-   stored delegation; change it with `coordination amend` (below).
+   head. Add `--auto-merge` (it needs a `merge` or `merge-admin` gate) to let a
+   worker merge on a coordinator-accepted gate record; the profile lists it
+   under `flags`, and the wizard takes it from `--auto-merge` on the same
+   command. Resuming with `coordinate PROJECT --delegate ... [--auto-merge]`
+   may only repeat the stored delegation; change it with `coordination amend`
+   (below).
 
 2. In Claude, the owner's `/llm-bus join PROJECT` invokes:
 
@@ -124,8 +130,9 @@ owner setup commands after the corresponding direct owner authorization.
    Supported host wakes may resume it; otherwise resume manually.
 
    When the project delegates gates, join also records the worker's binding:
-   the delegated set, or only the items passed as repeated `--narrow
-   GATE:BRANCH` (each must already be delegated by the project). The owner
+   the delegated set, or only the items passed as repeated `--narrow ITEM`
+   (a `GATE:BRANCH` or `auto-merge`, each already delegated by the project;
+   items not listed are dropped, so list `auto-merge` to keep it). The owner
    decides the narrowing; a worker never self-selects wider gates. A plain
    rejoin accepts the full current delegation.
 
@@ -219,14 +226,69 @@ none of it, and stricter repository rules win. Refuse and report on any mismatch
 Approvals do not cover force-push, deploys or production changes, credential
 or secret changes, paid or live runs. Ask the owner for those directly.
 
+## Merge gate records (local projects, auto-merge)
+
+With `--auto-merge` delegated by the project and accepted by the worker's
+binding, a worker does not wait for a coordinator turn to ask for a merge
+approval; it submits a gate record and the coordinator accepts it. Acceptance
+sends the worker an ordinary `approve-merge` (or `approve-merge-admin`)
+approval bound to the record id (`coordination.approval.record_id`). The bus
+verifies it like any gate approval and hides it as soon as the record is
+rejected or superseded (`record_withdrawn`). Records and their notices grant
+nothing; only the verified approval counts.
+
+Worker, after the review loop passes (the claim must match the ticket and
+branch; the coordinator never submits a record):
+
+```sh
+llm-bus --format agent coordination gate-record PROJECT --ticket TICKET --branch BRANCH --base main --pr PR_NUMBER --head-sha FULL_SHA --review-evidence REFERENCE --required-check CHECK_NAME
+```
+
+Repeat `--review-evidence` (1 to 8 references, for example a review report
+path or URL) and `--required-check` (1 to 32 check names). The record is bound
+to that head SHA and expires after 24 hours. Submitting again for the same PR
+and branch supersedes the earlier record, so submit again after any new push.
+Wait for the coordinator's approval: a verified `approve-merge(-admin)` entry
+with `record_id`. Then wait for required CI on that SHA, run the merge live
+checks above and merge with `--match-head-commit`. If the approval expires
+before CI passes, submit again. Acceptance does not replace the worker's live
+CI check.
+
+Coordinator, on a "Gate record ... submitted" notice, before accepting:
+
+- `gh pr view PR --json baseRefName,headRefName,headRefOid,state` matches the
+  record's base, branch, PR and head SHA, with the PR open.
+- Open each review evidence reference and confirm it covers that head SHA with
+  no unresolved high or medium findings.
+- The check names match the repository's required checks.
+
+```sh
+llm-bus --format agent coordination gate-accept PROJECT --record-id RECORD_ID --head-sha FULL_SHA
+llm-bus --format agent coordination gate-accept PROJECT --record-id RECORD_ID --head-sha FULL_SHA --admin
+llm-bus --format agent coordination gate-reject PROJECT --record-id RECORD_ID
+```
+
+Pass `--admin` only when required approvals are the sole blocker and the project
+delegates `merge-admin`. Accept fails with a reason when the record is missing
+(`no_record`), from a replaced generation (`stale_generation`), not pending
+(`not_submitted`), past its 24 hour deadline (`expired`), for another SHA
+(`sha_mismatch`), or when the project or worker no longer delegates
+auto-merge (`gate_not_delegated`); a changed claim or revoked grant is refused
+as `Direction denied: REASON`. Nothing changes on failure. `gate-reject` also
+withdraws an approval already sent. `coordination show` lists the current
+generation's `gate_records`.
+
 ### Amending delegation
 
 Only the enrolled coordinator changes delegation, replacing the whole set:
 
 ```sh
 llm-bus --format agent coordination amend PROJECT --delegate commit:main --delegate push:main
+llm-bus --format agent coordination amend PROJECT --delegate merge:main --auto-merge
 llm-bus --format agent coordination amend PROJECT --no-delegation
 ```
+
+State every flag again: an omitted `--auto-merge` is removed.
 
 Narrowing takes effect at once: worker bindings drop items the project no
 longer delegates. Widening reaches a worker only through that worker's fresh

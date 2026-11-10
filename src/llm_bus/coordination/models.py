@@ -19,7 +19,8 @@ UUID_VERSION = 4
 BRANCH = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]{1,200}")
 SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 MAX_TICKET = 128
-APPROVAL_KEYS = frozenset({"ticket", "branch", "base", "expires_at", "pr", "head_sha"})
+RECORD_ID = re.compile(r"[0-9a-f]{32}")
+APPROVAL_KEYS = frozenset({"ticket", "branch", "base", "expires_at", "pr", "head_sha", "record_id"})
 REQUIRED_APPROVAL_KEYS = frozenset({"ticket", "branch", "base", "expires_at"})
 
 
@@ -125,6 +126,7 @@ class Approval:
     expires_at: str
     pr: int | None = None
     head_sha: str | None = None
+    record_id: str | None = None
 
     def validate(self, operation: str) -> None:
         # bool subclasses int but is not a valid pull request number.
@@ -145,6 +147,8 @@ class Approval:
                 raise BusError("Approval requires head_sha")
         elif operation == "approve-commit" or SHA.fullmatch(self.head_sha) is None:
             raise BusError("Invalid approval head_sha")
+        if self.record_id is not None and (not merge or not RECORD_ID.fullmatch(self.record_id)):
+            raise BusError("Invalid approval record_id")
 
     def wire(self) -> dict[str, object]:
         fields: dict[str, object] = {
@@ -157,6 +161,8 @@ class Approval:
             fields["pr"] = self.pr
         if self.head_sha is not None:
             fields["head_sha"] = self.head_sha
+        if self.record_id is not None:
+            fields["record_id"] = self.record_id
         return fields
 
     @classmethod
@@ -170,7 +176,10 @@ class Approval:
         if not all(isinstance(item, str) for item in texts.values()):
             raise BusError("Invalid approval types")
         head_sha = fields.get("head_sha")
-        if head_sha is not None and not isinstance(head_sha, str):
+        record_id = fields.get("record_id")
+        if (head_sha is not None and not isinstance(head_sha, str)) or (
+            record_id is not None and not isinstance(record_id, str)
+        ):
             raise BusError("Invalid approval types")
         result = cls(
             cast("str", texts["ticket"]),
@@ -179,6 +188,7 @@ class Approval:
             cast("str", texts["expires_at"]),
             cast("int | None", fields.get("pr")),
             head_sha,
+            record_id,
         )
         result.validate(operation)
         return result

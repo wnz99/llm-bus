@@ -231,4 +231,16 @@ def show(db: Connection, record: dict[str, object]) -> dict[str, object]:
     if current is not None:
         result["delegation"] = current.wire()
         result["bindings"] = delegation.bindings(db, record)
+    cursor = db.execute(
+        "SELECT record_id,pr,head_sha,status,submitted_by,decided_by,expires_at "
+        "FROM coordination_gate_records WHERE scope=? AND project_id=? AND generation=? "
+        "ORDER BY rowid",
+        (record["scope"], record["project_id"], record["generation"]),
+    )
+    gates = [
+        dict(zip((c[0] for c in cursor.description), row, strict=True))
+        for row in cast("list[tuple[object, ...]]", cursor.fetchall())
+    ]
+    if gates:
+        result["gate_records"] = gates
     return result

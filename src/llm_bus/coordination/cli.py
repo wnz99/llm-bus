@@ -177,6 +177,25 @@ def run(  # noqa: C901, PLR0912 - owner action dispatch
     return result
 
 
+def new_project_label(mailbox: Store, cwd: str, label: object) -> str:
+    """Validate a label exactly like coordinate and require that the project is new."""
+    label = _text(label)
+    with mailbox.transaction() as db:
+        exists = cast(
+            "tuple[int] | None",
+            db.execute(
+                "SELECT 1 FROM coordination_projects WHERE scope=? AND label=?",
+                (routing_scope(cwd), label),
+            ).fetchone(),
+        )
+    if exists:
+        raise BusError(
+            "Project already exists; run `llm-bus coordinate PROJECT` to resume "
+            "or use coordination amend"
+        )
+    return label
+
+
 def create_for(  # noqa: PLR0913 - explicit setup inputs
     mailbox: Store,
     cwd: str,
@@ -193,6 +212,7 @@ def create_for(  # noqa: PLR0913 - explicit setup inputs
     """
     # pylint: disable=too-many-arguments
     scope = routing_scope(cwd)
+    label = new_project_label(mailbox, cwd, label)
     coordinator = _address(coordinator)
     with mailbox.transaction() as db:
         db.execute("BEGIN IMMEDIATE")

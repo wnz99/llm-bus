@@ -204,3 +204,75 @@ def test_wizard_without_identity_picks_from_agents(repo: Path, tmp_path: Path) -
     assert result is not None
     assert result["enrolled"] is False
     assert any("claude:lead" in prompt for prompt in prompts)
+
+
+@pytest.mark.parametrize("label", ["", "  ", "x\x07y", "L" * 4097])
+def test_wizard_validates_label_before_asking(repo: Path, tmp_path: Path, label: str) -> None:
+    store = Store(tmp_path / "bus.sqlite3")
+    store.register("codex", "owner", str(repo))
+    before = counts(store)
+    ask, prompts = scripted(answers(repo))
+    with pytest.raises(BusError):
+        run_wizard(store, label, str(repo), "codex:owner", ask=ask, say=lambda _line: None)
+    assert prompts == []
+    assert counts(store) == before
+
+
+def test_wizard_existing_project_fails_before_asking(repo: Path, tmp_path: Path) -> None:
+    store = Store(tmp_path / "bus.sqlite3")
+    store.register("codex", "owner", str(repo))
+    ask, _ = scripted(answers(repo))
+    assert run_wizard(store, "demo", str(repo), "codex:owner", ask=ask, say=lambda _line: None)
+    before = counts(store)
+    ask, prompts = scripted(answers(repo))
+    with pytest.raises(BusError, match="already exists"):
+        run_wizard(store, "demo", str(repo), "codex:owner", ask=ask, say=lambda _line: None)
+    assert prompts == []
+    assert counts(store) == before
+
+
+def test_wizard_enter_keeps_every_gate_enabled(repo: Path, tmp_path: Path) -> None:
+    store = Store(tmp_path / "bus.sqlite3")
+    store.register("codex", "owner", str(repo))
+    ask, _ = scripted(answers(repo, gates=("",) * 4))
+    said: list[str] = []
+    assert run_wizard(store, "demo", str(repo), "codex:owner", ask=ask, say=said.append)
+    screen = "\n".join(said)
+    assert all(f"{gate}:develop" in screen for gate in GATES)
+
+
+def test_setup_without_identity_stores_nothing(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CODEX_SESSION_ID"):
+        monkeypatch.delenv(name, raising=False)
+    db = tmp_path / "bus.sqlite3"
+    monkeypatch.setenv("LLM_BUS_DB", str(db))
+    monkeypatch.chdir(repo)
+    assert main(["coordinate", "demo", "--setup"]) == 0
+    assert counts(Store(db)) == (0, 0, 0)
+
+
+def test_terminal_setup_routes_to_wizard(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LLM_BUS_DB", str(tmp_path / "bus.sqlite3"))
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.delenv("CODEX_SESSION_ID", raising=False)
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "owner")
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True, raising=False)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True, raising=False)
+    calls: list[tuple[str, str | None]] = []
+
+    def fake_wizard(
+        _store: Store, label: str, _cwd: str, identity: str | None
+    ) -> dict[str, object]:
+        calls.append((label, identity))
+        return {"wizard": True}
+
+    monkeypatch.setattr("llm_bus.cli.app.run_wizard", fake_wizard)
+    assert main(["coordinate", "demo", "--setup"]) == 0
+    assert calls == [("demo", "claude:owner")]
+    assert main(["--format", "agent", "coordinate", "other", "--setup"]) == 0
+    assert len(calls) == 1

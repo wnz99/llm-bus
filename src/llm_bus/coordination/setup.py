@@ -79,8 +79,9 @@ def profile(cwd: str) -> dict[str, object]:
     }
 
 
-def _yes(answer: str) -> bool:
-    return answer.strip().lower() in {"y", YES}
+def _gate_enabled(answer: str) -> bool:
+    """Default profile is the fullest delegation: Enter keeps the gate enabled."""
+    return answer.strip().lower() in {"", "y", YES}
 
 
 def _coordinator(store: Store, cwd: str, identity: str | None, ask: Callable[[str], str]) -> str:
@@ -108,6 +109,7 @@ def run_wizard(  # noqa: PLR0913 - explicit inputs
 ) -> dict[str, object] | None:
     """Ask, show a review screen and store only after an explicit yes."""
     # pylint: disable=too-many-locals,too-many-arguments
+    label = cli.new_project_label(store, cwd, label)
     detected, _source = detect_integration_branch(cwd)
     workspace_default = cwd if (Path(cwd) / ".beads").exists() else ""
     objective = ask("Objective: ").strip()
@@ -118,7 +120,7 @@ def run_wizard(  # noqa: PLR0913 - explicit inputs
         [
             f"{gate}:{branch}"
             for gate in delegation.GATES
-            if _yes(ask(f"Delegate {gate}? (yes/no): "))
+            if _gate_enabled(ask(f"Delegate {gate}? [yes]/no: "))
         ]
         if branch
         else []
@@ -132,7 +134,7 @@ def run_wizard(  # noqa: PLR0913 - explicit inputs
         "delegate": list(chosen.items()) if chosen else [],
     }
     _review(say, label, coordinator, args, chosen)
-    if ask("Store this setup? (yes/no): ").strip().lower() != YES:
+    if ask("Store this setup? (type yes): ").strip().lower() != YES:
         say("Nothing stored.")
         return None
     return cli.create_for(store, cwd, label, args, coordinator, current=identity)

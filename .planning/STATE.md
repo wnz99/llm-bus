@@ -1,11 +1,12 @@
 # Project State
 
-Last activity: 2026-11-07 - PR #62 merged; authorized four-host installation and relay rollout independently verified. Post-merge GSD results recorded; native frontend trust/context reload remain unobserved.
+Last activity: 2026-11-10 - 261110-1lg registered (llm-bus upgrade command, plan revision 3 approved).
 
 ## Registered Work
 
 | # | Description | Status | Directory |
 |---|-------------|--------|-----------|
+| 261110-1lg | llm-bus upgrade command with old-binary pruning | Registered | [261110-1lg-llm-bus-upgrade-command-with-old-binary](./quick/261110-1lg-llm-bus-upgrade-command-with-old-binary/) |
 
 ## Quick Tasks Completed
 

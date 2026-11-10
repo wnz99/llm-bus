@@ -24,6 +24,9 @@ Do this once per machine, as the operating-system user who runs the agents.
 1. Install the CLI from a clone of this repository: `uv tool install .`
    For [collaboration with another person](../README.md#collaborate-with-another-person-experimental),
    use `uv tool install --force '.[collab]'` instead.
+   Later updates use `uv run llm-bus upgrade`, which cannot restore a
+   directory install; before the first upgrade, run the one-time bootstrap in
+   [Upgrade](../README.md#upgrade).
 2. Close Codex and Claude Code, then install the host hooks: `llm-bus install`.
    It adds user-level `SessionStart`, `UserPromptSubmit` and `SessionEnd`
    hooks to `hooks.json` in the Codex home and `settings.json` in the Claude
@@ -152,10 +155,12 @@ first.
 
 ## Update or remove
 
-To update, upgrade the CLI, rerun `llm-bus install`, copy the new skill
-directory and rule files over the old ones, and replace the pointer block
-between its markers. Upgrade all of them together; mixed versions can
-disagree. Then restart both hosts, review and trust the changed hooks in
+To update, run `uv run llm-bus upgrade` from a clean checkout of the new
+version (see [Upgrade](../README.md#upgrade)), close both hosts, rerun
+`llm-bus install`, copy the new skill directory and rule files over the old
+ones, and replace the pointer block between its markers. Upgrade all of them
+together; mixed versions can disagree. Restart any running `llm-bus bridge`
+and check its log. Then restart both hosts, review and trust the changed hooks in
 Codex `/hooks` (untrusted hooks stop running), and confirm `llm-bus whoami`
 in each host so Claude Code re-registers its inbox socket.
 

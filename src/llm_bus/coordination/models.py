@@ -9,6 +9,12 @@ from uuid import UUID
 from llm_bus.errors import BusError
 
 OPERATIONS = ("assign", "reprioritize", "clarify", "pause", "cancel", "review")
+GATE_OPERATIONS: dict[str, str] = {
+    "approve-commit": "commit",
+    "approve-push": "push",
+    "approve-merge": "merge",
+    "approve-merge-admin": "merge-admin",
+}
 UUID_VERSION = 4
 
 

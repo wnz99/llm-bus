@@ -10,7 +10,7 @@ from llm_bus.mailbox import migrations
 if TYPE_CHECKING:
     from collections.abc import Callable
     from sqlite3 import Connection
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 SYNC_SCHEMA_VERSION = 2
 WAKE_SCHEMA_VERSION = 3
 LOCK_SCHEMA_VERSION = 5
@@ -20,6 +20,7 @@ REPLY_SCHEMA_VERSION = 4
 COORDINATION_SCHEMA_VERSION = 12
 LABEL_SCHEMA_VERSION = 9
 PUBLICATION_SCHEMA_VERSION = 10
+DELEGATION_SCHEMA_VERSION = 13
 SYNC_WORK_TABLE = (
     "CREATE TABLE IF NOT EXISTS remote_sync_work (kind TEXT NOT NULL, key TEXT NOT NULL, "
     "attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT, last_attempt_at TEXT, "
@@ -176,8 +177,11 @@ def _lock_migrations(db: Connection, version: int) -> None:
     )
 
 
-def ensure_schema(db: Connection, resolve_scope: Callable[[str], str]) -> None:  # noqa: C901
+def ensure_schema(  # noqa: C901, PLR0912
+    db: Connection, resolve_scope: Callable[[str], str]
+) -> None:
     """Serialize migrations; reopening the current version performs only a version read."""
+    # pylint: disable=too-many-branches
     version = _version(db)
     if version == SCHEMA_VERSION:
         return
@@ -214,6 +218,8 @@ def ensure_schema(db: Connection, resolve_scope: Callable[[str], str]) -> None: 
                 "CREATE TABLE IF NOT EXISTS session_publications (address TEXT PRIMARY KEY "
                 "REFERENCES agents(address), revision INTEGER NOT NULL, payload TEXT NOT NULL)"
             )
+        if version < DELEGATION_SCHEMA_VERSION:
+            coordination_store.create_delegation_tables(db)
         if version < SCHEMA_VERSION:
             db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         db.commit()

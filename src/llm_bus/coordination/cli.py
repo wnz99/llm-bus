@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from llm_bus.cli.guidance import guidance
 from llm_bus.cli.references import resolve_reference
-from llm_bus.coordination import store
+from llm_bus.coordination import delegation, store
 from llm_bus.coordination.availability import record_local, record_remote
 from llm_bus.coordination.models import OPERATIONS, timestamp, uuid4_string
 from llm_bus.errors import BusError
@@ -34,8 +34,16 @@ def add_parsers(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     coordinate = add_parser("coordinate", help="Owner enrolls this coordinator")
     coordinate.add_argument("project")
     _references(coordinate, required=False)
-    add_parser("join", help="Owner consents and enrolls this main session").add_argument("project")
+    coordinate.add_argument("--delegate", action="append", metavar="GATE:BRANCH")
+    join = add_parser("join", help="Owner consents and enrolls this main session")
+    join.add_argument("project")
+    join.add_argument("--narrow", action="append", metavar="GATE:BRANCH")
     actions = add_parser("coordination").add_subparsers(dest="action", required=True)
+    amend = actions.add_parser("amend")
+    amend.add_argument("project")
+    change = amend.add_mutually_exclusive_group(required=True)
+    change.add_argument("--delegate", action="append", metavar="GATE:BRANCH")
+    change.add_argument("--no-delegation", action="store_true")
     for name in ("show", "setup", "grant", "revoke", "replace", "leave", "target"):
         action = actions.add_parser(name)
         action.add_argument("project")
@@ -85,10 +93,11 @@ def _path(value: object) -> str:
     return str(path.resolve())
 
 
-def run(  # noqa: C901 - owner action dispatch
+def run(  # noqa: C901, PLR0912 - owner action dispatch
     mailbox: Store, args: dict[str, object], address: str, cwd: str
 ) -> dict[str, object]:
     """Use app-selected native identity. These commands grant no remote owner power."""
+    # pylint: disable=too-many-branches,too-many-locals
     scope = routing_scope(cwd)
     args = dict(args)
     for field in ("coordinator", "recipient"):
@@ -98,6 +107,7 @@ def run(  # noqa: C901 - owner action dispatch
     action = str(args["command"] if args["command"] != "coordination" else args["action"])
     with mailbox.transaction() as db:
         db.execute("BEGIN IMMEDIATE")
+        new_project = False
         if action == "setup":
             _create(db, scope, label, args, _address(args["coordinator"]))
         elif action == "coordinate":
@@ -107,21 +117,29 @@ def run(  # noqa: C901 - owner action dispatch
                     "SELECT 1 FROM coordination_projects WHERE scope=? AND label=?", (scope, label)
                 ).fetchone(),
             )
-            if not exists:
+            new_project = not exists
+            if new_project:
                 _create(db, scope, label, args, address)
         record = store.project(db, scope, label)
         if action == "show":
             return store.show(db, record)
         if action in {"coordinate", "join", "grant"} and record["revoked_at"] is not None:
             raise BusError("Project revoked; owner must replace coordinator binding")
+        if action == "coordinate" and args.get("delegate"):
+            _declare_delegation(
+                db, record, cast("list[str]", args["delegate"]), address, new=new_project
+            )
         remote_notice = None
         if action == "join" and "/" in str(record["coordinator"]):
             grant_id = store.join_session(db, record, address)
+            delegation.bind(db, record, grant_id, cast("list[str] | None", args.get("narrow")))
             remote_notice = record_remote(db, mailbox, record, address, grant_id, cwd=cwd)
             notice_id = None
         else:
             notice_id = _transition(db, action, record, args, address)
         result = store.show(db, store.project(db, scope, label))
+        if action == "amend":
+            result["rejoin_required"] = delegation.rejoin_required(db, record)
         if remote_notice is not None:
             result["availability"] = remote_notice
     if notice_id is not None:
@@ -132,6 +150,17 @@ def run(  # noqa: C901 - owner action dispatch
         # Reuse hook recovery text; command success must teach the same role duties.
         result["guidance"] = guidance(mailbox, address, cwd, full=True)
     return result
+
+
+def _declare_delegation(
+    db: Connection, record: dict[str, object], specs: list[str], address: str, *, new: bool
+) -> None:
+    """Set delegation on a new project; a resume may only repeat it, never change it."""
+    wanted = delegation.Delegation.from_specs(specs)
+    if new:
+        delegation.set_project_delegation(db, record, wanted, address)
+    elif wanted != delegation.project_delegation(db, record):
+        raise BusError("Delegation differs; use coordination amend PROJECT")
 
 
 def _create(
@@ -179,6 +208,7 @@ def _transition(  # noqa: C901, PLR0912 - bounded CLI action dispatch
         store.enroll(db, record, address, "coordinator")
     elif action == "join":
         grant_id = store.join_session(db, record, address)
+        delegation.bind(db, record, grant_id, cast("list[str] | None", args.get("narrow")))
         if "/" not in str(record["coordinator"]):
             db.execute(
                 "INSERT INTO coordination_targets(scope,project_id,recipient,grant_id,generation) "
@@ -187,6 +217,22 @@ def _transition(  # noqa: C901, PLR0912 - bounded CLI action dispatch
                 (*key, address, grant_id, record["generation"]),
             )
             return record_local(db, record, address, grant_id)
+    elif action == "amend":
+        enrolled = cast(
+            "tuple[int] | None",
+            db.execute(
+                "SELECT 1 FROM coordination_enrollments "
+                "WHERE scope=? AND project_id=? AND address=? AND role='coordinator'",
+                (*key, address),
+            ).fetchone(),
+        )
+        if record["coordinator"] != address or enrolled is None:
+            raise BusError("Only the enrolled coordinator may amend delegation")
+        specs = cast("list[str] | None", args.get("delegate"))
+        wanted = (
+            None if args.get("no_delegation") else delegation.Delegation.from_specs(specs or [])
+        )
+        delegation.set_project_delegation(db, record, wanted, address)
     elif action == "grant":
         expiry = args.get("expires_at")
         if expiry is None and args.get("until_revoked") is not True:

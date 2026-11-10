@@ -117,7 +117,7 @@ def test_additive_schema_upgrade(tmp_path: Path, version: int) -> None:
         db.execute(f"PRAGMA user_version={version}")
     mailbox = Store(mailbox.path)
     with mailbox.transaction() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 12
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 13
         assert (
             db.execute("SELECT count(*) FROM coordination_availability_events").fetchone()[0] == 0
         )

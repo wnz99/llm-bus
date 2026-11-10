@@ -1,12 +1,12 @@
 # Project State
 
-Last activity: 2026-11-10 - 261110-1lg registered (llm-bus upgrade command, plan revision 3 approved).
+Last activity: 2026-11-10 - 261110-1lg T1 implemented and independently reviewed (Approved); planner conformance and aggregate verification passed (poe check, 485 tests); PR pending.
 
 ## Registered Work
 
 | # | Description | Status | Directory |
 |---|-------------|--------|-----------|
-| 261110-1lg | llm-bus upgrade command with old-binary pruning | Registered | [261110-1lg-llm-bus-upgrade-command-with-old-binary](./quick/261110-1lg-llm-bus-upgrade-command-with-old-binary/) |
+| 261110-1lg | llm-bus upgrade command with old-binary pruning | Implemented and verified; PR review pending | [261110-1lg-llm-bus-upgrade-command-with-old-binary](./quick/261110-1lg-llm-bus-upgrade-command-with-old-binary/) |
 
 ## Quick Tasks Completed
 

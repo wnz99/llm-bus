@@ -72,9 +72,15 @@ def counts(store: Store) -> tuple[int, int, int]:
 
 
 def answers(
-    repo: Path, *, gates: tuple[str, ...] = ("yes",) * 4, confirm: str = "yes"
+    repo: Path,
+    *,
+    gates: tuple[str, ...] = ("yes",) * 4,
+    auto_merge: str | None = "yes",
+    confirm: str = "yes",
 ) -> list[str]:
-    return ["Ship it", str(repo), "bus-1", "", *gates, "", confirm]
+    """None skips the auto-merge answer: the wizard asks only when a merge gate remains."""
+    merge = [] if auto_merge is None else [auto_merge]
+    return ["Ship it", str(repo), "bus-1", "", *gates, *merge, "", confirm]
 
 
 def test_detects_origin_head_without_network(repo: Path, tmp_path: Path) -> None:
@@ -264,6 +270,66 @@ def test_wizard_enter_keeps_every_gate_enabled(repo: Path, tmp_path: Path) -> No
     assert run_wizard(store, "demo", str(repo), "codex:owner", ask=ask, say=said.append)
     screen = "\n".join(said)
     assert all(f"{gate}:develop" in screen for gate in GATES)
+
+
+def _stored_delegation(store: Store) -> dict[str, object]:
+    with store.transaction() as db:
+        (text,) = cast(
+            "tuple[str]",
+            db.execute("SELECT delegation_json FROM coordination_delegations").fetchone(),
+        )
+    return cast("dict[str, object]", json.loads(text))
+
+
+@pytest.mark.parametrize(
+    ("answer", "outcome"), [("yes", "stored"), ("", "stored"), ("no", "omitted")]
+)
+def test_wizard_asks_about_auto_merge_when_a_merge_gate_remains(
+    repo: Path, tmp_path: Path, answer: str, outcome: str
+) -> None:
+    store = Store(tmp_path / "bus.sqlite3")
+    store.register("codex", "owner", str(repo))
+    ask, prompts = scripted(answers(repo, auto_merge=answer))
+    said: list[str] = []
+    assert run_wizard(store, "demo", str(repo), "codex:owner", ask=ask, say=said.append)
+    assert sum("auto-merge" in prompt for prompt in prompts) == 1
+    stored = _stored_delegation(store)
+    screen = "\n".join(said)
+    if outcome == "stored":
+        assert stored["auto_merge"] is True
+        assert "each merge still needs the coordinator to accept" in screen
+    else:
+        assert "auto_merge" not in stored
+        assert "each merge still needs" not in screen
+
+
+def test_wizard_merge_admin_alone_still_asks_about_auto_merge(repo: Path, tmp_path: Path) -> None:
+    store = Store(tmp_path / "bus.sqlite3")
+    store.register("codex", "owner", str(repo))
+    ask, prompts = scripted(answers(repo, gates=("no", "no", "no", "yes")))
+    assert run_wizard(store, "demo", str(repo), "codex:owner", ask=ask, say=lambda _line: None)
+    assert any("auto-merge" in prompt for prompt in prompts)
+    assert _stored_delegation(store)["auto_merge"] is True
+
+
+def test_wizard_without_merge_gate_does_not_ask_about_auto_merge(
+    repo: Path, tmp_path: Path
+) -> None:
+    store = Store(tmp_path / "bus.sqlite3")
+    store.register("codex", "owner", str(repo))
+    ask, prompts = scripted(answers(repo, gates=("yes", "yes", "no", "no"), auto_merge=None))
+    said: list[str] = []
+    assert run_wizard(store, "demo", str(repo), "codex:owner", ask=ask, say=said.append)
+    assert not any("auto-merge" in prompt for prompt in prompts)
+    assert "auto_merge" not in _stored_delegation(store)
+    assert not any("each merge still needs" in line for line in said)
+
+
+def test_profile_command_names_auto_merge_only_with_the_flag(repo: Path, tmp_path: Path) -> None:
+    assert "--auto-merge" in str(profile(str(repo))["command"])
+    bare = profile(str(tmp_path))
+    assert bare["flags"] == []
+    assert "--auto-merge" not in str(bare["command"])
 
 
 def test_setup_without_identity_stores_nothing(

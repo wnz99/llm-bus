@@ -28,7 +28,6 @@ MAX_EVIDENCE = 8
 MAX_CHECKS = 32
 MAX_TEXT = 512
 REJECTED = "rejected"
-MERGE_GATES = frozenset({"merge", "merge-admin"})
 Result = tuple[dict[str, object], "list[Message]"]
 
 
@@ -108,7 +107,7 @@ def submit(  # noqa: PLR0913 - explicit gate fields
         grant_id is None
         or granted is None
         or not granted.auto_merge
-        or not any(base in granted.targets(gate) for gate in MERGE_GATES)
+        or not any(base in granted.targets(gate) for gate in delegation.MERGE_GATES)
     ):
         raise BusError("Gate record not submitted: gate_not_delegated")
     # The branch is the submitter's own claim, so no other worker can supersede this one.

@@ -23,6 +23,7 @@ FLOOR = (
     "merge with failing or pending CI",
 )
 AUTO_MERGE = "auto-merge"
+MERGE_GATES = frozenset({"merge", "merge-admin"})
 MAX_TARGETS = 8
 VERSION = 1
 SPEC_PARTS = 2
@@ -124,7 +125,7 @@ class Delegation:
             if len(parts) != SPEC_PARTS or parts[0] not in GATES:
                 raise BusError(f"Expected GATE:BRANCH with gate in {', '.join(GATES)}: {spec!r}")
             mapping.setdefault(parts[0], set()).add(branch_name(parts[1]))
-        if auto_merge and not {"merge", "merge-admin"} & set(mapping):
+        if auto_merge and not MERGE_GATES & set(mapping):
             raise BusError("auto-merge needs a merge or merge-admin gate")
         if not mapping:
             raise BusError("Delegation needs at least one GATE:BRANCH")

@@ -56,9 +56,10 @@ def _items(branch: str | None) -> list[str]:
 def profile(cwd: str) -> dict[str, object]:
     """Default setup for an agent to confirm with the owner; stores nothing."""
     branch, source = detect_integration_branch(cwd)
+    flags = [] if branch is None else [delegation.AUTO_MERGE]
     return {
         "delegate": _items(branch),
-        "flags": [] if branch is None else [delegation.AUTO_MERGE],
+        "flags": flags,
         "integration_branch": {"name": branch, "source": source},
         "floor": list(delegation.FLOOR),
         "steps": [
@@ -77,8 +78,8 @@ def profile(cwd: str) -> dict[str, object]:
         ],
         "command": (
             "llm-bus --format agent coordinate PROJECT --objective OBJECTIVE "
-            "--beads-workspace PATH --memory-ticket TICKET --delegate GATE:BRANCH ... "
-            "--auto-merge"
+            "--beads-workspace PATH --memory-ticket TICKET --delegate GATE:BRANCH ..."
+            + (" --auto-merge" if flags else "")
         ),
     }
 
@@ -122,7 +123,6 @@ def run_wizard(  # noqa: PLR0913 - explicit inputs
     *,
     ask: Callable[[str], str] = input,
     say: Callable[[str], None] = print,
-    auto_merge: bool = False,
 ) -> dict[str, object] | None:
     """Ask, show a review screen and store only after an explicit yes."""
     # pylint: disable=too-many-locals,too-many-arguments
@@ -145,11 +145,9 @@ def run_wizard(  # noqa: PLR0913 - explicit inputs
         if branch
         else []
     )
-    chosen = (
-        delegation.Delegation.from_specs(specs, auto_merge=auto_merge)
-        if specs or auto_merge
-        else None
-    )
+    merge_chosen = any(spec.split(":", 1)[0] in delegation.MERGE_GATES for spec in specs)
+    auto_merge = merge_chosen and _gate_enabled(ask("Delegate auto-merge? [yes]/no: "))
+    chosen = delegation.Delegation.from_specs(specs, auto_merge=auto_merge) if specs else None
     coordinator = _coordinator(store, cwd, identity, ask)
     args: dict[str, object] = {
         "objective": objective,

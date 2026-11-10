@@ -67,10 +67,6 @@ def _setup(store: Store, args: dict[str, object]) -> dict[str, object] | None:
     """Setup registers no session: terminal owners get the wizard, agents get the profile."""
     cwd = str(Path.cwd().resolve())
     if sys.stdin.isatty() and sys.stdout.isatty() and args["format"] != "agent":
-        if args.get("auto_merge"):
-            return run_wizard(
-                store, str(args["project"]), cwd, _optional_address(), auto_merge=True
-            )
         return run_wizard(store, str(args["project"]), cwd, _optional_address())
     return profile(cwd)
 

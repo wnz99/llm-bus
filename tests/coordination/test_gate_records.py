@@ -495,7 +495,7 @@ def test_wizard_stores_auto_merge_without_flag_words_in_specs(
         return real(specs, **flags)
 
     monkeypatch.setattr(Delegation, "from_specs", staticmethod(spy))
-    replies = iter(["Ship", str(tmp_path), "bus-2", "develop", "", "", "", "", "", "yes"])
+    replies = iter(["Ship", str(tmp_path), "bus-2", "develop", "", "", "", "", "", "", "yes"])
     said: list[str] = []
     result = setup.run_wizard(
         store,
@@ -504,7 +504,6 @@ def test_wizard_stores_auto_merge_without_flag_words_in_specs(
         "codex:wiz",
         ask=lambda _p: next(replies),
         say=said.append,
-        auto_merge=True,
     )
     assert result is not None
     assert all("auto-merge" not in spec for specs in seen for spec in specs)

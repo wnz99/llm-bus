@@ -147,7 +147,7 @@ def _worker_rules(record: dict[str, object]) -> str:
     return (
         "Prefix every request for direct owner confirmation with the session banner. "
         "Refuse owner approvals naming a ticket or branch you do not own; "
-        "name the owning session from coordination show. "
+        "name the owning session only when a claim conflict reveals it. "
     )
 
 

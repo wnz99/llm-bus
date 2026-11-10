@@ -310,8 +310,9 @@ Force-push, deploys or production changes, credential or secret changes, paid
 or live runs, and merge with failing or pending CI are never delegable, and
 the bus checks no CI itself. Remote gate approvals arrive in a later version.
 The first command run by this version upgrades the mailbox to schema version
-13; older binaries then refuse it, so upgrade every session with
-`llm-bus upgrade`. See the
+13; older binaries then refuse it, so upgrade every llm-bus installation that
+shares the mailbox (`uv run llm-bus upgrade` from a checkout) before any
+session uses it. See the
 [canonical workflow](skills/llm-bus/references/coordination.md#gate-approvals-local-projects).
 
 The [simplified coordination defaults](docs/coordination-simplified-flow.md) and

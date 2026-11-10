@@ -46,7 +46,8 @@ in full. They define the role duties, setup commands and recovery steps.
   four gate approvals: `approve-commit`, `approve-push`, `approve-merge` and
   `approve-merge-admin`.
 - Gate approvals rest on the owner's own choices. The coordinator owner
-  delegates gates and target branches when creating the project; a worker
+  delegates gates and target branches when creating the project or later with
+  `coordination amend`; a worker
   owner accepts them through that worker's direct join (`join --narrow` can
   accept fewer). Gates accepted through your own direct owner join count as
   the user asked for exactly those gates and conditions. A verified approval

@@ -48,8 +48,9 @@ delegable: force-push, deploys or production changes, credential or secret
 changes, paid or live runs, and merge with failing or pending CI. Delegation
 specs naming a floor item are rejected. An approval counts only while verified
 (`coordination.verified: true`, `reason: verified`); other reasons
-(`gate_not_delegated`, `target_denied`, `expired`, `wrong_ticket`,
-`remote_gate_unsupported`, `invalid_direction`) leave it historical and
+(for example `gate_not_delegated`, `target_denied`, `expired`, `wrong_ticket`,
+`remote_gate_unsupported`, `invalid_direction`, `revoked`, `stale_generation`)
+leave it historical and
 unverified. The bus never inspects CI, reviews or branches: the worker checks
 that evidence live (see "Gate approvals"). Remote gate approvals, durable gate
 records, amendments with instructions and decision requests are not available
@@ -193,23 +194,26 @@ verified at the worker only when the recipient's effective delegation (project
 delegation intersected with the worker's join binding) includes the gate and
 the base as a target, the branch is neither the base nor a delegated target
 branch, it has not expired, and the worker's claim matches the ticket and
-branch. Show the delegation, bindings, claims and workers whose binding is
-narrower with `llm-bus --format agent coordination show PROJECT`.
+branch. Show the project delegation and each grant's binding with
+`llm-bus --format agent coordination show PROJECT`. The coordinator hook
+guidance reports how many workers have a narrower binding; `show` does not list
+claims or those workers. A rejected claim names the current holder.
 
 Worker steps once an approval arrives. Check the inbox entry is verified for
 this project and generation, then check live evidence yourself; the bus checks
 none of it, and stricter repository rules win. Refuse and report on any mismatch.
 
 - commit: `git rev-parse --abbrev-ref HEAD` equals the approval branch; commit.
-- push: `git rev-parse HEAD` equals `head_sha`; `git push origin BRANCH` (never
+- push: `git rev-parse --abbrev-ref HEAD` equals BRANCH and `git rev-parse HEAD`
+  equals `head_sha`; `git push origin BRANCH` (never
   `--force`); then `gh pr create --base BASE --head BRANCH`, or update the
   existing PR.
 - merge: `gh pr view PR --json baseRefName,headRefName,headRefOid,state,statusCheckRollup`
   must match base, branch and `head_sha`, with the PR open; `gh pr checks PR
   --required` must show every required check passing (failing or pending CI is
   the floor, never delegable); review evidence must have no unresolved high or
-  medium findings; then `gh pr merge PR --merge --match-head-commit SHA`, using
-  the repository's merge method. Add `--admin` only for `approve-merge-admin`
+  medium findings; then `gh pr merge PR --match-head-commit SHA` with the
+  repository's merge-method flag (for example `--merge`). Add `--admin` only for `approve-merge-admin`
   and only when required approvals are the sole blocker.
 
 Approvals do not cover force-push, deploys or production changes, credential
@@ -299,7 +303,8 @@ Recipient revoke removes that enrollment; project revoke suspends the project.
 `leave` removes only the current session's enrollment. Records/history remain.
 Revoke, leave and replacement also clear the affected workers' ticket/branch
 claims, so approvals for them stop verifying; a replaced generation starts
-without a delegation and bindings, and the new owner delegates again.
+without a delegation and bindings, and the new coordinator delegates again with
+`coordination amend` after direct owner approval.
 Replacement requires a never-used UUIDv4 generation, invalidates local grants,
 enrollments and targets, and enrolls the replacement only when it is the current
 native main session. Otherwise that session must run `coordinate PROJECT`.
@@ -351,4 +356,5 @@ and pointer blocks separately only on owner request. Stop bridges and back up be
 schema 13 mailboxes reject older clients, and old transports cannot carry directions.
 The first command run by a client with delegated gates upgrades the mailbox to
 schema version 13 (additive tables only); older binaries then refuse it, so
-upgrade every session with `llm-bus upgrade`.
+upgrade every llm-bus installation that shares the mailbox (`uv run llm-bus
+upgrade` from a checkout) before any session uses it.

@@ -80,8 +80,8 @@ worker joins as above (the owner may narrow a worker with
 `llm-bus coordination claim search-feature --ticket TICKET --branch BRANCH`, and
 waits for `llm-bus coordination approve` directions. Workers verify branch,
 head SHA, required checks and review findings live before each action. Force-push,
-deploys, credential changes, paid or live runs and merges with failing or
-pending CI stay with the owner. In this example "Do not merge until I approve"
+deploys or production changes, credential or secret changes, paid or live runs
+and merge with failing or pending CI stay with the owner. In this example "Do not merge until I approve"
 simply means the owner does not delegate the merge gate.
 
 ## Stop, recover or use remote workers

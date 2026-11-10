@@ -60,7 +60,7 @@ def test_banner_for_coordinator_and_worker(tmp_path: Path, *, full: bool) -> Non
     after = text(mailbox, tmp_path, WORKER, full=full)
     assert 'ticket "roam-22m"; branch roam-22m-login;' in after
     assert "Prefix every request for direct owner confirmation with the session banner." in after
-    assert "name the owning session from coordination show." in after
+    assert "name the owning session only when a claim conflict reveals it." in after
     owner = text(mailbox, tmp_path, OWNER, full=full)
     assert (
         f"Session banner: project demo; role coordinator; label none; ticket none; branch none; folder {tmp_path}."

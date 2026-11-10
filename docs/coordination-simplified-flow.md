@@ -92,9 +92,10 @@ flags. Without `--format agent`, an agent shell attached to a terminal gets the
 interactive wizard.
 
 Each worker owner accepts the delegation through the direct `/llm-bus join`,
-optionally narrowed with `--narrow GATE:BRANCH`. The accepted gates count as the
-owner having asked for exactly those gates and conditions; stricter repository
-rules still win. A worker claims its ticket and branch with
+optionally narrowed with `--narrow GATE:BRANCH`. A verified
+`coordination approve` direction for an accepted gate counts as the owner having
+asked for exactly that gate and its conditions; delegation alone authorizes
+nothing, and stricter repository rules still win. A worker claims its ticket and branch with
 `llm-bus coordination claim PROJECT --ticket TICKET --branch BRANCH`, then acts
 on `llm-bus coordination approve` directions only after checking branch, head
 SHA, required checks and review evidence live; the bus checks none of these.

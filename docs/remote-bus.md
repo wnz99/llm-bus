@@ -351,7 +351,7 @@ Inspect stale queues/history; do not replay blindly. Offline until-revoked
 receivers follow their last local policy until updated. No command remotely
 changes another owner's grants; no global immediate revoke guarantee exists.
 Already exposed content and submitted wakes cannot be recalled. Stop bridges
-and retain backups before rollback; older clients reject schema 12 mailboxes.
+and retain backups before rollback; older clients reject schema 13 mailboxes.
 
 ## Migration and rollback
 

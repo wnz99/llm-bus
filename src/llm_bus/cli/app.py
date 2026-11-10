@@ -17,6 +17,7 @@ from llm_bus.cli.hooks import claude_socket, hook
 from llm_bus.cli.installation import configure_host_hooks
 from llm_bus.cli.output import serialize
 from llm_bus.cli.parser import build_parser
+from llm_bus.cli.upgrade import upgrade
 from llm_bus.collab.models import CollabError
 from llm_bus.errors import BusError
 from llm_bus.hosts.sessions import require_main_agent
@@ -65,10 +66,12 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901 - bounded comm
     args = cast("dict[str, object]", vars(build_parser().parse_args(argv)))
     command = args["command"]
     try:
-        if command in {"install", "uninstall"}:
+        if command in {"install", "uninstall", "upgrade"}:
             print(
                 serialize(
-                    configure_host_hooks(install=command == "install"),
+                    upgrade(Path.cwd(), Path.home())
+                    if command == "upgrade"
+                    else configure_host_hooks(install=command == "install"),
                     str(command),
                     str(args["format"]),
                 )

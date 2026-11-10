@@ -77,6 +77,19 @@ It returns an address such as `codex:SESSION_ID` or `claude:SESSION_ID`. Use the
 
 If a hook exits with code 127, inspect its command in the active user hook file. On macOS or Linux, `command -v llm-bus` should identify the installation you intend to use. Re-run the installer from that environment, then review changed hooks in Codex's `/hooks`. To check executable lookup without registering a fake session or writing a message, run the installed hook command with `--help` appended, keeping its executable quoting and temporarily using a restricted `PATH`. For example, set `PATH=/usr/bin:/bin` for that check. Exit code 0 confirms the command can start; a real new session must still verify hook execution, identity, and any native wake permissions. Empty JSON is not a valid hook payload and must not be treated as a successful lifecycle test.
 
+### Upgrade
+
+From a checkout with no uncommitted tracked changes, run `uv run llm-bus upgrade`. It builds a wheel from `HEAD`, installs it with the extras and Python pinned by the checkout (`.python-version`) and verifies the new install. Only after verification passes does it delete every older folder in `~/.local/share/llm-bus/packages/` and everything in `~/.local/state/llm-bus/releases/`; it keeps no old versions, and rolling back means checking out the older commit and upgrading again. If the install or verification fails, it deletes nothing, reinstalls the previous wheel and exits with status 1. It never touches `backups/`, `deploy-backups/` or other bus state. Run it from a checkout outside both folders it prunes.
+
+The command does not reinstall hooks or manage bridges. Afterwards, close both agents, run `llm-bus install` (as the sentence above requires after upgrading), then restart the agents. Stop any running `llm-bus bridge` before upgrading and start it again afterwards, or restart it afterwards and check its log; how depends on how your machine supervises it.
+
+The command can restore only a previous install from a wheel, so a first install or a directory install (`uv tool install .`) needs this one-time bootstrap instead. Omit `[collab]` when you do not use the extra; the next successful upgrade deletes `bootstrap/`:
+
+```text
+uv build --wheel --out-dir ~/.local/share/llm-bus/packages/bootstrap
+uv tool install --force --python 3.12 "$(ls ~/.local/share/llm-bus/packages/bootstrap/llm_bus-*.whl)[collab]"
+```
+
 ## Send, read, and acknowledge
 
 Agents should add `--format agent` before the command for concise output; see [Agent output format](#agent-output-format).

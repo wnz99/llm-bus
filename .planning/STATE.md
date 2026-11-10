@@ -1,12 +1,12 @@
 # Project State
 
-Last activity: 2026-11-10 - 261110-wft PR1 (Tasks 1-6) implemented, task reviews approved, planner conformance and aggregate verification passed (595 tests); PR1 opened for review.
+Last activity: 2026-11-11 - 261110-wft PR1 (Tasks 1-6) merged (#67); PR2 (Task 7, merge gate records and auto-merge) implemented and in review; PR3-PR5 pending.
 
 ## Registered Work
 
 | # | Description | Status | Directory |
 |---|-------------|--------|-----------|
-| 261110-wft | Coordinator-delegated approval gates and guided setup | PR1 of 5 in review (Tasks 1-6 done); PR2-PR5 pending plan revision 5 | [261110-wft-coordinator-delegated-approval-gates-and](./quick/261110-wft-coordinator-delegated-approval-gates-and/) |
+| 261110-wft | Coordinator-delegated approval gates and guided setup | PR1 merged (#67, Tasks 1-6); PR2 (Task 7) in review; PR3-PR5 pending (plan revision 6) | [261110-wft-coordinator-delegated-approval-gates-and](./quick/261110-wft-coordinator-delegated-approval-gates-and/) |
 
 ## Quick Tasks Completed
 

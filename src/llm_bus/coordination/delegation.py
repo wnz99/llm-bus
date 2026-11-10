@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
-from llm_bus.coordination.models import GATE_OPERATIONS
+from llm_bus.coordination.models import GATE_OPERATIONS, timestamp
 from llm_bus.errors import BusError
 
 if TYPE_CHECKING:
@@ -84,9 +84,9 @@ class Delegation:
         fields = cast("dict[str, object]", value)
         if set(fields) != {"version", "gates"}:
             raise BusError("Invalid delegation fields")
+        gates = fields["gates"]
         # bool subclasses int but is not a valid protocol version.
         # pylint: disable=unidiomatic-typecheck
-        gates = fields["gates"]
         if type(fields["version"]) is not int or fields["version"] != VERSION:
             raise BusError("Invalid delegation version")
         if not isinstance(gates, dict) or not gates:
@@ -139,6 +139,19 @@ def project_delegation(db: Connection, record: dict[str, object]) -> Delegation 
     return None if row is None else Delegation.load(row[0])
 
 
+def _generation_bindings(db: Connection, record: dict[str, object]) -> list[tuple[str, Delegation]]:
+    rows = cast(
+        "list[tuple[str, str]]",
+        db.execute(
+            "SELECT d.grant_id,d.delegation_json FROM coordination_grant_delegations d "
+            "JOIN coordination_grants g ON g.grant_id=d.grant_id "
+            "WHERE g.scope=? AND g.project_id=? AND g.generation=? ORDER BY g.rowid",
+            (record["scope"], record["project_id"], record["generation"]),
+        ).fetchall(),
+    )
+    return [(grant_id, Delegation.load(text)) for grant_id, text in rows]
+
+
 def set_project_delegation(
     db: Connection, record: dict[str, object], delegation: Delegation | None, by: str
 ) -> None:
@@ -155,16 +168,7 @@ def set_project_delegation(
             (*key, json.dumps(delegation.wire()), by, datetime.now(UTC).isoformat()),
         )
     # A later widening must need a rejoin, so stale binding items are dropped now.
-    for grant_id, text in cast(
-        "list[tuple[str, str]]",
-        db.execute(
-            "SELECT d.grant_id,d.delegation_json FROM coordination_grant_delegations d "
-            "JOIN coordination_grants g ON g.grant_id=d.grant_id "
-            "WHERE g.scope=? AND g.project_id=? AND g.generation=?",
-            key,
-        ).fetchall(),
-    ):
-        binding = Delegation.load(text)
+    for grant_id, binding in _generation_bindings(db, record):
         kept = None if delegation is None else binding.intersect(delegation)
         if kept is None or not kept.gates:
             db.execute("DELETE FROM coordination_grant_delegations WHERE grant_id=?", (grant_id,))
@@ -203,26 +207,44 @@ def bind(
     return binding
 
 
-def effective(db: Connection, record: dict[str, object], grant_id: str) -> Delegation | None:
-    """Project delegation intersected with the worker's binding; None means no authority."""
+def _grant_current(db: Connection, record: dict[str, object], grant_id: str, now: datetime) -> bool:
+    """True while the grant is this generation's, unrevoked, unexpired, consented and enrolled."""
+    row = cast(
+        "tuple[str | None] | None",
+        db.execute(
+            "SELECT g.expires_at FROM coordination_grants g "
+            "JOIN coordination_enrollments e ON e.scope=g.scope AND e.project_id=g.project_id "
+            "AND e.address=g.recipient AND e.generation=g.generation "
+            "LEFT JOIN coordination_session_consents c ON c.grant_id=g.grant_id "
+            "WHERE g.grant_id=? AND g.scope=? AND g.project_id=? AND g.generation=? "
+            "AND g.revoked_at IS NULL AND c.ended_at IS NULL",
+            (grant_id, record["scope"], record["project_id"], record["generation"]),
+        ).fetchone(),
+    )
+    if row is None:
+        return False
+    return row[0] is None or timestamp(row[0]) > now
+
+
+def effective(
+    db: Connection, record: dict[str, object], grant_id: str, *, now: datetime
+) -> Delegation | None:
+    """Project delegation intersected with the worker's binding.
+
+    None means no authority: no delegation or binding, or the grant is not current (other
+    generation, revoked, expired at ``now``, session consent ended, or worker not enrolled).
+    """
     project = project_delegation(db, record)
     binding = _binding(db, grant_id)
-    if project is None or binding is None:
+    if project is None or binding is None or not _grant_current(db, record, grant_id, now):
         return None
     return project.intersect(binding)
 
 
 def bindings(db: Connection, record: dict[str, object]) -> dict[str, list[str]]:
-    rows = cast(
-        "list[tuple[str, str]]",
-        db.execute(
-            "SELECT d.grant_id,d.delegation_json FROM coordination_grant_delegations d "
-            "JOIN coordination_grants g ON g.grant_id=d.grant_id "
-            "WHERE g.scope=? AND g.project_id=? AND g.generation=? ORDER BY g.rowid",
-            (record["scope"], record["project_id"], record["generation"]),
-        ).fetchall(),
-    )
-    return {grant_id: list(Delegation.load(text).items()) for grant_id, text in rows}
+    return {
+        grant_id: list(binding.items()) for grant_id, binding in _generation_bindings(db, record)
+    }
 
 
 def rejoin_required(db: Connection, record: dict[str, object]) -> list[str]:

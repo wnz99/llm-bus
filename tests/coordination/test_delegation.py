@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
@@ -63,7 +64,7 @@ def state(mailbox: Store) -> tuple[Delegation | None, Delegation | None, list[st
         )
         return (
             delegation.project_delegation(db, record),
-            delegation.effective(db, record, grant_id),
+            delegation.effective(db, record, grant_id, now=datetime.now(UTC)),
             delegation.rejoin_required(db, record),
         )
 
@@ -181,6 +182,79 @@ def test_amend_requires_the_enrolled_coordinator(tmp_path: Path) -> None:
             address="claude:worker",
         )
     assert state(mailbox)[0] == Delegation.from_specs(["commit:develop", "push:develop"])
+
+
+def old_grant_effective(
+    mailbox: Store, now: datetime | None = None, *, current_generation: bool = True
+) -> Delegation | None:
+    """Effective delegation of the only grant, against the project's current record."""
+    with mailbox.transaction() as db:
+        row = cast(
+            "tuple[str, str, str]",
+            db.execute("SELECT scope,project_id,generation FROM coordination_projects").fetchone(),
+        )
+        record: dict[str, object] = dict(
+            zip(("scope", "project_id", "generation"), row, strict=True)
+        )
+        if not current_generation:
+            record["generation"] = str(uuid4())
+        (grant_id,) = cast(
+            "tuple[str]", db.execute("SELECT grant_id FROM coordination_grants").fetchone()
+        )
+        return delegation.effective(db, record, grant_id, now=now or datetime.now(UTC))
+
+
+def test_effective_ends_with_revoke(tmp_path: Path) -> None:
+    mailbox = start(tmp_path, *TWO_GATES)
+    join(mailbox, tmp_path)
+    assert old_grant_effective(mailbox) is not None
+    invoke(mailbox, tmp_path, "coordination", "revoke", "demo", "--recipient", "claude:worker")
+    assert old_grant_effective(mailbox) is None
+
+
+def test_effective_ends_with_leave(tmp_path: Path) -> None:
+    mailbox = start(tmp_path, *TWO_GATES)
+    join(mailbox, tmp_path)
+    invoke(mailbox, tmp_path, "coordination", "leave", "demo", address="claude:worker")
+    assert old_grant_effective(mailbox) is None
+
+
+def test_effective_ends_with_coordinator_replacement(tmp_path: Path) -> None:
+    mailbox = start(tmp_path, *TWO_GATES)
+    join(mailbox, tmp_path)
+    invoke(
+        mailbox,
+        tmp_path,
+        "coordination",
+        "replace",
+        "demo",
+        "--generation",
+        str(uuid4()),
+        "--coordinator",
+        "codex:owner",
+    )
+    invoke(mailbox, tmp_path, "coordinate", "demo")
+    invoke(mailbox, tmp_path, "coordination", "amend", "demo", *TWO_GATES)
+    assert old_grant_effective(mailbox) is None
+
+
+def test_effective_ends_with_grant_expiry(tmp_path: Path) -> None:
+    mailbox = start(tmp_path, *TWO_GATES)
+    join(mailbox, tmp_path)
+    soon = datetime.now(UTC) + timedelta(hours=1)
+    with mailbox.transaction() as db:
+        db.execute("UPDATE coordination_grants SET expires_at=?", (soon.isoformat(),))
+    assert old_grant_effective(mailbox, soon - timedelta(minutes=1)) is not None
+    assert old_grant_effective(mailbox, soon) is None
+
+
+def test_effective_rejects_other_generation_and_ended_consent(tmp_path: Path) -> None:
+    mailbox = start(tmp_path, *TWO_GATES)
+    join(mailbox, tmp_path)
+    assert old_grant_effective(mailbox, current_generation=False) is None
+    with mailbox.transaction() as db:
+        db.execute("UPDATE coordination_session_consents SET ended_at=?", ("2026-01-01T00:00:00Z",))
+    assert old_grant_effective(mailbox) is None
 
 
 def test_replace_generation_starts_without_delegation(tmp_path: Path) -> None:

@@ -96,7 +96,7 @@ def _references(parser: argparse.ArgumentParser, *, required: bool) -> None:
     parser.add_argument("--reference", action="append", default=[])
 
 
-def _text(value: object) -> str:
+def text_reference(value: object) -> str:
     if not isinstance(value, str) or not value.strip() or len(value) > MAX_TEXT:
         raise BusError("Expected nonempty bounded reference (at most 4096 characters)")
     if any(ord(char) < CONTROL_BOUNDARY for char in value):
@@ -105,17 +105,24 @@ def _text(value: object) -> str:
 
 
 def _address(value: object) -> str:
-    address = _text(value)
+    address = text_reference(value)
     if re.fullmatch(r"(?:[^/:\s]+/[^/:\s]+/)?(?:codex|claude):[^/:\s]+", address) is None:
         raise BusError("Expected exact native or machine/repository qualified address")
     return address
 
 
 def _path(value: object) -> str:
-    path = Path(_text(value))
+    path = Path(text_reference(value))
     if not path.is_absolute() or not path.exists():
         raise BusError("Expected existing absolute local path")
     return str(path.resolve())
+
+
+def beads_workspace(value: object) -> str:
+    workspace = _path(value)
+    if not Path(workspace).is_dir() or not (Path(workspace) / ".beads").exists():
+        raise BusError("Coordination requires an existing Beads workspace")
+    return workspace
 
 
 def run(  # noqa: C901, PLR0912 - owner action dispatch
@@ -128,7 +135,7 @@ def run(  # noqa: C901, PLR0912 - owner action dispatch
     for field in ("coordinator", "recipient"):
         if args.get(field) is not None:
             args[field] = resolve_reference(mailbox, str(args[field]), cwd)
-    label = _text(args["project"])
+    label = text_reference(args["project"])
     action = str(args["command"] if args["command"] != "coordination" else args["action"])
     with mailbox.transaction() as db:
         db.execute("BEGIN IMMEDIATE")
@@ -179,7 +186,7 @@ def run(  # noqa: C901, PLR0912 - owner action dispatch
 
 def new_project_label(mailbox: Store, cwd: str, label: object) -> str:
     """Validate a label exactly like coordinate and require that the project is new."""
-    label = _text(label)
+    label = text_reference(label)
     with mailbox.transaction() as db:
         exists = cast(
             "tuple[int] | None",
@@ -250,9 +257,7 @@ def _create(
     references = cast("list[object]", args.get("reference", []))
     if len(references) > MAX_REFERENCES:
         raise BusError("At most 32 local references allowed")
-    workspace = _path(args.get("beads_workspace"))
-    if not Path(workspace).is_dir() or not (Path(workspace) / ".beads").exists():
-        raise BusError("Coordination requires an existing Beads workspace")
+    workspace = beads_workspace(args.get("beads_workspace"))
     db.execute(
         "INSERT INTO coordination_projects VALUES (?,?,?,?,?,?,?,?,?,NULL)",
         (
@@ -261,9 +266,9 @@ def _create(
             label,
             uuid4_string(str(args.get("generation") or uuid4())),
             coordinator,
-            _text(args.get("objective")),
+            text_reference(args.get("objective")),
             workspace,
-            _text(args.get("memory_ticket")),
+            text_reference(args.get("memory_ticket")),
             json.dumps([_path(ref) for ref in references]),
         ),
     )
@@ -362,7 +367,10 @@ def _transition(  # noqa: C901, PLR0912 - bounded CLI action dispatch
             "DELETE FROM coordination_enrollments WHERE scope=? AND project_id=? AND address=?",
             (*key, address),
         )
-        db.execute("DELETE FROM coordination_claims WHERE address=?", (address,))
+        db.execute(
+            "DELETE FROM coordination_claims WHERE address=? AND scope=? AND project_id=?",
+            (address, *key),
+        )
     elif action == "revoke":
         _revoke(db, record, args.get("recipient"))
     elif action == "replace":

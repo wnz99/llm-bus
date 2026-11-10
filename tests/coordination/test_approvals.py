@@ -282,6 +282,32 @@ def test_gate_outside_delegated_gates_is_rejected(tmp_path: Path) -> None:
         project.approve()
 
 
+def test_worker_without_binding_is_denied(tmp_path: Path) -> None:
+    project = Project(tmp_path)
+    project.owner("coordination", "amend", "demo", *DELEGATION)
+    with pytest.raises(BusError, match="Direction denied: gate_not_delegated"):
+        project.approve()
+    assert project.rows("coordination_approvals") == 0
+    assert project.rows("coordination_messages") == 0
+
+
+def test_narrowed_join_denies_gate_outside_binding(tmp_path: Path) -> None:
+    project = Project(tmp_path, *DELEGATION)
+    invoke(
+        project.store,
+        tmp_path,
+        "join",
+        "demo",
+        "--narrow",
+        "commit:develop",
+        address="claude:worker",
+    )
+    with pytest.raises(BusError, match="Direction denied: gate_not_delegated"):
+        project.approve()
+    assert project.rows("coordination_approvals") == 0
+    assert project.rows("coordination_messages") == 0
+
+
 def test_branch_may_not_be_another_delegated_target(tmp_path: Path) -> None:
     project = Project(tmp_path, *DELEGATION, "--delegate", "commit:release")
     project.claim("claude:worker", "roam-22m", "release")

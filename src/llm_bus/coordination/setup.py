@@ -98,6 +98,18 @@ def _coordinator(store: Store, cwd: str, identity: str | None, ask: Callable[[st
     return choices[int(answer) - 1]
 
 
+def _cancellable(ask: Callable[[str], str]) -> Callable[[str], str]:
+    """End of input or Ctrl-C at any prompt is a clean error; nothing is stored."""
+
+    def guarded(prompt: str) -> str:
+        try:
+            return ask(prompt)
+        except (EOFError, KeyboardInterrupt) as error:
+            raise BusError("Setup cancelled; nothing stored") from error
+
+    return guarded
+
+
 def run_wizard(  # noqa: PLR0913 - explicit inputs
     store: Store,
     label: str,
@@ -112,9 +124,12 @@ def run_wizard(  # noqa: PLR0913 - explicit inputs
     label = cli.new_project_label(store, cwd, label)
     detected, _source = detect_integration_branch(cwd)
     workspace_default = cwd if (Path(cwd) / ".beads").exists() else ""
-    objective = ask("Objective: ").strip()
-    workspace = ask(f"Beads workspace [{workspace_default}]: ").strip() or workspace_default
-    ticket = ask("Memory ticket: ").strip()
+    ask = _cancellable(ask)
+    objective = cli.text_reference(ask("Objective: ").strip())
+    workspace = cli.beads_workspace(
+        ask(f"Beads workspace [{workspace_default}]: ").strip() or workspace_default
+    )
+    ticket = cli.text_reference(ask("Memory ticket: ").strip())
     branch = ask(f"Integration branch [{detected or ''}]: ").strip() or detected or ""
     specs = (
         [

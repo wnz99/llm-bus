@@ -161,7 +161,6 @@ class Approval:
 
     @classmethod
     def parse(cls, value: object, operation: str) -> "Approval":
-        # pylint: disable=unidiomatic-typecheck
         if not isinstance(value, dict):
             raise BusError("Invalid approval fields")
         fields = cast("dict[str, object]", value)

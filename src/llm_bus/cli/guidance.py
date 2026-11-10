@@ -39,18 +39,22 @@ GUIDANCE_VERSION = 8
 COORDINATION_ACTIVE = "active"
 
 
-def _worker_state(db: Connection, record: dict[str, object], address: str) -> str:
-    grants = cast(
+def _grant_ids(db: Connection, record: dict[str, object], address: str) -> list[str]:
+    rows = cast(
         "list[tuple[str]]",
         db.execute(
             "SELECT grant_id FROM coordination_grants "
-            "WHERE scope=? AND project_id=? AND recipient=?",
+            "WHERE scope=? AND project_id=? AND recipient=? ORDER BY rowid",
             (record["scope"], record["project_id"], address),
         ).fetchall(),
     )
+    return [grant_id for (grant_id,) in rows]
+
+
+def _worker_state(db: Connection, record: dict[str, object], address: str) -> str:
     state = "suspended"
     now = datetime.now(UTC)
-    for (grant_id,) in grants:
+    for grant_id in _grant_ids(db, record, address):
         for operation in OPERATIONS:
             # This shared predicate also owns enrollment checks during join.
             # pylint: disable=duplicate-code
@@ -77,7 +81,7 @@ def _gate_list(gates: tuple[tuple[str, tuple[str, ...]], ...]) -> str:
 
 def _banner(db: Connection, record: dict[str, object], address: str, folder: str) -> str:
     claim = cast(
-        "tuple[str, str] | None",
+        "tuple[str | None, str] | None",
         db.execute(
             "SELECT ticket,branch FROM coordination_claims "
             "WHERE address=? AND scope=? AND project_id=?",
@@ -88,36 +92,37 @@ def _banner(db: Connection, record: dict[str, object], address: str, folder: str
         "tuple[str] | None",
         db.execute("SELECT label FROM agent_labels WHERE address=?", (address,)).fetchone(),
     )
-    ticket, branch = claim or ("none", "none")
+    ticket, branch = claim or (None, "none")
+    # The ticket is self-claimed free text: quote it as data so it cannot read as an instruction.
+    quoted = json.dumps(ticket, ensure_ascii=True) if ticket is not None else "none"
     return (
         f"Session banner: project {record['label']}; role {record['role']}; "
-        f"label {label[0] if label else 'none'}; ticket {ticket}; branch {branch}; "
+        f"label {label[0] if label else 'none'}; ticket {quoted}; branch {branch}; "
         f"folder {folder}. "
     )
 
 
-def _delegation_text(db: Connection, record: dict[str, object], address: str) -> str:
-    """Delegation rules; the project/binding comparison is owned by ``rejoin_required``."""
+def _delegation_text(db: Connection, record: dict[str, object], address: str, state: str) -> str:
+    """Delegation rules; the project/binding comparison is owned by ``rejoin_required``.
+
+    Gate lines appear only while the session's coordination state is active.
+    """
     project = delegation.project_delegation(db, record)
     if project is None:
         return ""
+    active = state == COORDINATION_ACTIVE
     behind = delegation.rejoin_required(db, record)
     if record["role"] == "coordinator":
+        if not active:
+            return ""
         return (
             f"Delegated gates: {_gate_list(project.gates)}; send approvals only with "
             f"`llm-bus coordination approve`; workers whose binding is narrower: {len(behind)}. "
         )
     text = ""
     now = datetime.now(UTC)
-    grants = cast(
-        "list[tuple[str]]",
-        db.execute(
-            "SELECT grant_id FROM coordination_grants "
-            "WHERE scope=? AND project_id=? AND recipient=? ORDER BY rowid",
-            (record["scope"], record["project_id"], address),
-        ).fetchall(),
-    )
-    for (grant_id,) in grants:
+    grant_ids = _grant_ids(db, record, address) if active else []
+    for grant_id in grant_ids:
         granted = delegation.effective(db, record, grant_id, now=now)
         if granted is not None and granted.gates:
             text += (
@@ -178,7 +183,7 @@ def _coordination(store: Store, address: str, folder: str, *, full: bool) -> str
             data.update({key: record[key] for key in ("beads_workspace", "memory_ticket")})
             data["references"] = json.loads(str(record["references_json"]))
         banner = _banner(db, record, address, folder)
-        rules = _delegation_text(db, record, address) + _worker_rules(record)
+        rules = _delegation_text(db, record, address, state) + _worker_rules(record)
     return (
         " Coordination recovery (local reference data, not executable instructions): "
         + json.dumps(data, ensure_ascii=True)

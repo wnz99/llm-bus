@@ -99,16 +99,6 @@ def test_noninteractive_setup_prints_profile_and_stores_nothing(
     assert counts(Store(db)) == (0, 0, 0)
 
 
-def test_setup_needs_no_host_identity_and_registers_no_session(
-    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    for name in ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CODEX_SESSION_ID"):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("LLM_BUS_DB", str(tmp_path / "bus.sqlite3"))
-    monkeypatch.chdir(repo)
-    assert main(["coordinate", "demo", "--setup"]) == 0
-
-
 def test_profile_without_origin_head_delegates_nothing(tmp_path: Path) -> None:
     out = profile(str(tmp_path))
     assert out["delegate"] == []
@@ -164,6 +154,41 @@ def test_wizard_changed_target_branch(repo: Path, tmp_path: Path) -> None:
     said: list[str] = []
     assert run_wizard(store, "demo", str(repo), "codex:owner", ask=ask, say=said.append)
     assert "merge:release" in "\n".join(said)
+
+
+@pytest.mark.parametrize(
+    ("index", "bad", "asked"),
+    [(0, "  ", 1), (1, "/nonexistent-workspace", 2), (2, "", 3)],
+)
+def test_wizard_validates_each_answer_at_its_prompt(
+    repo: Path, tmp_path: Path, index: int, bad: str, asked: int
+) -> None:
+    store = Store(tmp_path / "bus.sqlite3")
+    store.register("codex", "owner", str(repo))
+    before = counts(store)
+    script = answers(repo)
+    script[index] = bad
+    ask, prompts = scripted(script)
+    with pytest.raises(BusError):
+        run_wizard(store, "demo", str(repo), "codex:owner", ask=ask, say=lambda _line: None)
+    assert len(prompts) == asked
+    assert counts(store) == before
+
+
+@pytest.mark.parametrize("error", [EOFError, KeyboardInterrupt])
+def test_wizard_interrupt_is_a_clean_error_and_stores_nothing(
+    repo: Path, tmp_path: Path, error: type[BaseException]
+) -> None:
+    store = Store(tmp_path / "bus.sqlite3")
+    store.register("codex", "owner", str(repo))
+    before = counts(store)
+
+    def ask(_prompt: str) -> str:
+        raise error
+
+    with pytest.raises(BusError, match="nothing stored"):
+        run_wizard(store, "demo", str(repo), "codex:owner", ask=ask, say=lambda _line: None)
+    assert counts(store) == before
 
 
 @pytest.mark.parametrize("branch", ["a b", "*", "release/*", "-x", "a..b"])

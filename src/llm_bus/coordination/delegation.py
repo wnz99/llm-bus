@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
-from llm_bus.coordination.models import BRANCH, GATE_OPERATIONS, timestamp
+from llm_bus.coordination.models import GATE_OPERATIONS, branch_name, timestamp
 from llm_bus.errors import BusError
 
 if TYPE_CHECKING:
@@ -36,12 +36,6 @@ def _reject_floor(spec: str) -> None:
     for entry in FLOOR:
         if normalized.startswith(_words(entry)):
             raise BusError(f"Delegation never covers the floor action: {entry}")
-
-
-def _branch(value: object) -> str:
-    if not isinstance(value, str) or BRANCH.fullmatch(value) is None:
-        raise BusError("Invalid delegation branch name")
-    return value
 
 
 @dataclass(frozen=True)
@@ -97,7 +91,7 @@ class Delegation:
             listed = cast("list[object]", branches)
             if not 0 < len(listed) <= MAX_TARGETS:
                 raise BusError("Invalid delegation gate")
-            mapping[gate] = {_branch(branch) for branch in listed}
+            mapping[gate] = {branch_name(branch) for branch in listed}
         return cls._build(mapping)
 
     @classmethod
@@ -112,7 +106,7 @@ class Delegation:
             parts = spec.split(":", 1)
             if len(parts) != SPEC_PARTS or parts[0] not in GATES:
                 raise BusError(f"Expected GATE:BRANCH with gate in {', '.join(GATES)}: {spec!r}")
-            mapping.setdefault(parts[0], set()).add(_branch(parts[1]))
+            mapping.setdefault(parts[0], set()).add(branch_name(parts[1]))
         if not mapping:
             raise BusError("Delegation needs at least one GATE:BRANCH")
         if any(len(branches) > MAX_TARGETS for branches in mapping.values()):

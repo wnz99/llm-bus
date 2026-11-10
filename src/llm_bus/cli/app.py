@@ -20,6 +20,7 @@ from llm_bus.cli.parser import build_parser
 from llm_bus.cli.upgrade import upgrade
 from llm_bus.collab.models import CollabError
 from llm_bus.coordination import approvals
+from llm_bus.coordination.setup import profile, run_wizard
 from llm_bus.errors import BusError
 from llm_bus.hosts.sessions import require_main_agent
 from llm_bus.mailbox.connection import default_path
@@ -62,6 +63,14 @@ def _optional_address() -> str | None:
     return agent_address
 
 
+def _setup(store: Store, args: dict[str, object]) -> dict[str, object] | None:
+    """Setup registers no session: terminal owners get the wizard, agents get the profile."""
+    cwd = str(Path.cwd().resolve())
+    if sys.stdin.isatty() and sys.stdout.isatty() and args["format"] != "agent":
+        return run_wizard(store, str(args["project"]), cwd, _optional_address())
+    return profile(cwd)
+
+
 def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912 - command dispatch
     """Run command, returning nonzero for input and storage errors."""
     # pylint: disable=too-many-branches
@@ -92,8 +101,12 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912 - com
             return 0
         if human_command(store, command, args):
             return 0
-        if command == "collab":
-            result = llm_bus.collab.cli.run(args, _optional_address())
+        if command == "collab" or (command == "coordinate" and args.get("setup")):
+            result = (
+                llm_bus.collab.cli.run(args, _optional_address())
+                if command == "collab"
+                else _setup(store, args)
+            )
             if result is not None:
                 print(serialize(result, str(command), str(args["format"])))
             return 0

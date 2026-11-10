@@ -41,6 +41,11 @@ def add_parsers(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     coordinate.add_argument("project")
     _references(coordinate, required=False)
     coordinate.add_argument("--delegate", action="append", metavar="GATE:BRANCH")
+    coordinate.add_argument(
+        "--setup",
+        action="store_true",
+        help="Print the setup profile, or run the confirmation wizard in a terminal",
+    )
     join = add_parser("join", help="Owner consents and enrolls this main session")
     join.add_argument("project")
     join.add_argument("--narrow", action="append", metavar="GATE:BRANCH")
@@ -169,6 +174,62 @@ def run(  # noqa: C901, PLR0912 - owner action dispatch
     if action in {"coordinate", "join"}:
         # Reuse hook recovery text; command success must teach the same role duties.
         result["guidance"] = guidance(mailbox, address, cwd, full=True)
+    return result
+
+
+def new_project_label(mailbox: Store, cwd: str, label: object) -> str:
+    """Validate a label exactly like coordinate and require that the project is new."""
+    label = _text(label)
+    with mailbox.transaction() as db:
+        exists = cast(
+            "tuple[int] | None",
+            db.execute(
+                "SELECT 1 FROM coordination_projects WHERE scope=? AND label=?",
+                (routing_scope(cwd), label),
+            ).fetchone(),
+        )
+    if exists:
+        raise BusError(
+            "Project already exists; run `llm-bus coordinate PROJECT` to resume "
+            "or use coordination amend"
+        )
+    return label
+
+
+def create_for(  # noqa: PLR0913 - explicit setup inputs
+    mailbox: Store,
+    cwd: str,
+    label: str,
+    args: dict[str, object],
+    coordinator: str,
+    *,
+    current: str | None = None,
+) -> dict[str, object]:
+    """Create a project and its delegation in one transaction without registering a session.
+
+    The coordinator is enrolled only when it is the caller's own identity ``current``;
+    otherwise that session must run ``coordinate PROJECT`` itself.
+    """
+    # pylint: disable=too-many-arguments
+    scope = routing_scope(cwd)
+    label = new_project_label(mailbox, cwd, label)
+    coordinator = _address(coordinator)
+    with mailbox.transaction() as db:
+        db.execute("BEGIN IMMEDIATE")
+        _create(db, scope, label, args, coordinator)
+        record = store.project(db, scope, label)
+        specs = cast("list[str]", args.get("delegate") or [])
+        if specs:
+            delegation.set_project_delegation(
+                db, record, delegation.Delegation.from_specs(specs), coordinator
+            )
+        enrolled = current is not None and current == coordinator
+        if enrolled:
+            store.enroll(db, record, coordinator, "coordinator")
+        result = store.show(db, record)
+    result["enrolled"] = enrolled
+    if not enrolled:
+        result["next"] = f"Session {coordinator} must run `llm-bus coordinate {label}`"
     return result
 
 

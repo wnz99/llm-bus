@@ -7,7 +7,7 @@ from sqlite3 import Connection
 from typing import cast
 
 from llm_bus.coordination.authority import authorize
-from llm_bus.coordination.models import Direction
+from llm_bus.coordination.models import GATE_OPERATIONS, Approval, Direction
 from llm_bus.coordination.store import project
 from llm_bus.errors import BusError
 
@@ -30,10 +30,23 @@ def require_coordinator(db: Connection, sender: str, scope: str, direction: Dire
 
 
 def outgoing(  # noqa: PLR0913 - exact routing identity fields
-    db: Connection, *, sender: str, scope: str, label: str, recipient: str, operation: str
+    db: Connection,
+    *,
+    sender: str,
+    scope: str,
+    label: str,
+    recipient: str,
+    operation: str,
+    approval: Approval | None = None,
 ) -> Direction:
     """Resolve recipient-issued routing reference without treating it as a grant."""
     # pylint: disable=too-many-arguments
+    if operation in GATE_OPERATIONS:
+        if approval is None:
+            raise BusError("Gate operations require an approval")
+        approval.validate(operation)
+    elif approval is not None:
+        raise BusError("Only gate operations carry an approval")
     record = project(db, scope, label)
     target = cast(
         "tuple[str] | None",
@@ -52,13 +65,35 @@ def outgoing(  # noqa: PLR0913 - exact routing identity fields
     return direction
 
 
-def persist(db: Connection, message_id: int, direction: Direction) -> None:
+def persist(
+    db: Connection, message_id: int, direction: Direction, approval: Approval | None = None
+) -> None:
     """Write immutable strict metadata in the owning admission transaction."""
     direction.validate()
     db.execute(
         "INSERT INTO coordination_messages VALUES (?,?)",
         (message_id, json.dumps(asdict(direction))),
     )
+    if approval is not None:
+        db.execute(
+            "INSERT INTO coordination_approvals VALUES (?,?)",
+            (message_id, json.dumps(approval.wire())),
+        )
+
+
+def _stored_approval(db: Connection, message_id: int, operation: str) -> Approval | None:
+    row = cast(
+        "tuple[str] | None",
+        db.execute(
+            "SELECT approval_json FROM coordination_approvals WHERE message_id=?", (message_id,)
+        ).fetchone(),
+    )
+    if row is None:
+        return None
+    try:
+        return Approval.parse(cast("object", json.loads(row[0])), operation)
+    except (BusError, ValueError):
+        return None
 
 
 def verification(db: Connection, message_id: int) -> dict[str, object] | None:
@@ -81,6 +116,8 @@ def verification(db: Connection, message_id: int) -> dict[str, object] | None:
         return {"verified": False, "reason": "invalid_direction"}
     if current_scope is None or stored_scope != current_scope:
         return {**asdict(direction), "verified": False, "reason": "wrong_scope"}
+    gate = direction.operation in GATE_OPERATIONS
+    approval = _stored_approval(db, message_id, direction.operation) if gate else None
     decision = authorize(
         db,
         sender=sender,
@@ -88,8 +125,16 @@ def verification(db: Connection, message_id: int) -> dict[str, object] | None:
         scope=current_scope,
         direction=direction,
         now=datetime.now(UTC),
+        approval=approval,
     )
-    return {**asdict(direction), "verified": decision.verified, "reason": decision.reason}
+    result: dict[str, object] = {
+        **asdict(direction),
+        "verified": decision.verified,
+        "reason": decision.reason,
+    }
+    if approval is not None:
+        result["approval"] = approval.wire()
+    return result
 
 
 def exposure_allowed(db: Connection, message_id: int) -> bool:

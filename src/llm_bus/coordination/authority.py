@@ -5,7 +5,15 @@ from datetime import datetime
 from sqlite3 import Connection
 from typing import cast
 
-from llm_bus.coordination.models import OPERATIONS, AuthorityDecision, Direction, timestamp
+from llm_bus.coordination import delegation
+from llm_bus.coordination.models import (
+    GATE_OPERATIONS,
+    OPERATIONS,
+    Approval,
+    AuthorityDecision,
+    Direction,
+    timestamp,
+)
 from llm_bus.errors import BusError
 from llm_bus.mailbox.agents import expire_idle_agents
 
@@ -18,6 +26,7 @@ def authorize(  # noqa: PLR0913, C901, PLR0911, PLR0912 - explicit denial preced
     scope: str,
     direction: Direction,
     now: datetime,
+    approval: Approval | None = None,
 ) -> AuthorityDecision:
     """Check exact local grant and enrollment; caller owns admission transaction."""
     # pylint: disable=clean-code-commented-out-code,clean-code-redundant-comment
@@ -111,8 +120,67 @@ def authorize(  # noqa: PLR0913, C901, PLR0911, PLR0912 - explicit denial preced
         allowed = cast("list[object]", operations)
         if not all(isinstance(item, str) and item in OPERATIONS for item in allowed):
             return deny("invalid_direction")
+        if direction.operation in GATE_OPERATIONS:
+            return _gate_decision(
+                db,
+                {"scope": scope, "project_id": direction.project_id, "generation": generation},
+                coordinator=sender,
+                recipient=recipient,
+                direction=direction,
+                approval=approval,
+                now=now,
+            )
         if direction.operation not in allowed:
             return deny("operation_denied")
     except (BusError, ValueError, TypeError):
         return deny("invalid_direction")
     return AuthorityDecision(verified=True, reason="verified", grant_id=grant_id)
+
+
+def _gate_decision(  # noqa: PLR0911, PLR0913 - explicit denial precedence
+    db: Connection,
+    record: dict[str, object],
+    *,
+    coordinator: str,
+    recipient: str,
+    direction: Direction,
+    approval: Approval | None,
+    now: datetime,
+) -> AuthorityDecision:
+    """Gate operations rest on delegation, target limits, expiry and the worker's own claim."""
+    # pylint: disable=clean-code-commented-out-code,clean-code-redundant-comment
+    # pylint: disable=too-many-return-statements,too-many-arguments
+
+    def deny(reason: str) -> AuthorityDecision:
+        return AuthorityDecision(verified=False, reason=reason)
+
+    try:
+        if approval is None:
+            return deny("invalid_direction")
+        approval.validate(direction.operation)
+    except BusError:
+        return deny("invalid_direction")
+    if "/" in coordinator:
+        return deny("remote_gate_unsupported")
+    gate = GATE_OPERATIONS[direction.operation]
+    project = delegation.project_delegation(db, record)
+    granted = delegation.effective(db, record, direction.grant_id, now=now)
+    if project is None or granted is None or not granted.targets(gate):
+        return deny("gate_not_delegated")
+    if approval.base not in granted.targets(gate):
+        return deny("target_denied")
+    if approval.branch == approval.base or approval.branch in project.all_targets():
+        return deny("target_denied")
+    if timestamp(approval.expires_at) <= now:
+        return deny("expired")
+    claim = cast(
+        "tuple[int] | None",
+        db.execute(
+            "SELECT 1 FROM coordination_claims WHERE address=? AND scope=? AND project_id=? "
+            "AND ticket=? AND branch=?",
+            (recipient, record["scope"], record["project_id"], approval.ticket, approval.branch),
+        ).fetchone(),
+    )
+    if claim is None:
+        return deny("wrong_ticket")
+    return AuthorityDecision(verified=True, reason="verified", grant_id=direction.grant_id)

@@ -69,6 +69,21 @@ Claude checks results before marking tasks complete. A join notification,
 delivery, wake or acknowledgement proves neither continued availability nor
 completion.
 
+## Optional: delegate commit, push and merge
+
+If the owner wants workers to commit, push and merge without asking each time,
+Claude runs `llm-bus --format agent coordinate search-feature --setup` and asks
+the owner, through its native question UI, which gates and which integration
+branch to delegate; it never adds a gate the owner did not confirm. Each Codex
+worker joins as above (the owner may narrow a worker with
+`--narrow GATE:BRANCH`), claims its task with
+`llm-bus coordination claim search-feature --ticket TICKET --branch BRANCH`, and
+waits for `llm-bus coordination approve` directions. Workers verify branch,
+head SHA, required checks and review findings live before each action. Force-push,
+deploys or production changes, credential or secret changes, paid or live runs
+and merge with failing or pending CI stay with the owner. In this example "Do not merge until I approve"
+simply means the owner does not delegate the merge gate.
+
 ## Stop, recover or use remote workers
 
 Consent survives turns and compaction. It ends on session close or expiry,

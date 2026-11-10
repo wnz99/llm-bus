@@ -1,17 +1,18 @@
 # Project State
 
-Last activity: 2026-11-10 - 261110-1lg PR #65 aggregate/PR review approved and CI passed; summary recorded; owner-approved post-merge acceptance pending.
+Last activity: 2026-11-10 - 261110-wft PR1 (Tasks 1-6) implemented, task reviews approved, planner conformance and aggregate verification passed (595 tests); PR1 opened for review.
 
 ## Registered Work
 
 | # | Description | Status | Directory |
 |---|-------------|--------|-----------|
+| 261110-wft | Coordinator-delegated approval gates and guided setup | PR1 of 5 in review (Tasks 1-6 done); PR2-PR5 pending plan revision 5 | [261110-wft-coordinator-delegated-approval-gates-and](./quick/261110-wft-coordinator-delegated-approval-gates-and/) |
 
 ## Quick Tasks Completed
 
 | # | Description | Status | Directory |
 |---|-------------|--------|-----------|
-| 261110-1lg | llm-bus upgrade command with old-binary pruning — PR #65 | Reviewed and verified (485 tests, CI passed); post-merge upgrade run, hook reinstall and bridge restart pending owner approval | [261110-1lg-llm-bus-upgrade-command-with-old-binary](./quick/261110-1lg-llm-bus-upgrade-command-with-old-binary/) |
+| 261110-1lg | llm-bus upgrade command with old-binary pruning — PR #65 | Merged; post-merge acceptance passed 2026-11-10 (upgrade to 98afbb87 on Python 3.12, old package pruned, hooks reinstalled, bridge restarted with a stable new PID) | [261110-1lg-llm-bus-upgrade-command-with-old-binary](./quick/261110-1lg-llm-bus-upgrade-command-with-old-binary/) |
 | 261106-w7a | Agent labels and command-driven coordination — PR #62 | Merged; all four hosts installed at fabcb404 (guidance 8/schema 12), matching relay deployed; bounded independent rollout PASS and 28 installed-package smokes passed; frontend trust/context reload unobserved | [261106-w7a-agent-labels-and-command-driven-coordina](./quick/261106-w7a-agent-labels-and-command-driven-coordina/) |
 | 261105-knm | Optional coordination — PR #60 | Implementation, verification and independent review passed; merge pending current-head CI | [261105-knm-optional-coordination](./quick/261105-knm-optional-coordination/) |
 

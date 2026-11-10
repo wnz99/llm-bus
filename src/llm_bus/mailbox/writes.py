@@ -18,10 +18,10 @@ from llm_bus.mailbox.models import (
 if TYPE_CHECKING:
     import sqlite3
 
-    from llm_bus.coordination.models import Direction
+    from llm_bus.coordination.models import Approval, Direction
 
 
-def send_in_transaction(  # noqa: PLR0913, C901  # pylint: disable=too-many-arguments
+def send_in_transaction(  # noqa: PLR0913, C901  # pylint: disable=too-many-arguments,too-many-locals
     db: sqlite3.Connection,
     sender: str,
     recipient: str,
@@ -30,6 +30,7 @@ def send_in_transaction(  # noqa: PLR0913, C901  # pylint: disable=too-many-argu
     cross_folder: bool = False,
     reply_to: int | None = None,
     direction: Direction | None = None,
+    approval: Approval | None = None,
 ) -> Message:
     """Persist for an already registered sender without changing its activity or lifecycle."""
     if not body.strip():
@@ -63,6 +64,7 @@ def send_in_transaction(  # noqa: PLR0913, C901  # pylint: disable=too-many-argu
             scope=recipient_row[1],
             direction=direction,
             now=datetime.now(UTC),
+            approval=approval,
         )
         if not decision.verified:
             raise BusError(f"Direction denied: {decision.reason}")
@@ -84,7 +86,7 @@ def send_in_transaction(  # noqa: PLR0913, C901  # pylint: disable=too-many-argu
     if message_id is None:
         raise RuntimeError("SQLite did not return a message ID")
     if direction is not None:
-        persist(db, message_id, direction)
+        persist(db, message_id, direction, approval)
     request_dispatch(db, recipient)
     row = cast(
         "tuple[int, str, str, str, str | None, str | None, str] | None",

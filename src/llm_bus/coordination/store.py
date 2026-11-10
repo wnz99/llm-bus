@@ -10,6 +10,7 @@ from sqlite3 import Connection
 from typing import cast
 from uuid import uuid4
 
+from llm_bus.coordination import delegation
 from llm_bus.errors import BusError
 
 
@@ -45,6 +46,55 @@ def create_tables(db: Connection) -> None:
         "(message_id INTEGER PRIMARY KEY REFERENCES messages(id), grant_id TEXT NOT NULL, "
         "sender TEXT NOT NULL, sent_at TEXT NOT NULL, event_id TEXT NOT NULL, "
         "UNIQUE(sender,grant_id))",
+    ):
+        db.execute(statement)
+
+
+def create_delegation_tables(db: Connection) -> None:
+    """Additive schema 13 storage for delegation, claims, gates, amendments and decisions."""
+    for statement in (
+        "CREATE TABLE IF NOT EXISTS coordination_delegations (scope TEXT NOT NULL, "
+        "project_id TEXT NOT NULL, generation TEXT NOT NULL, delegation_json TEXT NOT NULL, "
+        "updated_by TEXT NOT NULL, updated_at TEXT NOT NULL, "
+        "PRIMARY KEY(scope,project_id,generation))",
+        "CREATE TABLE IF NOT EXISTS coordination_grant_delegations (grant_id TEXT PRIMARY KEY "
+        "REFERENCES coordination_grants(grant_id), delegation_json TEXT NOT NULL, "
+        "bound_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS coordination_claims (address TEXT PRIMARY KEY, "
+        "scope TEXT NOT NULL, project_id TEXT NOT NULL, ticket TEXT NOT NULL, "
+        "branch TEXT NOT NULL, claimed_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS coordination_approvals (message_id INTEGER PRIMARY KEY "
+        "REFERENCES messages(id), approval_json TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS coordination_gate_records (record_id TEXT PRIMARY KEY, "
+        "scope TEXT NOT NULL, project_id TEXT NOT NULL, generation TEXT NOT NULL, "
+        "grant_id TEXT NOT NULL REFERENCES coordination_grants(grant_id), "
+        "ticket TEXT NOT NULL, branch TEXT NOT NULL, base TEXT NOT NULL, "
+        "pr INTEGER NOT NULL, head_sha TEXT NOT NULL, "
+        "verdict TEXT NOT NULL CHECK(verdict='approved'), evidence_json TEXT NOT NULL, "
+        "checks_json TEXT NOT NULL, submitted_by TEXT NOT NULL, submitted_at TEXT NOT NULL, "
+        "status TEXT NOT NULL CHECK(status IN ('submitted','accepted','rejected','superseded')), "
+        "decided_by TEXT, decided_at TEXT, expires_at TEXT NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS coordination_gate_records_pr "
+        "ON coordination_gate_records(scope,project_id,generation,pr)",
+        "CREATE TABLE IF NOT EXISTS coordination_amendments (amendment_id TEXT PRIMARY KEY, "
+        "scope TEXT NOT NULL, project_id TEXT NOT NULL, generation TEXT NOT NULL, "
+        "text TEXT NOT NULL, sha256 TEXT NOT NULL, decision_id TEXT, "
+        "recorded_by TEXT NOT NULL, recorded_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS coordination_instructions (instruction_id TEXT PRIMARY KEY, "
+        "scope TEXT NOT NULL, project_id TEXT NOT NULL, "
+        "audience TEXT NOT NULL CHECK(audience IN ('coordinator','worker')), "
+        "kind TEXT NOT NULL CHECK(kind IN ('set','amend')), text TEXT NOT NULL, "
+        "sha256 TEXT NOT NULL, recorded_by TEXT NOT NULL, recorded_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS coordination_owner_turns (address TEXT PRIMARY KEY, "
+        "turn INTEGER NOT NULL, at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS coordination_decisions (decision_id TEXT PRIMARY KEY, "
+        "scope TEXT NOT NULL, project_id TEXT NOT NULL, generation TEXT NOT NULL, "
+        "class TEXT NOT NULL CHECK(class IN "
+        "('scope','security','cost','data','irreversible','objective')), "
+        "ticket TEXT, worker TEXT, question TEXT NOT NULL, recommended TEXT, "
+        "status TEXT NOT NULL CHECK(status IN ('pending','answered','defaulted')), "
+        "answer TEXT, answer_sha256 TEXT, source_session TEXT, source_turn INTEGER, "
+        "created_at TEXT NOT NULL, deadline_at TEXT, resolved_at TEXT)",
     ):
         db.execute(statement)
 
@@ -177,4 +227,8 @@ def show(db: Connection, record: dict[str, object]) -> dict[str, object]:
             dict(zip((c[0] for c in cursor.description), row, strict=True))
             for row in cast("list[tuple[object, ...]]", cursor.fetchall())
         ]
+    current = delegation.project_delegation(db, record)
+    if current is not None:
+        result["delegation"] = current.wire()
+        result["bindings"] = delegation.bindings(db, record)
     return result

@@ -296,7 +296,24 @@ Remote joins require a receiver-owner binding and matching upgraded clients/rela
 structured availability exchange records the coordinator target automatically.
 Joining assigns no specialty. Defaults and ordinary messages remain
 unchanged. Directions cannot bypass owner instructions, host permissions or
-existing review/approval gates.
+repository rules.
+
+Owners can delegate commit, push, merge and merge-admin gates for explicit
+target branches: the coordinator owner chooses them with
+`llm-bus coordinate PROJECT --setup` (a guided confirmation wizard in a
+terminal; agents pass `--format agent` and ask the owner through their native
+question UI) or `--delegate GATE:BRANCH`, and each worker owner accepts them
+through a direct `join`, optionally narrowed with `--narrow GATE:BRANCH`.
+The coordinator then sends `llm-bus coordination approve`, which workers act on
+only after live checks and for tickets they hold with `coordination claim`.
+Force-push, deploys or production changes, credential or secret changes, paid
+or live runs, and merge with failing or pending CI are never delegable, and
+the bus checks no CI itself. Remote gate approvals arrive in a later version.
+The first command run by this version upgrades the mailbox to schema version
+13; older binaries then refuse it, so upgrade every llm-bus installation that
+shares the mailbox (`uv run llm-bus upgrade` from a checkout) before any
+session uses it. See the
+[canonical workflow](skills/llm-bus/references/coordination.md#gate-approvals-local-projects).
 
 The [simplified coordination defaults](docs/coordination-simplified-flow.md) and
 [Claude coordinator with three Codex workers example](examples/claude-coordinator-codex-workers.md)
@@ -415,7 +432,7 @@ Run `llm-bus uninstall` to remove the user-level bus hooks and Claude allow rule
 Revoke active coordination grants/projects on each machine before removing
 recovery tooling. Uninstall retains coordination records and native-home
 bindings. Copied skills, rule files and pointer blocks require separate
-owner-requested removal. Stop bridges and retain backups before rollback; schema 12 mailboxes
+owner-requested removal. Stop bridges and retain backups before rollback; schema 13 mailboxes
 reject older clients. Never downgrade directions into ordinary messages.
 
 ## Development

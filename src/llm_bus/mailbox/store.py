@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     import sqlite3
     from pathlib import Path
 
-    from llm_bus.coordination.models import Direction
+    from llm_bus.coordination.models import Approval, Direction
 
 
 class Store:  # pylint: disable=too-many-public-methods
@@ -98,6 +98,7 @@ class Store:  # pylint: disable=too-many-public-methods
         cross_folder: bool = False,
         reply_to: int | None = None,
         direction: Direction | None = None,
+        approval: Approval | None = None,
     ) -> Message:
         """Atomically register sender, check folder, and persist message."""
         # pylint: disable=too-many-arguments
@@ -118,6 +119,7 @@ class Store:  # pylint: disable=too-many-public-methods
                 cross_folder=cross_folder,
                 reply_to=reply_to,
                 direction=direction,
+                approval=approval,
             )
 
     def send_in_transaction(  # noqa: PLR0913  # pylint: disable=too-many-arguments
@@ -130,6 +132,7 @@ class Store:  # pylint: disable=too-many-public-methods
         cross_folder: bool = False,
         reply_to: int | None = None,
         direction: Direction | None = None,
+        approval: Approval | None = None,
     ) -> Message:
         """Persist for an already registered sender without changing its activity or lifecycle."""
         return writes.send_in_transaction(
@@ -140,6 +143,7 @@ class Store:  # pylint: disable=too-many-public-methods
             cross_folder=cross_folder,
             reply_to=reply_to,
             direction=direction,
+            approval=approval,
         )
 
     @staticmethod

@@ -357,3 +357,28 @@ def test_set_algebra() -> None:
     assert wide.all_targets() == {"a", "b"}
     assert wide.targets("merge") == ()
     assert wide.narrow(["push:a"]) == Delegation.from_specs(["push:a"])
+
+
+def test_revoked_grant_stays_ineffective_after_rejoin(tmp_path: Path) -> None:
+    mailbox = start(tmp_path, *TWO_GATES)
+    join(mailbox, tmp_path)
+    invoke(mailbox, tmp_path, "coordination", "revoke", "demo", "--recipient", "claude:worker")
+    join(mailbox, tmp_path)
+    with mailbox.transaction() as db:
+        row = cast(
+            "tuple[str, str, str]",
+            db.execute("SELECT scope,project_id,generation FROM coordination_projects").fetchone(),
+        )
+        record: dict[str, object] = dict(
+            zip(("scope", "project_id", "generation"), row, strict=True)
+        )
+        grants = cast(
+            "list[tuple[str, str | None]]",
+            db.execute("SELECT grant_id,revoked_at FROM coordination_grants").fetchall(),
+        )
+        by_state = {revoked is None: grant_id for grant_id, revoked in grants}
+        now = datetime.now(UTC)
+        assert delegation.effective(db, record, by_state[False], now=now) is None
+        assert delegation.effective(db, record, by_state[True], now=now) == (
+            Delegation.from_specs(["commit:develop", "push:develop"])
+        )

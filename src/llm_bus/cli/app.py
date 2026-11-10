@@ -19,6 +19,7 @@ from llm_bus.cli.output import serialize
 from llm_bus.cli.parser import build_parser
 from llm_bus.cli.upgrade import upgrade
 from llm_bus.collab.models import CollabError
+from llm_bus.coordination import approvals
 from llm_bus.errors import BusError
 from llm_bus.hosts.sessions import require_main_agent
 from llm_bus.mailbox.connection import default_path
@@ -61,8 +62,9 @@ def _optional_address() -> str | None:
     return agent_address
 
 
-def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901 - bounded command dispatch
+def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912 - command dispatch
     """Run command, returning nonzero for input and storage errors."""
+    # pylint: disable=too-many-branches
     args = cast("dict[str, object]", vars(build_parser().parse_args(argv)))
     command = args["command"]
     try:
@@ -101,7 +103,10 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901 - bounded comm
         if command in {"coordinate", "join", "coordination"}:
             if command in {"coordinate", "join"}:
                 store.register(kind, session_id, project, messaging_socket=claude_socket(kind))
-            result = llm_bus.coordination.cli.run(store, args, f"{kind}:{session_id}", project)
+            if command == "coordination" and args["action"] == "approve":
+                result = approvals.approve(store, args, SenderContext(kind, session_id, project))
+            else:
+                result = llm_bus.coordination.cli.run(store, args, f"{kind}:{session_id}", project)
         elif command == "send":
             result = send(store, args, SenderContext(kind, session_id, project))
         else:

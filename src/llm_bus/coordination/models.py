@@ -16,6 +16,24 @@ GATE_OPERATIONS: dict[str, str] = {
     "approve-merge-admin": "merge-admin",
 }
 UUID_VERSION = 4
+BRANCH = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]{1,200}")
+SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+MAX_TICKET = 128
+APPROVAL_KEYS = frozenset({"ticket", "branch", "base", "expires_at", "pr", "head_sha"})
+REQUIRED_APPROVAL_KEYS = frozenset({"ticket", "branch", "base", "expires_at"})
+
+
+def ticket_text(value: object) -> str:
+    """Bounded ticket identifier shared by claims and approvals."""
+    if not isinstance(value, str) or not 0 < len(value) <= MAX_TICKET or not value.isprintable():
+        raise BusError("Invalid ticket")
+    return value
+
+
+def branch_name(value: object) -> str:
+    if not isinstance(value, str) or BRANCH.fullmatch(value) is None:
+        raise BusError("Invalid branch name")
+    return value
 
 
 def uuid4_string(value: str) -> str:
@@ -58,7 +76,11 @@ class Direction:
     def validate(self) -> None:
         # bool subclasses int but is not a valid protocol version.
         # pylint: disable=unidiomatic-typecheck
-        if type(self.version) is not int or self.version != 1 or self.operation not in OPERATIONS:
+        if (
+            type(self.version) is not int
+            or self.version != 1
+            or (self.operation not in OPERATIONS and self.operation not in GATE_OPERATIONS)
+        ):
             raise BusError("Invalid direction")
         for value in (self.project_id, self.generation, self.grant_id):
             uuid4_string(value)
@@ -90,6 +112,76 @@ class Direction:
             cast("str", fields["operation"]),
         )
         result.validate()
+        return result
+
+
+@dataclass(frozen=True)
+class Approval:
+    """Exact gate evidence a coordinator approves; never authority by itself."""
+
+    ticket: str
+    branch: str
+    base: str
+    expires_at: str
+    pr: int | None = None
+    head_sha: str | None = None
+
+    def validate(self, operation: str) -> None:
+        # bool subclasses int but is not a valid pull request number.
+        # pylint: disable=unidiomatic-typecheck
+        if operation not in GATE_OPERATIONS:
+            raise BusError("Invalid approval operation")
+        ticket_text(self.ticket)
+        branch_name(self.branch)
+        branch_name(self.base)
+        timestamp(self.expires_at)
+        merge = operation in {"approve-merge", "approve-merge-admin"}
+        if self.pr is not None and (type(self.pr) is not int or self.pr < 1):
+            raise BusError("Invalid approval pull request")
+        if (self.pr is not None) != merge:
+            raise BusError("Approval pull request is required for merge only")
+        if self.head_sha is None:
+            if operation != "approve-commit":
+                raise BusError("Approval requires head_sha")
+        elif operation == "approve-commit" or SHA.fullmatch(self.head_sha) is None:
+            raise BusError("Invalid approval head_sha")
+
+    def wire(self) -> dict[str, object]:
+        fields: dict[str, object] = {
+            "ticket": self.ticket,
+            "branch": self.branch,
+            "base": self.base,
+            "expires_at": self.expires_at,
+        }
+        if self.pr is not None:
+            fields["pr"] = self.pr
+        if self.head_sha is not None:
+            fields["head_sha"] = self.head_sha
+        return fields
+
+    @classmethod
+    def parse(cls, value: object, operation: str) -> "Approval":
+        # pylint: disable=unidiomatic-typecheck
+        if not isinstance(value, dict):
+            raise BusError("Invalid approval fields")
+        fields = cast("dict[str, object]", value)
+        if not REQUIRED_APPROVAL_KEYS <= set(fields) <= APPROVAL_KEYS:
+            raise BusError("Invalid approval fields")
+        texts = {key: fields[key] for key in ("ticket", "branch", "base", "expires_at")}
+        if not all(isinstance(item, str) for item in texts.values()):
+            raise BusError("Invalid approval types")
+        head_sha = fields.get("head_sha")
+        if head_sha is not None and not isinstance(head_sha, str):
+            raise BusError("Invalid approval types")
+        result = cls(
+            cast("str", texts["ticket"]),
+            cast("str", texts["branch"]),
+            cast("str", texts["base"]),
+            cast("str", texts["expires_at"]),
+            cast("int | None", fields.get("pr")),
+            head_sha,
+        )
+        result.validate(operation)
         return result
 
 

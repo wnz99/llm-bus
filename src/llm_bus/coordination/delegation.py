@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
-from llm_bus.coordination.models import GATE_OPERATIONS, timestamp
+from llm_bus.coordination.models import BRANCH, GATE_OPERATIONS, timestamp
 from llm_bus.errors import BusError
 
 if TYPE_CHECKING:
@@ -22,7 +22,6 @@ FLOOR = (
     "paid or live runs",
     "merge with failing or pending CI",
 )
-BRANCH = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]{1,200}")
 MAX_TARGETS = 8
 VERSION = 1
 SPEC_PARTS = 2

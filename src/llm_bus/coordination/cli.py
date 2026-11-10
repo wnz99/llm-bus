@@ -13,7 +13,13 @@ from llm_bus.cli.guidance import guidance
 from llm_bus.cli.references import resolve_reference
 from llm_bus.coordination import delegation, store
 from llm_bus.coordination.availability import record_local, record_remote
-from llm_bus.coordination.models import OPERATIONS, timestamp, uuid4_string
+from llm_bus.coordination.models import (
+    OPERATIONS,
+    branch_name,
+    ticket_text,
+    timestamp,
+    uuid4_string,
+)
 from llm_bus.errors import BusError
 from llm_bus.routing import routing_scope
 from llm_bus.wake.dispatch import dispatch_pending
@@ -44,6 +50,20 @@ def add_parsers(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     change = amend.add_mutually_exclusive_group(required=True)
     change.add_argument("--delegate", action="append", metavar="GATE:BRANCH")
     change.add_argument("--no-delegation", action="store_true")
+    approve = actions.add_parser("approve")
+    approve.add_argument("project")
+    approve.add_argument("--recipient", required=True)
+    approve.add_argument("--gate", required=True, choices=delegation.GATES)
+    approve.add_argument("--ticket", required=True)
+    approve.add_argument("--branch", required=True)
+    approve.add_argument("--base", required=True)
+    approve.add_argument("--pr", type=int)
+    approve.add_argument("--head-sha")
+    approve.add_argument("--expires-in", default="2h")
+    claim = actions.add_parser("claim")
+    claim.add_argument("project")
+    claim.add_argument("--ticket", required=True)
+    claim.add_argument("--branch", required=True)
     for name in ("show", "setup", "grant", "revoke", "replace", "leave", "target"):
         action = actions.add_parser(name)
         action.add_argument("project")
@@ -233,6 +253,8 @@ def _transition(  # noqa: C901, PLR0912 - bounded CLI action dispatch
             None if args.get("no_delegation") else delegation.Delegation.from_specs(specs or [])
         )
         delegation.set_project_delegation(db, record, wanted, address)
+    elif action == "claim":
+        _claim(db, record, args, address)
     elif action == "grant":
         expiry = args.get("expires_at")
         if expiry is None and args.get("until_revoked") is not True:
@@ -279,6 +301,7 @@ def _transition(  # noqa: C901, PLR0912 - bounded CLI action dispatch
             "DELETE FROM coordination_enrollments WHERE scope=? AND project_id=? AND address=?",
             (*key, address),
         )
+        db.execute("DELETE FROM coordination_claims WHERE address=?", (address,))
     elif action == "revoke":
         _revoke(db, record, args.get("recipient"))
     elif action == "replace":
@@ -297,6 +320,41 @@ def _transition(  # noqa: C901, PLR0912 - bounded CLI action dispatch
         if coordinator == address:
             store.enroll(db, {**record, "generation": generation}, address, "coordinator")
     return None
+
+
+def _claim(
+    db: Connection, record: dict[str, object], args: dict[str, object], address: str
+) -> None:
+    """Enrolled worker claims one ticket and branch; no other current worker may hold either."""
+    key = (record["scope"], record["project_id"])
+    ticket = ticket_text(args["ticket"])
+    branch = branch_name(args["branch"])
+    enrolled = cast(
+        "tuple[int] | None",
+        db.execute(
+            "SELECT 1 FROM coordination_enrollments WHERE scope=? AND project_id=? AND address=? "
+            "AND role='worker' AND generation=?",
+            (*key, address, record["generation"]),
+        ).fetchone(),
+    )
+    if enrolled is None:
+        raise BusError("Only an enrolled worker may claim a ticket")
+    holder = cast(
+        "tuple[str] | None",
+        db.execute(
+            "SELECT c.address FROM coordination_claims c JOIN coordination_enrollments e "
+            "ON e.scope=c.scope AND e.project_id=c.project_id AND e.address=c.address "
+            "WHERE c.scope=? AND c.project_id=? AND c.address<>? AND e.role='worker' "
+            "AND e.generation=? AND (c.ticket=? OR c.branch=?)",
+            (*key, address, record["generation"], ticket, branch),
+        ).fetchone(),
+    )
+    if holder is not None:
+        raise BusError(f"Ticket or branch already claimed by {holder[0]}")
+    db.execute(
+        "INSERT OR REPLACE INTO coordination_claims VALUES (?,?,?,?,?,?)",
+        (address, *key, ticket, branch, datetime.now(UTC).isoformat()),
+    )
 
 
 def _revoke(db: Connection, record: dict[str, object], recipient: object) -> None:
@@ -324,6 +382,11 @@ def _revoke(db: Connection, record: dict[str, object], recipient: object) -> Non
             "UPDATE coordination_projects SET revoked_at=? WHERE scope=? AND project_id=?",
             (now, *key),
         )
+    db.execute(
+        "DELETE FROM coordination_claims WHERE scope=? AND project_id=?"  # noqa: S608
+        + (" AND address=?" if recipient is not None else ""),
+        values,
+    )
     db.execute(
         "DELETE FROM coordination_enrollments WHERE scope=? AND project_id=?"  # noqa: S608
         + (" AND address=?" if recipient is not None else ""),

@@ -25,6 +25,7 @@ from llm_bus.routing import routing_scope
 from llm_bus.wake.dispatch import dispatch_pending
 
 if TYPE_CHECKING:
+    from llm_bus.coordination.models import Approval
     from llm_bus.mailbox.models import SenderContext
     from llm_bus.mailbox.store import Store
 
@@ -140,8 +141,12 @@ def _monitor(store: Store, args: dict[str, object]) -> None:
         print()
 
 
-def send(store: Store, args: dict[str, object], sender: SenderContext) -> object:
+def send(
+    store: Store, args: dict[str, object], sender: SenderContext, approval: Approval | None = None
+) -> object:
     args = {**args, "to": resolve_reference(store, str(args["to"]), sender.project)}
+    if approval is not None and "/" in cast("str", args["to"]):
+        raise BusError("Remote approval directions are not supported by this version")
     label, operation = args.get("project"), args.get("direction")
     if (label is None) != (operation is None):
         raise BusError("Use --project and --direction together")
@@ -155,6 +160,7 @@ def send(store: Store, args: dict[str, object], sender: SenderContext) -> object
                 label=str(label),
                 recipient=str(args["to"]),
                 operation=str(operation),
+                approval=approval,
             )
     configured_body = args["body"]
     body = cast("str", configured_body) if configured_body is not None else sys.stdin.read()
@@ -177,7 +183,8 @@ def send(store: Store, args: dict[str, object], sender: SenderContext) -> object
         body,
         cross_folder=cast("bool", args["cross_folder"]),
         reply_to=cast("int | None", args["reply_to"]),
-        **({"direction": direction} if direction is not None else {}),
+        direction=direction,
+        approval=approval,
     )
     try:
         wake_result = dispatch_pending(store, sent["recipient"], trigger_id=sent["id"])

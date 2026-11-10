@@ -18,10 +18,11 @@ if TYPE_CHECKING:
 WHEEL = "llm_bus-0.1.0-py3-none-any.whl"
 UV = "/fake/uv"
 real_run = subprocess.run
+GIT = cast("str", shutil.which("git"))
 
 
-def _fake_which(_name: str) -> str:
-    return UV
+def _fake_which(name: str) -> str | None:
+    return GIT if name == "git" else UV
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -57,6 +58,8 @@ class FakeBus:  # pylint: disable=too-many-instance-attributes
         self.repo = root / "checkout"
         self.calls: list[list[str]] = []
         self.binary_rc = 0
+        self.python_rc = 0
+        self.install_fault: str | None = None
         self.built_sources: list[list[str]] = []
         _make_checkout(self.repo)
         self.package_id = _git(self.repo, "rev-parse", "HEAD")[:8]
@@ -90,7 +93,7 @@ class FakeBus:  # pylint: disable=too-many-instance-attributes
         self, argv: list[str], *, env: dict[str, str] | None = None, **_options: object
     ) -> subprocess.CompletedProcess[str]:
         self.calls.append(argv)
-        if argv[0] == "git":
+        if argv[0] == GIT:
             return real_run(argv, capture_output=True, text=True, check=False, env=env)
         stdout = ""
         if argv[0] == UV and argv[1:3] == ["tool", "dir"]:
@@ -101,17 +104,25 @@ class FakeBus:  # pylint: disable=too-many-instance-attributes
             (out / WHEEL).write_text("built")
             self.built_sources.append(sorted(p.name for p in Path(argv[-1]).iterdir()))
         elif argv[0] == UV and argv[1:3] == ["tool", "install"]:
-            self._install(argv)
+            return self._install(argv)
+        elif argv[0] == str(self.tools / "llm-bus/bin/python"):
+            return subprocess.CompletedProcess(argv, self.python_rc, "", "no module")
         elif argv[0] == str(self.binary):
             stdout = "usage: llm-bus upgrade"
             return subprocess.CompletedProcess(argv, self.binary_rc, stdout, "boom")
         return subprocess.CompletedProcess(argv, 0, stdout, "")
 
-    def _install(self, argv: list[str]) -> None:
-        requirement = argv[-1]
-        path, _, extras = requirement.partition("[")
+    def _install(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
+        """Apply the one-shot install_fault to the next install; later installs succeed."""
+        fault, self.install_fault = self.install_fault, None
+        if fault == "fail":
+            return subprocess.CompletedProcess(argv, 1, "", "install boom")
+        path, _, extras = argv[-1].partition("[")
+        if fault == "receipt":
+            path = str(Path(path).with_name("other.whl"))
         python = argv[argv.index("--python") + 1] if "--python" in argv else ""
         self.write_receipt(Path(path), [e for e in extras.rstrip("]").split(",") if e], python)
+        return subprocess.CompletedProcess(argv, 0, "", "")
 
     def commands(self, *words: str) -> list[list[str]]:
         return [c for c in self.calls if c[0] == UV and c[1 : 1 + len(words)] == list(words)]
@@ -162,7 +173,7 @@ def test_success_installs_head_and_prunes_only_owned_roots(
     assert "tracked.txt" in bus.built_sources[0]
     assert [p.name for p in bus.packages.iterdir()] == [bus.package_id]
     assert list(bus.releases.iterdir()) == []
-    assert any(c[0] == "git" and c[-2:] == ["worktree", "prune"] for c in bus.calls)
+    assert any(c[0] == GIT and c[-2:] == ["worktree", "prune"] for c in bus.calls)
     assert (bus.state / "backups/keep").exists()
     assert (bus.state / "deploy-backups/keep").exists()
     next_step = str(result["next_step"])
@@ -170,10 +181,30 @@ def test_success_installs_head_and_prunes_only_owned_roots(
     assert "llm-bus bridge" in next_step
 
 
-def test_verification_failure_deletes_nothing_and_restores_previous(
-    bus: FakeBus, capsys: pytest.CaptureFixture[str]
-) -> None:
+def _binary_fails(bus: FakeBus) -> None:
     bus.binary_rc = 1
+
+
+def _collab_import_fails(bus: FakeBus) -> None:
+    bus.python_rc = 1
+
+
+def _receipt_points_elsewhere(bus: FakeBus) -> None:
+    bus.install_fault = "receipt"
+
+
+def _install_fails(bus: FakeBus) -> None:
+    bus.install_fault = "fail"
+
+
+@pytest.mark.parametrize(
+    "inject_fault",
+    [_binary_fails, _collab_import_fails, _receipt_points_elsewhere, _install_fails],
+)
+def test_install_or_verification_failure_deletes_nothing_and_restores_previous(
+    bus: FakeBus, capsys: pytest.CaptureFixture[str], inject_fault: Callable[[FakeBus], None]
+) -> None:
+    inject_fault(bus)
     code, out, err = _run(capsys)
     installs = bus.commands("tool", "install")
     assert code == 1
@@ -186,6 +217,19 @@ def test_verification_failure_deletes_nothing_and_restores_previous(
     }
     assert (bus.releases / "r1").exists()
     assert (bus.state / "backups/keep").exists()
+
+
+def test_prune_failure_reports_packages_already_removed(
+    bus: FakeBus, capsys: pytest.CaptureFixture[str]
+) -> None:
+    shutil.rmtree(bus.releases)
+    bus.releases.symlink_to(bus.home)
+    code, out, err = _run(capsys)
+    assert code == 1
+    assert out == ""
+    assert "Refusing to prune" in err
+    assert "removed packages ['.upgrade-old', 'fabcb404', 'old1']" in err
+    assert [p.name for p in bus.packages.iterdir()] == [bus.package_id]
 
 
 def _point_at_head(bus: FakeBus) -> Path:

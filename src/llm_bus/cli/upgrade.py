@@ -65,18 +65,22 @@ def prune_entries(root: Path, *, keep: str | None = None) -> list[str]:
     return removed
 
 
-def _run(argv: list[str], *, env: dict[str, str] | None = None) -> str:
+def _run(argv: list[str], *, env: dict[str, str] | None = None, label: str | None = None) -> str:
     result = subprocess.run(  # noqa: S603 - fixed argv, resolved executables
         argv, capture_output=True, text=True, check=False, env=env
     )
     if result.returncode != 0:
         tail = "\n".join(result.stderr.splitlines()[-STDERR_TAIL_LINES:])
-        raise BusError(f"{Path(argv[0]).name} {' '.join(argv[1:3])} failed: {tail}")
+        name = label or f"{Path(argv[0]).name} {' '.join(argv[1:3])}"
+        raise BusError(f"{name} failed: {tail}")
     return result.stdout.strip()
 
 
 def _git(checkout: Path, *args: str) -> str:
-    return _run(["git", "-C", str(checkout), *args])
+    git = shutil.which("git")
+    if git is None:
+        raise BusError("git is required to upgrade llm-bus")
+    return _run([git, "-C", str(checkout), *args], label=f"git {args[0]}")
 
 
 def _checkout_root(start: Path) -> Path:
@@ -93,6 +97,10 @@ def _checkout_root(start: Path) -> Path:
 def _require_clean(checkout: Path) -> None:
     if _git(checkout, "status", "--porcelain", "--untracked-files=no"):
         raise BusError("Tracked files have uncommitted changes; commit or stash them first")
+
+
+def _receipt_path(tools_dir: Path) -> Path:
+    return tools_dir / "llm-bus" / "uv-receipt.toml"
 
 
 def _receipt_requirement(receipt: Path) -> tuple[dict[str, object], dict[str, object]]:
@@ -230,9 +238,9 @@ def _require_prunable_placement(checkout: Path, roots: tuple[Path, ...]) -> None
         raise BusError(RMTREE_UNSAFE)
 
 
-def _verify_current(receipt: Path, wheel: Path, extras: tuple[str, ...]) -> Path:
+def _verify_current(tools_dir: Path, wheel: Path, extras: tuple[str, ...]) -> Path:
     try:
-        return _verify(receipt, receipt.parent.parent, wheel, extras)
+        return _verify(_receipt_path(tools_dir), tools_dir, wheel, extras)
     except BusError as error:
         raise BusError(
             f"Verification failed: {error}; nothing deleted; current install unchanged"
@@ -240,12 +248,16 @@ def _verify_current(receipt: Path, wheel: Path, extras: tuple[str, ...]) -> Path
 
 
 def _install_verified(
-    uv: str, wheel: Path, python: str, receipt: Path, previous: InstalledRequirement
+    uv: str,
+    tools_dir: Path,
+    wheel: Path,
+    python: str,
+    previous: InstalledRequirement,
 ) -> Path:
     """Install wheel and verify; on failure restore the previous wheel and delete nothing."""
     try:
         _install(uv, wheel, previous.extras, python)
-        return _verify(receipt, receipt.parent.parent, wheel, previous.extras)
+        return _verify(_receipt_path(tools_dir), tools_dir, wheel, previous.extras)
     except (BusError, OSError, subprocess.CalledProcessError) as error:
         outcome = _rollback(uv, previous)
         raise BusError(
@@ -258,9 +270,17 @@ def _prune_old(
 ) -> dict[str, object]:
     """Run only after verification passed; the sole deletion step of the upgrade."""
     removed_packages = prune_entries(packages, keep=package_id)
-    removed_releases = prune_entries(releases)
+    try:
+        removed_releases = prune_entries(releases)
+    except BusError as error:
+        raise BusError(f"{error}; removed packages {removed_packages}") from error
     if removed_releases:
-        _git(checkout, "worktree", "prune")
+        try:
+            _git(checkout, "worktree", "prune")
+        except BusError as error:
+            raise BusError(
+                f"{error}; removed packages {removed_packages}, releases {removed_releases}"
+            ) from error
     return {"removed_packages": removed_packages, "removed_releases": removed_releases}
 
 
@@ -277,16 +297,16 @@ def upgrade(start: Path, home: Path) -> dict[str, object]:
     package_id = _git(checkout, "rev-parse", HEAD_REF)[:8]
     if not PACKAGE_ID.fullmatch(package_id):
         raise BusError(f"Unexpected HEAD id {package_id!r}")
-    receipt = Path(_run([uv, "tool", "dir"])) / "llm-bus" / "uv-receipt.toml"
-    previous = _read_previous(receipt)
+    tools_dir = Path(_run([uv, "tool", "dir"]))
+    previous = _read_previous(_receipt_path(tools_dir))
     python = (checkout / ".python-version").read_text("utf-8").strip()
     target = packages / package_id
     if _is_active(previous, target):
         wheel, reinstalled = previous.path, False
-        binary = _verify_current(receipt, wheel, previous.extras)
+        binary = _verify_current(tools_dir, wheel, previous.extras)
     else:
         wheel, reinstalled = _build_wheel(uv, checkout, packages, target), True
-        binary = _install_verified(uv, wheel, python, receipt, previous)
+        binary = _install_verified(uv, tools_dir, wheel, python, previous)
     removed = _prune_old(checkout, packages, releases, package_id)
     return {
         **removed,

@@ -232,7 +232,8 @@ def show(db: Connection, record: dict[str, object]) -> dict[str, object]:
         result["delegation"] = current.wire()
         result["bindings"] = delegation.bindings(db, record)
     cursor = db.execute(
-        "SELECT record_id,pr,head_sha,status,submitted_by,decided_by,expires_at "
+        "SELECT record_id,ticket,branch,base,pr,head_sha,evidence_json,checks_json,status,"
+        "submitted_by,submitted_at,decided_by,expires_at "
         "FROM coordination_gate_records WHERE scope=? AND project_id=? AND generation=? "
         "ORDER BY rowid",
         (record["scope"], record["project_id"], record["generation"]),
@@ -241,6 +242,9 @@ def show(db: Connection, record: dict[str, object]) -> dict[str, object]:
         dict(zip((c[0] for c in cursor.description), row, strict=True))
         for row in cast("list[tuple[object, ...]]", cursor.fetchall())
     ]
+    for gate in gates:
+        gate["review_evidence"] = json.loads(str(gate.pop("evidence_json")))
+        gate["required_checks"] = json.loads(str(gate.pop("checks_json")))
     if gates:
         result["gate_records"] = gates
     return result

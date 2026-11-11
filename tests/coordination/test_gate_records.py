@@ -397,6 +397,24 @@ def test_notices_are_plain_text_and_show_lists_records(tmp_path: Path) -> None:
     assert listed["submitted_by"] == WORKER
 
 
+def test_show_gives_the_coordinator_the_fields_to_verify(tmp_path: Path) -> None:
+    project = Project(tmp_path, *AUTO)
+    record_id = submit(project, evidence=("review-1", "https://example.test/r/2"))["record_id"]
+    shown = project.owner("coordination", "show", "demo")
+    (listed,) = cast("list[dict[str, object]]", shown["gate_records"])
+    assert listed["record_id"] == record_id
+    assert listed["ticket"] == "roam-22m"
+    assert listed["branch"] == "roam-22m-login"
+    assert listed["base"] == "develop"
+    assert listed["pr"] == 42
+    assert listed["head_sha"] == SHA
+    assert listed["review_evidence"] == ["review-1", "https://example.test/r/2"]
+    assert listed["required_checks"] == ["ci"]
+    assert listed["submitted_at"]
+    assert "evidence_json" not in listed
+    assert "checks_json" not in listed
+
+
 def test_legacy_project_is_unchanged(tmp_path: Path) -> None:
     project = Project(tmp_path, claim=False)
     shown = project.owner("coordination", "show", "demo")

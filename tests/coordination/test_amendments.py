@@ -50,6 +50,7 @@ def test_amend_appends_history_and_changes_effective_objective(tmp_path: Path) -
     project = Project(tmp_path)
     shown = project.owner("coordination", "show", "demo")
     assert "amendments" not in shown
+    assert "effective_objective" not in shown
     first = project.owner("coordination", "amend", "demo", "--objective", "Ship the login")
     project.owner("coordination", "amend", "demo", "--objective", "Ship login and logout")
     rows = cast("list[dict[str, object]]", first["amendments"])
@@ -60,7 +61,9 @@ def test_amend_appends_history_and_changes_effective_objective(tmp_path: Path) -
     with project.store.transaction() as db:
         record = store.project(db, str(project.path), "demo")
         assert amendments.effective_objective(db, record) == "Ship login and logout"
-    assert project.owner("coordination", "show", "demo")["objective"] == OBJECTIVE
+    shown = project.owner("coordination", "show", "demo")
+    assert shown["objective"] == OBJECTIVE
+    assert shown["effective_objective"] == "Ship login and logout"
     project.owner("coordinate", "demo", "--objective", "Ship login and logout")
     with pytest.raises(BusError, match=DIFFERS):
         project.owner("coordinate", "demo", "--objective", OBJECTIVE)

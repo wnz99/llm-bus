@@ -12,6 +12,7 @@ from uuid import uuid4
 from llm_bus.cli.guidance import guidance
 from llm_bus.cli.references import resolve_reference
 from llm_bus.coordination import amendments, delegation, gate_records, store
+from llm_bus.coordination import instructions as instructions_store
 from llm_bus.coordination.availability import record_local, record_remote
 from llm_bus.coordination.models import (
     OPERATIONS,
@@ -62,6 +63,7 @@ def add_parsers(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     actions = add_parser("coordination").add_subparsers(dest="action", required=True)
     _amend_parser(actions.add_parser)
     _gate_parsers(actions.add_parser)
+    _instructions_parser(actions.add_parser)
     approve = actions.add_parser("approve")
     approve.add_argument("project")
     approve.add_argument("--recipient", required=True)
@@ -105,6 +107,16 @@ def _amend_parser(add_action: Callable[..., argparse.ArgumentParser]) -> None:
     change.add_argument("--no-delegation", action="store_true")
     amend.add_argument("--auto-merge", action="store_true")
     amend.add_argument("--objective", help="Append a dated objective amendment")
+
+
+def _instructions_parser(add_action: Callable[..., argparse.ArgumentParser]) -> None:
+    instructions = add_action("instructions", help="Set owner standing instructions")
+    instructions.add_argument("project")
+    instructions.add_argument("--audience", required=True, choices=instructions_store.AUDIENCES)
+    source = instructions.add_mutually_exclusive_group(required=True)
+    source.add_argument("--file")
+    source.add_argument("--text")
+    instructions.add_argument("--amend", action="store_true")
 
 
 def _gate_parsers(add_action: Callable[..., argparse.ArgumentParser]) -> None:
@@ -327,7 +339,33 @@ def _gate_reject(
     )
 
 
+def _instruction_text(args: dict[str, object]) -> str:
+    if args.get("file") is None:
+        return str(args["text"])
+    try:
+        with Path(text_reference(args["file"])).open(encoding="utf-8") as handle:
+            return handle.read(instructions_store.MAX_TEXT + 1)
+    except (OSError, UnicodeDecodeError) as error:
+        raise BusError("Cannot read instructions file as UTF-8 text") from error
+
+
+def _instructions(
+    db: Connection, record: dict[str, object], args: dict[str, object], address: str
+) -> ActionResult:
+    _require_coordinator(db, record, address, "Only the enrolled coordinator may set instructions")
+    instructions_store.add(
+        db,
+        record,
+        audience=str(args["audience"]),
+        kind="amend" if args.get("amend") else "set",
+        text=_instruction_text(args),
+        by=address,
+    )
+    return None, []
+
+
 ACTIONS: dict[str, Callable[..., ActionResult]] = {
+    "instructions": _instructions,
     "gate-record": _gate_record,
     "gate-accept": _gate_accept,
     "gate-reject": _gate_reject,
@@ -487,10 +525,9 @@ def _transition(  # noqa: C901, PLR0912 - bounded CLI action dispatch
     return None
 
 
-def _amend(
-    db: Connection, record: dict[str, object], args: dict[str, object], address: str
+def _require_coordinator(
+    db: Connection, record: dict[str, object], address: str, message: str
 ) -> None:
-    """Append an objective amendment and/or replace or remove the delegation (applies at once)."""
     enrolled = cast(
         "tuple[int] | None",
         db.execute(
@@ -500,7 +537,14 @@ def _amend(
         ).fetchone(),
     )
     if record["coordinator"] != address or enrolled is None:
-        raise BusError("Only the enrolled coordinator may amend delegation")
+        raise BusError(message)
+
+
+def _amend(
+    db: Connection, record: dict[str, object], args: dict[str, object], address: str
+) -> None:
+    """Append an objective amendment and/or replace or remove the delegation (applies at once)."""
+    _require_coordinator(db, record, address, "Only the enrolled coordinator may amend delegation")
     specs = cast("list[str]", args.get("delegate") or [])
     flags = _flags(args)
     objective = args.get("objective")

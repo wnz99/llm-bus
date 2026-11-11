@@ -312,8 +312,9 @@ llm-bus --format agent coordination amend PROJECT --objective "New objective tex
 
 Each amendment is stored append-only with its author and time for the current
 generation, and the latest one is the effective objective; the objective stored
-at creation is never rewritten. `coordination show` lists `amendments` once any
-exist. `--objective` may be combined with `--delegate`, `--no-delegation` or
+at creation is never rewritten. `coordination show` keeps `objective` as the
+creation text and, once any amendment exists, lists `amendments` and the latest
+text as `effective_objective`; read that key for the current objective. `--objective` may be combined with `--delegate`, `--no-delegation` or
 `--auto-merge` in one command (both apply together or neither). Alone it leaves
 the delegation and worker bindings untouched. `amend` with neither an objective
 nor a delegation change fails with `amend needs --objective or a delegation
@@ -324,6 +325,34 @@ longer delegates. Widening reaches a worker only through that worker's fresh
 direct owner join; the result lists `rejoin_required` addresses and recovery
 notices tell such workers their binding is narrower. Amend never contacts a
 worker.
+
+### Standing owner instructions
+
+The owner's standing instructions for one audience (`coordinator` or `worker`)
+are set only through the enrolled coordinator's session; `coordinate` takes no
+instruction flags:
+
+```sh
+llm-bus --format agent coordination instructions PROJECT --audience worker --file PATH
+llm-bus --format agent coordination instructions PROJECT --audience coordinator --text "..." --amend
+```
+
+Text is 1 to 8192 characters with no control characters except newline and tab.
+Without `--amend` the command replaces the audience's instructions; `--amend`
+appends a dated entry (it needs existing instructions), and the active text
+(latest replacement plus later amendments) must stay within 8192 characters.
+Every entry is kept with its author and time. `coordination show` lists the
+active entries as `instructions` once any exist.
+
+Each session receives only its own role's text, and only while its coordination
+state is active. The text is injected verbatim in exactly three places: the
+`SessionStart` hook (Claude Code runs it for every source, including
+`compact`), a hook after the stored guidance state is missing or outdated, and
+`llm-bus --format agent guidance`. Every other hook carries a one-line pointer
+with a short digest and the restore command, never the text. A worker treats
+the text as its owner's standing request, subordinate to its own owner and host
+rules. Codex has no compaction hook: after compaction a Codex session restores
+the text by running `llm-bus --format agent guidance`.
 
 ## Remote coordinator, local worker
 
@@ -395,7 +424,11 @@ Recipient revoke removes that enrollment; project revoke suspends the project.
 Revoke, leave and replacement also clear the affected workers' ticket/branch
 claims, so approvals for them stop verifying; a replaced generation starts
 without a delegation and bindings, and the new coordinator delegates again with
-`coordination amend` after direct owner approval.
+`coordination amend` after direct owner approval. Objective amendments belong to
+one coordinator generation: after `replace`, the effective objective falls back
+to the objective stored at creation, and the new coordinator amends it again if
+needed. Owner standing instructions (below) are stored per project and survive
+replacement.
 Replacement requires a never-used UUIDv4 generation, invalidates local grants,
 enrollments and targets, and enrolls the replacement only when it is the current
 native main session. Otherwise that session must run `coordinate PROJECT`.
@@ -409,7 +442,9 @@ mutates another owner's grant. An offline until-revoked receiver follows its
 last local policy until changed; global immediate revocation is not promised.
 Already exposed text or a submitted wake cannot be recalled.
 
-After compaction, SessionStart restores full references when emitted;
+After compaction, SessionStart restores full references (and owner standing
+instructions for your role, verbatim) when emitted; on Codex run
+`llm-bus --format agent guidance` for the same restore;
 UserPromptSubmit rereads current enrollment every real prompt. Compact reminders
 retain authority state and recovery command. Use `llm-bus --format agent guidance` and
 `llm-bus --format agent coordination show PROJECT` to recover full current local state. Read

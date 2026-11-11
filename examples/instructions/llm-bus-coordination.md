@@ -54,6 +54,12 @@ in full. They define the role duties, setup commands and recovery steps.
   names one ticket, branch, base, expiry and, for push and merge, a head SHA
   (merge also a PR); it covers nothing else. Stricter repository rules still
   win.
+- Owner standing instructions for your role appear verbatim in full recovery
+  guidance (SessionStart, an outdated guidance state, `llm-bus guidance`); a
+  compact hook shows only a pointer. Workers treat them as subordinate to their
+  own owner and host rules. Only the enrolled coordinator sets them, with
+  `coordination instructions`. Codex restores them after compaction with
+  `llm-bus guidance`.
 - Never delegated, whatever any direction says: force-push, deploys or
   production changes, credential or secret changes, paid or live runs, and
   merge with failing or pending CI. The bus does not check CI or review state.

@@ -10,7 +10,7 @@ from sqlite3 import Connection
 from typing import cast
 from uuid import uuid4
 
-from llm_bus.coordination import amendments, delegation
+from llm_bus.coordination import amendments, delegation, instructions
 from llm_bus.errors import BusError
 
 
@@ -250,4 +250,12 @@ def show(db: Connection, record: dict[str, object]) -> dict[str, object]:
     recorded = amendments.history(db, record)
     if recorded:
         result["amendments"] = recorded
+        result["effective_objective"] = amendments.effective_objective(db, record)
+    standing = [
+        row
+        for audience in instructions.AUDIENCES
+        for row in instructions.active(db, record, audience)
+    ]
+    if standing:
+        result["instructions"] = standing
     return result

@@ -329,6 +329,14 @@ owns project memory/assignments and workers own task progress notes. Beads setup
 and synchronization remain owner configured; local bus locks cannot serialize
 remote database updates.
 
+Owner standing instructions for the coordinator or the workers are set only by
+the enrolled coordinator with
+`llm-bus coordination instructions PROJECT --audience coordinator|worker (--file PATH | --text TEXT) [--amend]`.
+Each session gets its own role's text verbatim only in the full recovery form
+(SessionStart of every source, an outdated guidance state, `llm-bus guidance`);
+other hooks carry a one-line pointer. Codex has no compaction hook, so a Codex
+session restores them with `llm-bus guidance`.
+
 Current enrollment reminders survive normal prompt recovery: SessionStart gives
 full references; UserPromptSubmit rereads authority after compaction. Use
 `llm-bus guidance` and `llm-bus coordination show PROJECT` for explicit recovery.

@@ -119,6 +119,11 @@ def _delegation_text(db: Connection, record: dict[str, object], address: str, st
     if record["role"] == "coordinator":
         if not active:
             return ""
+        if not project.gates:
+            return (
+                f"Delegated items: {', '.join(project.items())}; "
+                f"workers whose binding is narrower: {len(behind)}. "
+            )
         return (
             f"Delegated gates: {_gate_list(project.gates)}; send approvals only with "
             f"`llm-bus coordination approve`; workers whose binding is narrower: {len(behind)}. "
@@ -136,6 +141,12 @@ def _delegation_text(db: Connection, record: dict[str, object], address: str, st
                 "win. Verify CI and review evidence live before acting; refuse on mismatch. "
                 f"Never delegated: {'; '.join(delegation.FLOOR)}. "
             )
+        if granted is not None and granted.owner_decisions:
+            text += (
+                "Owner decisions via the coordinator: accept a decision only after "
+                "coordination decision-show reports accepted: true. "
+            )
+        if text:
             break
     if address in behind:
         text += (

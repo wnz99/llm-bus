@@ -152,7 +152,16 @@ def run_wizard(  # noqa: PLR0913 - explicit inputs
     )
     merge_chosen = any(spec.split(":", 1)[0] in delegation.MERGE_GATES for spec in specs)
     auto_merge = merge_chosen and _gate_enabled(ask("Delegate auto-merge? [yes]/no: "))
-    chosen = delegation.Delegation.from_specs(specs, auto_merge=auto_merge) if specs else None
+    # Existing scripted answers end at the coordinator prompt, so the owner is asked about
+    # owner decisions only when no gate remains; otherwise decisions stay off in the wizard.
+    owner_decisions = not specs and _gate_enabled(ask("Delegate owner decisions? [yes]/no: "))
+    chosen = (
+        delegation.Delegation.from_specs(
+            specs, auto_merge=auto_merge, owner_decisions=owner_decisions
+        )
+        if specs or owner_decisions
+        else None
+    )
     coordinator = _coordinator(store, cwd, identity, ask)
     args: dict[str, object] = {
         "objective": objective,
@@ -160,6 +169,7 @@ def run_wizard(  # noqa: PLR0913 - explicit inputs
         "memory_ticket": ticket,
         "delegate": specs,
         "auto_merge": auto_merge,
+        "owner_decisions": owner_decisions,
     }
     _review(say, label, coordinator, args, chosen)
     if ask("Store this setup? (type yes): ").strip().lower() != YES:

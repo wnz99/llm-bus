@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from llm_bus.cli.guidance import guidance
 from llm_bus.cli.references import resolve_reference
-from llm_bus.coordination import amendments, delegation, gate_records, store
+from llm_bus.coordination import amendments, decisions, delegation, gate_records, store
 from llm_bus.coordination import instructions as instructions_store
 from llm_bus.coordination.availability import record_local, record_remote
 from llm_bus.coordination.models import (
@@ -53,6 +53,11 @@ def add_parsers(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
         help="Delegate auto-merge: a worker merges on a coordinator-accepted gate record",
     )
     coordinate.add_argument(
+        "--owner-decisions",
+        action="store_true",
+        help="Delegate owner decisions: workers accept coordinator-recorded owner answers",
+    )
+    coordinate.add_argument(
         "--setup",
         action="store_true",
         help="Print the setup profile, or run the confirmation wizard in a terminal",
@@ -63,6 +68,7 @@ def add_parsers(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     actions = add_parser("coordination").add_subparsers(dest="action", required=True)
     _amend_parser(actions.add_parser)
     _gate_parsers(actions.add_parser)
+    _decision_parsers(actions.add_parser)
     _instructions_parser(actions.add_parser)
     approve = actions.add_parser("approve")
     approve.add_argument("project")
@@ -106,7 +112,25 @@ def _amend_parser(add_action: Callable[..., argparse.ArgumentParser]) -> None:
     change.add_argument("--delegate", action="append", metavar="GATE:BRANCH")
     change.add_argument("--no-delegation", action="store_true")
     amend.add_argument("--auto-merge", action="store_true")
+    amend.add_argument("--owner-decisions", action="store_true")
     amend.add_argument("--objective", help="Append a dated objective amendment")
+
+
+def _decision_parsers(add_action: Callable[..., argparse.ArgumentParser]) -> None:
+    ask = add_action("decision-ask", help="Record an owner decision question")
+    ask.add_argument("project")
+    ask.add_argument("--class", dest="decision_class", required=True, choices=decisions.CLASSES)
+    ask.add_argument("--question", required=True)
+    for name in ("recommended", "ticket", "worker", "answer"):
+        ask.add_argument(f"--{name}")
+    reply = add_action("decision-answer", help="Record the owner's answer to a decision")
+    reply.add_argument("project")
+    reply.add_argument("--decision-id", required=True)
+    reply.add_argument("--answer", required=True)
+    show = add_action("decision-show", help="Show a decision and whether you may act on it")
+    show.add_argument("project")
+    show.add_argument("--decision-id", required=True)
+    add_action("decision-list", help="List the project's decisions").add_argument("project")
 
 
 def _instructions_parser(add_action: Callable[..., argparse.ArgumentParser]) -> None:
@@ -178,7 +202,7 @@ def run(  # noqa: C901, PLR0912 - owner action dispatch
     # pylint: disable=too-many-branches,too-many-locals
     scope = routing_scope(cwd)
     args = dict(args)
-    for field in ("coordinator", "recipient"):
+    for field in ("coordinator", "recipient", "worker"):
         if args.get(field) is not None:
             args[field] = resolve_reference(mailbox, str(args[field]), cwd)
     label = text_reference(args["project"])
@@ -296,7 +320,10 @@ def create_for(  # noqa: PLR0913 - explicit setup inputs
 
 def _flags(args: dict[str, object]) -> dict[str, bool]:
     """Delegation flags given on the command line, as ``Delegation.from_specs`` keywords."""
-    return {"auto_merge": bool(args.get("auto_merge"))}
+    return {
+        "auto_merge": bool(args.get("auto_merge")),
+        "owner_decisions": bool(args.get("owner_decisions")),
+    }
 
 
 def _gate_record(
@@ -339,6 +366,51 @@ def _gate_reject(
     )
 
 
+def _optional(args: dict[str, object], name: str) -> str | None:
+    value = args.get(name)
+    return None if value is None else str(value)
+
+
+def _decision_ask(
+    db: Connection, record: dict[str, object], args: dict[str, object], address: str
+) -> ActionResult:
+    return decisions.ask(
+        db,
+        record,
+        address,
+        decision_class=str(args["decision_class"]),
+        question=str(args["question"]),
+        recommended=_optional(args, "recommended"),
+        ticket=_optional(args, "ticket"),
+        worker=_optional(args, "worker"),
+        answer=_optional(args, "answer"),
+        now=datetime.now(UTC),
+    )
+
+
+def _decision_answer(
+    db: Connection, record: dict[str, object], args: dict[str, object], address: str
+) -> ActionResult:
+    return decisions.answer(
+        db, record, address, str(args["decision_id"]), str(args["answer"]), datetime.now(UTC)
+    )
+
+
+def _decision_show(
+    db: Connection, record: dict[str, object], args: dict[str, object], address: str
+) -> ActionResult:
+    return (
+        decisions.status(db, record, address, str(args["decision_id"]), now=datetime.now(UTC)),
+        [],
+    )
+
+
+def _decision_list(
+    db: Connection, record: dict[str, object], _args: dict[str, object], address: str
+) -> ActionResult:
+    return decisions.listing(db, record, address), []
+
+
 def _instruction_text(args: dict[str, object]) -> str:
     if args.get("file") is None:
         return str(args["text"])
@@ -369,6 +441,10 @@ ACTIONS: dict[str, Callable[..., ActionResult]] = {
     "gate-record": _gate_record,
     "gate-accept": _gate_accept,
     "gate-reject": _gate_reject,
+    "decision-ask": _decision_ask,
+    "decision-answer": _decision_answer,
+    "decision-show": _decision_show,
+    "decision-list": _decision_list,
 }
 
 
@@ -528,15 +604,7 @@ def _transition(  # noqa: C901, PLR0912 - bounded CLI action dispatch
 def _require_coordinator(
     db: Connection, record: dict[str, object], address: str, message: str
 ) -> None:
-    enrolled = cast(
-        "tuple[int] | None",
-        db.execute(
-            "SELECT 1 FROM coordination_enrollments "
-            "WHERE scope=? AND project_id=? AND address=? AND role='coordinator'",
-            (record["scope"], record["project_id"], address),
-        ).fetchone(),
-    )
-    if record["coordinator"] != address or enrolled is None:
+    if not store.coordinator_enrolled(db, record, address):
         raise BusError(message)
 
 

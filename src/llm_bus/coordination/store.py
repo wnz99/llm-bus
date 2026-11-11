@@ -109,6 +109,19 @@ def project(db: Connection, scope: str, label: str) -> dict[str, object]:
     return dict(zip((column[0] for column in cursor.description), row, strict=True))
 
 
+def coordinator_enrolled(db: Connection, record: dict[str, object], address: str) -> bool:
+    """True for the project's current coordinator while it stays enrolled as coordinator."""
+    enrolled = cast(
+        "tuple[int] | None",
+        db.execute(
+            "SELECT 1 FROM coordination_enrollments "
+            "WHERE scope=? AND project_id=? AND address=? AND role='coordinator'",
+            (record["scope"], record["project_id"], address),
+        ).fetchone(),
+    )
+    return record["coordinator"] == address and enrolled is not None
+
+
 def enroll(db: Connection, record: dict[str, object], address: str, role: str) -> None:
     existing = cast(
         "tuple[str, str] | None",

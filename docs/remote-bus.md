@@ -27,7 +27,13 @@ Replace the placeholder `database_id` in `cloudflare/wrangler.jsonc` with the D1
 "routes": [{"pattern": "bus.example.com", "custom_domain": true}]
 ```
 
-The example domain must belong to the operator's Cloudflare account. `workers_dev` is disabled in the supplied configuration. Back up existing D1 data before upgrades. Apply all migrations before deploying the matching Worker:
+The example domain must belong to the operator's Cloudflare account. `workers_dev` is disabled in the supplied configuration.
+
+> **Warning:** Because the supplied `wrangler.jsonc` sets `workers_dev: false`, deploying it disables any existing `*.workers.dev` route for the Worker. If your clients' `url` uses a `workers.dev` address, set `workers_dev: true` in your deploy configuration, or move every client to a custom domain before you deploy.
+
+When your Cloudflare login can see more than one account, set `CLOUDFLARE_ACCOUNT_ID` for the `wrangler` commands so that they select the right account.
+
+Back up existing D1 data before upgrades. Apply all migrations before deploying the matching Worker:
 
 ```sh
 bunx wrangler d1 migrations apply llm-bus --remote

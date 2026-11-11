@@ -6,6 +6,7 @@ import argparse
 
 import llm_bus.collab.cli
 import llm_bus.coordination.cli
+from llm_bus.locks.models import FORCE_AUTHORITY
 from llm_bus.reports.protocol import REPORT_REASONS
 
 
@@ -125,6 +126,12 @@ def _lock_parser(lock: argparse.ArgumentParser) -> None:
     )
     release = actions.add_parser("release", help="Give it up; the first waiter takes it")
     release.add_argument("resource")
+    release.add_argument(
+        "--force",
+        action="store_true",
+        help=f"Take it from another holder; only {FORCE_AUTHORITY} may",
+    )
+    release.add_argument("--reason", help="With --force: why the holder loses it; recorded")
     cancel = actions.add_parser("cancel", help="Leave the queue for a resource you no longer need")
     cancel.add_argument("resource")
     catalog = actions.add_parser(

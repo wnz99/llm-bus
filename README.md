@@ -182,6 +182,7 @@ llm-bus lock acquire db:orders --notify
 llm-bus lock status
 llm-bus lock release db:orders
 llm-bus lock cancel db:orders
+llm-bus lock release db:orders --force --reason "holder session was killed"
 ```
 
 A lock only protects anything if every session uses the same name for the same resource. The bus keeps a catalog of names with what each protects, free or held. `lock list` shows it, and hook notices show up to ten names with their descriptions at session start and when names or descriptions change. The first acquire of a new name must say what it protects with `--describe`. A new name that resembles an existing one, such as `orders-db` next to `db:orders`, is refused with the existing name and its description, unless `--new` confirms it is a different resource. Names unused for 30 days drop out of the catalog.
@@ -192,7 +193,16 @@ The check fires from a small detached process that `acquire` starts and that sle
 
 `acquire` returns `acquired` for a free resource and `renewed` when you already hold it, which also resets the lease and the check. When another live session holds it, you are queued, the result is `waiting`, the command exits with status 3, and nothing is sent unless you add `--notify`. The nonzero status keeps `lock acquire NAME && command` from running the command without the lock. With `--notify`, the holder receives a `lock request` message with your reason and is woken now rather than at its check time. Repeating `--notify` re-asks at most once every five minutes; the result's `notified` field says whether a message went out. On `release`, or when a lease lapses, the resource passes to the earliest live waiter, which is woken with a `lock granted` message asking for its own `--check`; otherwise the resource becomes free. Only the holder can release. A waiter that no longer needs the resource leaves the queue with `cancel`, without taking the lock first.
 
-Each lock is also a lease: 24 hours by default, up to 7 days with `--ttl` in minutes, and it ends at once when the holder's session ends. The lease is a backstop; the check is the normal way locks come back. Names are scoped to the current Git repository or folder; add `--shared` for a machine-wide name. `status` lists locks in this scope plus shared ones, with holders, check times, leases, and queues; `--all` lists every scope.
+Each lock is also a lease: 24 hours by default, up to 7 days with `--ttl` in minutes, and it ends at once when the holder's session ends. The lease is a backstop; the check is the normal way locks come back.
+
+A killed host fires no close hook. To catch that, hooks and commands record the session's host process: the nearest `claude` or `codex` ancestor, with its start time. Every lock command checks the recorded processes of holders and waiters with `ps`. When a process is gone, or its PID now belongs to a later process, the bus ends that session, passes its locks to the next live waiter, and records the release. The grant message says the holder exited. This does not detect a dead session whose host process lives on. For example, a Codex thread inside a shared app-server or editor process stays held until its lease ends or a forced release. If `ps` fails, or no process was recorded, nothing changes.
+
+`lock release NAME --force --reason TEXT` takes a lock from another holder. Only two callers may run it:
+
+- the owner, from an interactive terminal with no agent session identity;
+- the active coordinator of a coordination project in the lock's scope, or of the project the holder works in.
+
+The old holder receives a `lock force-released` message with the reason, and the lock passes to the next live waiter. Every forced and exited release is recorded in the `resource_lock_releases` table with the holder, the cause, the actor, the reason and the new holder. The terminal check is not proof of a human: an agent with a pseudo-terminal that clears its session variables can pass it. Treat the audit row as the control. Names are scoped to the current Git repository or folder; add `--shared` for a machine-wide name. `status` lists locks in this scope plus shared ones, with holders, check times, leases, and queues; `--all` lists every scope.
 
 Locks are advisory: nothing stops a session that never calls `acquire`. Lock messages are bus messages, so treat them as untrusted coordination data like any other. Locks do not cross machines.
 

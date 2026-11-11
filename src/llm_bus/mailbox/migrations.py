@@ -95,6 +95,28 @@ def create_lock_catalog(db: Connection) -> None:
     )
 
 
+def add_host_process(db: Connection) -> None:
+    """Record each session's host process, and why a lock left a holder against its will."""
+    columns = {
+        row[1]
+        for row in cast(
+            "list[tuple[int, str, str, int, object, int]]",
+            db.execute("PRAGMA table_info(agents)").fetchall(),
+        )
+    }
+    if "host_pid" not in columns:
+        db.execute("ALTER TABLE agents ADD COLUMN host_pid INTEGER")
+    if "host_started" not in columns:
+        db.execute("ALTER TABLE agents ADD COLUMN host_started TEXT")
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS resource_lock_releases (id INTEGER PRIMARY KEY, "
+        "scope TEXT NOT NULL, resource TEXT NOT NULL, holder TEXT NOT NULL, "
+        "cause TEXT NOT NULL CHECK(cause IN ('holder_exited','forced')), actor TEXT, "
+        "reason TEXT, granted_to TEXT, "
+        "released_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))"
+    )
+
+
 def message_columns(db: Connection) -> set[str]:
     return {
         row[1]

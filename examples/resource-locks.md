@@ -55,6 +55,13 @@ Repeated notifications are limited to once per five minutes per waiter.
 llm-bus --format agent lock acquire db:orders-dev --notify --reason "Reset development fixtures"
 ```
 
+If A's host process is killed, the next lock command by any session finds
+that the process has exited. The bus then ends A's session and grants the
+lock to B. If A's process still runs but A is stuck, the owner can run
+`llm-bus lock release db:orders-dev --force --reason "A is stuck"` from an
+interactive terminal outside any agent session. A project coordinator can run
+the same command from its session.
+
 After 45 minutes, A receives a check asking whether it can release. This is a
 reminder, not automatic release. If A still needs the database, it renews:
 

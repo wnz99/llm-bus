@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+from llm_bus.hosts.processes import HostProcess, exited
 from llm_bus.hosts.sessions import is_subagent
 from llm_bus.locks.models import (
     CATALOG_IDLE_DAYS,
     DEFAULT_TTL_MINUTES,
+    HOLDER_EXITED,
     NUDGE_INTERVAL_MINUTES,
     Key,
     Lock,
@@ -16,7 +18,7 @@ from llm_bus.locks.models import (
     Waiter,
 )
 from llm_bus.locks.notices import check_body, grant_body, request_body
-from llm_bus.mailbox.agents import expire_idle_agents
+from llm_bus.mailbox.agents import end_agent, expire_idle_agents
 
 if TYPE_CHECKING:
     import sqlite3
@@ -60,6 +62,7 @@ def read_lock(db: sqlite3.Connection, key: Key) -> Lock | None:
 def reap(db: sqlite3.Connection) -> list[Notice]:
     """Pass lapsed or abandoned locks to their first waiter, then raise any due checks."""
     expire_idle_agents(db)
+    notices = reap_exited(db)
     waiters = cast(
         "list[tuple[str]]",
         db.execute("SELECT DISTINCT waiter FROM resource_lock_waiters").fetchall(),
@@ -82,7 +85,6 @@ def reap(db: sqlite3.Connection) -> list[Notice]:
             ).fetchall(),
         )
     ]
-    notices: list[Notice] = []
     for key, holder in stale:
         notices.extend(hand_off(db, key, holder))
     notices.extend(due_checks(db))
@@ -121,7 +123,69 @@ def due_checks(db: sqlite3.Connection) -> list[Notice]:
     return notices
 
 
-def hand_off(db: sqlite3.Connection, key: Key, previous: str) -> list[Notice]:
+def reap_exited(db: sqlite3.Connection) -> list[Notice]:
+    """End lock holders and waiters whose host process exited, and pass their locks on.
+
+    A killed host fires no close hook, so its session would otherwise hold until the lease
+    ends. Sessions without a recorded process, or an unreadable process table, are left alone.
+    """
+    rows = cast(
+        "list[tuple[str, int, str]]",
+        db.execute(
+            "SELECT address,host_pid,host_started FROM agents WHERE ended_at IS NULL "
+            "AND host_pid IS NOT NULL AND (address IN (SELECT holder FROM resource_locks) "
+            "OR address IN (SELECT waiter FROM resource_lock_waiters))"
+        ).fetchall(),
+    )
+    recorded = {agent_address: HostProcess(pid, started) for agent_address, pid, started in rows}
+    gone = exited(list(recorded.values())) if recorded else None
+    if not gone:
+        return []
+    ended = [agent_address for agent_address, host in recorded.items() if host in gone]
+    for agent_address in ended:
+        end_agent(db, agent_address)
+    notices: list[Notice] = []
+    for agent_address in ended:
+        held = cast(
+            "list[tuple[str, str]]",
+            db.execute(
+                "SELECT scope,resource FROM resource_locks WHERE holder=?", (agent_address,)
+            ).fetchall(),
+        )
+        for scope, resource in held:
+            notices.extend(release_from(db, Key(scope, resource), agent_address, HOLDER_EXITED))
+    return notices
+
+
+def release_from(  # noqa: PLR0913 - audit fields
+    db: sqlite3.Connection,
+    key: Key,
+    holder: str,
+    cause: str,
+    *,
+    actor: str | None = None,
+    reason: str | None = None,
+) -> list[Notice]:
+    """Pass a lock on without its holder's consent, and record who, why, and to whom."""
+    # pylint: disable=too-many-arguments
+    how = (
+        "exited without releasing it"
+        if cause == HOLDER_EXITED
+        else f"had it force-released by {actor}"
+    )
+    notices = hand_off(db, key, holder, how)
+    lock = read_lock(db, key)
+    db.execute(
+        "INSERT INTO resource_lock_releases(scope,resource,holder,cause,actor,reason,granted_to) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (*key, holder, cause, actor, reason, lock["holder"] if lock else None),
+    )
+    return notices
+
+
+def hand_off(
+    db: sqlite3.Connection, key: Key, previous: str, how: str | None = None
+) -> list[Notice]:
     """Grant the resource to the earliest live waiter, which must then set its own estimate."""
     first = cast(
         "tuple[str, str | None] | None",
@@ -152,7 +216,8 @@ def hand_off(db: sqlite3.Connection, key: Key, previous: str) -> list[Notice]:
     lock = read_lock(db, key)
     if lock is None:
         raise RuntimeError("Handed-off lock could not be read")
-    return [Notice(first[0], grant_body(lock, previous))]
+    body = grant_body(lock, previous) if how is None else grant_body(lock, previous, how)
+    return [Notice(first[0], body)]
 
 
 def enqueue(

@@ -10,7 +10,7 @@ from llm_bus.errors import BusError
 from llm_bus.policy.fields import array_values, object_fields
 from llm_bus.remote.http import HTTP_GET, HTTP_POST
 from llm_bus.remote.outgoing import supports_availability, supports_coordination
-from llm_bus.remote.protocol import parse_delivery
+from llm_bus.remote.protocol import parse_approval, parse_delivery
 
 if TYPE_CHECKING:
     from llm_bus.policy.config import Repository
@@ -45,7 +45,21 @@ def receive(self: Bridge, repo: Repository) -> int:
     return imported
 
 
-def receive_route(  # noqa: C901 - three message classes
+def well_formed(data: dict[str, object], *, availability: bool) -> bool:
+    """A typed row's metadata, and any approval it carries, must parse."""
+    try:
+        if availability:
+            Availability.parse(data.get("availability"))
+        else:
+            direction = Direction.parse(data.get("coordination"))
+            if "approval" in data:
+                parse_approval(data["approval"], direction.operation)
+    except BusError:
+        return False
+    return True
+
+
+def receive_route(
     self: Bridge, repo: Repository, route: str, *, coordination: bool, availability: bool = False
 ) -> int:
     # pylint: disable=too-many-locals
@@ -67,17 +81,15 @@ def receive_route(  # noqa: C901 - three message classes
             if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence <= after:
                 raise BusError("Remote mailbox cursor did not advance")
             after = sequence
-            if ("coordination" in data) != coordination or ("availability" in data) != availability:
+            if (
+                ("coordination" in data) != coordination
+                or ("availability" in data) != availability
+                or ("approval" in data and not coordination)
+            ):
                 raise BusError("Remote mailbox coordination class conflicts")
-            if coordination or availability:
-                try:
-                    if availability:
-                        Availability.parse(data.get("availability"))
-                    else:
-                        Direction.parse(data.get("coordination"))
-                except BusError:
-                    # Invalid versions stay unreceipted, but cannot hide later rows.
-                    continue
+            # Invalid versions stay unreceipted, but cannot hide later rows.
+            if (coordination or availability) and not well_formed(data, availability=availability):
+                continue
             item = parse_delivery(value, repo, self.config.machine_id)
             admitted = self.remote.admit_message(item, repo.scope)
             if admitted is not None:

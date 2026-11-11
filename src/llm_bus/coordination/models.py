@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import cast
 from uuid import UUID
 
@@ -15,6 +15,7 @@ GATE_OPERATIONS: dict[str, str] = {
     "approve-merge": "merge",
     "approve-merge-admin": "merge-admin",
 }
+MAX_LIFETIME = timedelta(hours=24)
 UUID_VERSION = 4
 BRANCH = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]{1,200}")
 SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")

@@ -308,7 +308,11 @@ The coordinator then sends `llm-bus coordination approve`, which workers act on
 only after live checks and for tickets they hold with `coordination claim`.
 Force-push, deploys or production changes, credential or secret changes, paid
 or live runs, and merge with failing or pending CI are never delegable, and
-the bus checks no CI itself. Remote gate approvals arrive in a later version.
+the bus checks no CI itself. A remote coordinator can send gate approvals only
+when the coordinator owner's delegation, the receiver owner's own delegation
+(`coordination setup --delegate`), the worker's binding and the receiver's peer
+policy `accept_delegated_gates` all allow them; see the
+[remote guide](docs/remote-bus.md#remote-gate-approvals).
 The first command run by this version upgrades the mailbox to schema version
 13; older binaries then refuse it, so upgrade every llm-bus installation that
 shares the mailbox (`uv run llm-bus upgrade` from a checkout) before any

@@ -7,14 +7,13 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
 from llm_bus.cli.commands import send
-from llm_bus.coordination.models import Approval
+from llm_bus.coordination.models import MAX_LIFETIME, Approval
 from llm_bus.errors import BusError
 
 if TYPE_CHECKING:
     from llm_bus.mailbox.models import SenderContext
     from llm_bus.mailbox.store import Store
 
-MAX_LIFETIME = timedelta(hours=24)
 UNITS = {"m": "minutes", "h": "hours"}
 
 

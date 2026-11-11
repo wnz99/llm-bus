@@ -104,6 +104,7 @@ secret changes, paid or live runs, merge with failing or pending CI.
 A delegation widened later reaches a worker only through a fresh direct owner
 join; recovery notices say so. Session banners (project, role, label, ticket,
 branch, folder) appear in recovery notices, and workers prefix owner
-confirmation requests with them. Remote gate approvals are not available yet.
+confirmation requests with them. Remote gate approvals count only when every
+owner allows them (see [remote gate approvals](remote-bus.md#remote-gate-approvals)).
 The [canonical reference](../skills/llm-bus/references/coordination.md#gate-approvals-local-projects)
 has commands and live checks.

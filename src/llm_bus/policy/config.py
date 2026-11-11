@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from llm_bus.coordination.models import GATE_OPERATIONS
 from llm_bus.errors import BusError
 from llm_bus.policy.fields import array_values, identifier, object_fields, required_text
 from llm_bus.reports.protocol import REPORT_REASONS
@@ -32,6 +33,7 @@ class PeerPolicy:
     receive_messages: str = "deny"
     send_reports: tuple[str, ...] = ()
     receive_reports: tuple[str, ...] = ()
+    accept_delegated_gates: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -80,10 +82,27 @@ def _reports(value: object) -> tuple[str, ...]:
     return values
 
 
+def _gates(value: object) -> tuple[str, ...]:
+    values = tuple(required_text(item) for item in array_values(value))
+    if len(set(values)) != len(values) or any(
+        item not in GATE_OPERATIONS.values() for item in values
+    ):
+        raise BusError("Delegated gate permissions require unique built-in gates")
+    return values
+
+
 def _peer(value: object, machine: str) -> PeerPolicy:
     data = object_fields(value)
     _keys(
-        data, {"machine_id", "send_messages", "receive_messages", "send_reports", "receive_reports"}
+        data,
+        {
+            "machine_id",
+            "send_messages",
+            "receive_messages",
+            "send_reports",
+            "receive_reports",
+            "accept_delegated_gates",
+        },
     )
     peer = identifier(data.get("machine_id"))
     if peer == machine:
@@ -93,12 +112,16 @@ def _peer(value: object, machine: str) -> PeerPolicy:
     receive = data.get("receive_messages", "deny")
     if not isinstance(send, bool) or receive not in ("deny", "monitor", "inbox"):
         raise BusError("Invalid message capability policy")
+    gates = _gates(data.get("accept_delegated_gates", []))
+    if gates and receive != "inbox":
+        raise BusError('accept_delegated_gates needs receive_messages = "inbox"')
     return PeerPolicy(
         peer,
         send,
         cast("str", receive),
         _reports(data.get("send_reports", [])),
         _reports(data.get("receive_reports", [])),
+        gates,
     )
 
 

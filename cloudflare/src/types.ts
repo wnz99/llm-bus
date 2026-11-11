@@ -25,4 +25,5 @@ export interface MessageRow {
   reply_to: string | null;
   coordination: string | null;
   availability: string | null;
+  approval: string | null;
 }

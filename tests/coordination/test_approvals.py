@@ -333,7 +333,10 @@ def test_authorize_reasons_for_direct_inputs(tmp_path: Path) -> None:
     assert project.authorize(merge_approval(), "approve-commit") == "invalid_direction"
 
 
-def test_remote_coordinator_cannot_issue_gate_operations(tmp_path: Path) -> None:
+def test_remote_coordinator_without_peer_policy_is_not_delegated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LLM_BUS_CONFIG", str(tmp_path / "absent.toml"))
     project = Project(tmp_path, *DELEGATION)
     with project.store.transaction() as db:
         record: dict[str, object] = {"scope": "s", "project_id": "p", "generation": "g"}
@@ -346,7 +349,8 @@ def test_remote_coordinator_cannot_issue_gate_operations(tmp_path: Path) -> None
             approval=merge_approval(),
             now=datetime.now(UTC),
         )
-    assert decision.reason == "remote_gate_unsupported"
+    # No local peer policy exists here, so the default-deny cap leaves no gate.
+    assert decision.reason == "gate_not_delegated"
 
 
 def test_remote_admission_without_approval_is_not_verified(tmp_path: Path) -> None:
@@ -354,13 +358,6 @@ def test_remote_admission_without_approval_is_not_verified(tmp_path: Path) -> No
     # Relay admission calls authorize with no approval; gate operations then fail closed.
     for operation in ("approve-commit", "approve-push", "approve-merge", "approve-merge-admin"):
         assert project.authorize(None, operation) == "invalid_direction"
-
-
-def test_approval_to_remote_recipient_is_refused(tmp_path: Path) -> None:
-    project = Project(tmp_path, *DELEGATION)
-    with pytest.raises(BusError, match="Remote approval directions are not supported"):
-        project.approve("--recipient", "mac/repo/claude:worker")
-    assert project.rows("coordination_approvals") == 0
 
 
 def test_send_choices_do_not_include_gate_operations() -> None:

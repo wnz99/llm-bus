@@ -49,6 +49,8 @@ class RelayError(BusError):
             message = "Relay does not support reply links; linked message remains queued"
         elif code == "unsupported_coordination":
             message = "Relay does not support coordination; direction remains queued"
+        elif code == "unsupported_approvals":
+            message = "Relay does not support approvals; approval remains queued"
         elif code == "unsupported_availability":
             message = "Relay does not support availability; event remains queued"
         else:

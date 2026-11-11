@@ -1,17 +1,17 @@
 # Project State
 
-Last activity: 2026-11-11 - 261110-wft PR1 (#67), PR2 (#68) and PR3 (#69) merged; PR4 (Tasks 10-11) in progress; PR5 pending.
+Last activity: 2026-11-11 - 261110-wft PRs #67-#70 merged; #71 approved, merge pending; summary written.
 
 ## Registered Work
 
 | # | Description | Status | Directory |
 |---|-------------|--------|-----------|
-| 261110-wft | Coordinator-delegated approval gates and guided setup | PR1 (#67), PR2 (#68) and PR3 (#69) merged; PR4 (Tasks 10-11) in progress; PR5 pending (plan revision 6) | [261110-wft-coordinator-delegated-approval-gates-and](./quick/261110-wft-coordinator-delegated-approval-gates-and/) |
 
 ## Quick Tasks Completed
 
 | # | Description | Status | Directory |
 |---|-------------|--------|-----------|
+| 261110-wft | Coordinator-delegated approval gates and guided setup — PRs #67–#71 | PRs #67–#70 merged; #71 approved, merge pending; owner rollout pending after merge (relay migration 0007, Worker deploy, upgrade, install, skill and rule copies) | [261110-wft-coordinator-delegated-approval-gates-and](./quick/261110-wft-coordinator-delegated-approval-gates-and/) |
 | 261110-1lg | llm-bus upgrade command with old-binary pruning — PR #65 | Merged; post-merge acceptance passed 2026-11-10 (upgrade to 98afbb87 on Python 3.12, old package pruned, hooks reinstalled, bridge restarted with a stable new PID) | [261110-1lg-llm-bus-upgrade-command-with-old-binary](./quick/261110-1lg-llm-bus-upgrade-command-with-old-binary/) |
 | 261106-w7a | Agent labels and command-driven coordination — PR #62 | Merged; all four hosts installed at fabcb404 (guidance 8/schema 12), matching relay deployed; bounded independent rollout PASS and 28 installed-package smokes passed; frontend trust/context reload unobserved | [261106-w7a-agent-labels-and-command-driven-coordina](./quick/261106-w7a-agent-labels-and-command-driven-coordina/) |
 | 261105-knm | Optional coordination — PR #60 | Implementation, verification and independent review passed; merge pending current-head CI | [261105-knm-optional-coordination](./quick/261105-knm-optional-coordination/) |

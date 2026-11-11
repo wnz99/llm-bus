@@ -4,14 +4,42 @@ import { ACTIVE_GRANT, grant } from './auth';
 import { qualified } from './sessions';
 export const BATCH = 100;
 export const LIVE_MESSAGE = `m.sent_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')`;
-function direction(value: unknown): string {
+const APPROVAL_OPERATIONS = ['approve-commit','approve-push','approve-merge','approve-merge-admin'];
+const BRANCH = /^(?!-)(?!.*\.\.)[A-Za-z0-9._/-]{1,200}$/;
+const SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const TICKET = /^(?:[^\p{C}\p{Z}]| )+$/u;
+const EXPIRY = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
+function direction(value: unknown): {metadata: string; operation: string} {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new HttpError(400, 'Invalid coordination');
   const data = value as Record<string, unknown>;
   if (Object.keys(data).sort().join(',') !== 'generation,grant_id,operation,project_id,version'
-    || data.version !== 1 || typeof data.operation !== 'string' || !['assign','reprioritize','clarify','pause','cancel','review'].includes(data.operation)) {
+    || data.version !== 1 || typeof data.operation !== 'string'
+    || !['assign','reprioritize','clarify','pause','cancel','review',...APPROVAL_OPERATIONS].includes(data.operation)) {
     throw new HttpError(400, 'Invalid coordination');
   }
-  return JSON.stringify({version:1,project_id:text(data.project_id,UUID),generation:text(data.generation,UUID),grant_id:text(data.grant_id,UUID),operation:data.operation});
+  return {operation: data.operation, metadata: JSON.stringify({version:1,project_id:text(data.project_id,UUID),generation:text(data.generation,UUID),grant_id:text(data.grant_id,UUID),operation:data.operation})};
+}
+function expiry(value: unknown): string {
+  const match = typeof value === 'string' ? EXPIRY.exec(value) : null;
+  if (!match) throw new HttpError(400, 'Invalid approval');
+  const [year, month, day, hour, minute, second, offsetHour = '0', offsetMinute = '0'] = match.slice(1).map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day
+    || hour > 23 || minute > 59 || second > 59 || Number(offsetHour) > 23 || Number(offsetMinute) > 59) throw new HttpError(400, 'Invalid approval');
+  return value as string;
+}
+// Same shape rules as the client's Approval.validate, except that a record_id is local-only and never crosses machines.
+function approval(value: unknown, operation: string): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new HttpError(400, 'Invalid approval');
+  const data = value as Record<string, unknown>;
+  if (Object.keys(data).some(key => !['ticket','branch','base','expires_at','pr','head_sha'].includes(key))) throw new HttpError(400, 'Invalid approval');
+  const ticket = text(data.ticket);
+  if ([...ticket].length > 128 || !TICKET.test(ticket)) throw new HttpError(400, 'Invalid approval');
+  const merge = operation === 'approve-merge' || operation === 'approve-merge-admin';
+  if ((data.pr !== undefined) !== merge || (merge && (!Number.isSafeInteger(data.pr) || (data.pr as number) < 1))) throw new HttpError(400, 'Invalid approval');
+  if ((data.head_sha === undefined) !== (operation === 'approve-commit')) throw new HttpError(400, 'Invalid approval');
+  return JSON.stringify({ticket,branch:text(data.branch,BRANCH),base:text(data.base,BRANCH),expires_at:expiry(data.expires_at),
+    ...(data.pr === undefined ? {} : {pr:data.pr}), ...(data.head_sha === undefined ? {} : {head_sha:text(data.head_sha,SHA)})});
 }
 function availability(value: unknown): string {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new HttpError(400, 'Invalid availability');
@@ -23,9 +51,13 @@ function availability(value: unknown): string {
 type MessageClass = 'ordinary' | 'coordination' | 'availability';
 export async function send(request: Request, env: Env, machine: string, kind: MessageClass = 'ordinary'): Promise<Response> {
   const data = await jsonBody(request);
-  if ((kind !== 'coordination' && 'coordination' in data) || (kind !== 'availability' && 'availability' in data)) throw new HttpError(400, 'Use matching message endpoint');
-  if (kind !== 'ordinary' && Object.keys(data).some(key => !['id','sender','recipient','repo_id','body','reply_to',kind].includes(key))) throw new HttpError(400, 'Invalid typed envelope');
-  const metadata = kind === 'coordination' ? direction(data.coordination) : null;
+  if ((kind !== 'coordination' && ('coordination' in data || 'approval' in data)) || (kind !== 'availability' && 'availability' in data)) throw new HttpError(400, 'Use matching message endpoint');
+  if (kind !== 'ordinary' && Object.keys(data).some(key => !['id','sender','recipient','repo_id','body','reply_to',kind,...(kind === 'coordination' ? ['approval'] : [])].includes(key))) throw new HttpError(400, 'Invalid typed envelope');
+  const typed = kind === 'coordination' ? direction(data.coordination) : null;
+  const metadata = typed?.metadata ?? null;
+  const gate = typed !== null && APPROVAL_OPERATIONS.includes(typed.operation);
+  if (typed !== null && gate !== ('approval' in data)) throw new HttpError(400, 'Invalid approval');
+  const evidence = gate ? approval(data.approval, typed.operation) : null;
   const event = kind === 'availability' ? availability(data.availability) : null;
   const id = text(data.id, UUID);
   const repo = text(data.repo_id, ID);
@@ -39,13 +71,13 @@ export async function send(request: Request, env: Env, machine: string, kind: Me
   await grant(env, machine, repo);
   const prior = await env.DB.prepare('SELECT * FROM messages WHERE id=?').bind(id).first<MessageRow>();
   if (prior) {
-    if (prior.sender !== sender || prior.recipient !== recipient || prior.repo_id !== repo || prior.body !== body || prior.reply_to !== reply || prior.coordination !== metadata || prior.availability !== event) {
+    if (prior.sender !== sender || prior.recipient !== recipient || prior.repo_id !== repo || prior.body !== body || prior.reply_to !== reply || prior.coordination !== metadata || prior.availability !== event || prior.approval !== evidence) {
       throw new HttpError(409, 'Message ID already used');
     }
     return Response.json(transportResult(prior));
   }
-  const result = await env.DB.prepare(`INSERT INTO messages(id,sender,recipient,repo_id,body,reply_to,coordination,availability)
-    SELECT ?,s.address,r.address,?,?,?,?,? FROM sessions s JOIN sessions r ON r.address=?
+  const result = await env.DB.prepare(`INSERT INTO messages(id,sender,recipient,repo_id,body,reply_to,coordination,availability,approval)
+    SELECT ?,s.address,r.address,?,?,?,?,?,? FROM sessions s JOIN sessions r ON r.address=?
     JOIN machines rm ON rm.id=r.machine_id AND rm.revoked_at IS NULL
     JOIN repo_grants rg ON rg.machine_id=r.machine_id AND rg.repo_id=r.repo_id
     WHERE s.address=? AND s.repo_id=? AND r.repo_id=? AND r.machine_id<>?
@@ -53,10 +85,10 @@ export async function send(request: Request, env: Env, machine: string, kind: Me
     AND (? IS NULL OR EXISTS (SELECT 1 FROM messages p WHERE p.id=? AND p.repo_id=?
       AND ((p.sender=s.address AND p.recipient=r.address) OR (p.sender=r.address AND p.recipient=s.address))))
     ON CONFLICT(id) DO NOTHING`)
-    .bind(id, repo, body, reply, metadata, event, recipient, sender, repo, repo, machine, machine, repo, reply, reply, repo).run();
+    .bind(id, repo, body, reply, metadata, event, evidence, recipient, sender, repo, repo, machine, machine, repo, reply, reply, repo).run();
   if (!result.meta.changes) {
     const raced = await env.DB.prepare('SELECT * FROM messages WHERE id=?').bind(id).first<MessageRow>();
-    if (raced && raced.sender === sender && raced.recipient === recipient && raced.body === body && raced.repo_id === repo && raced.reply_to === reply && raced.coordination === metadata && raced.availability === event) {
+    if (raced && raced.sender === sender && raced.recipient === recipient && raced.body === body && raced.repo_id === repo && raced.reply_to === reply && raced.coordination === metadata && raced.availability === event && raced.approval === evidence) {
       return Response.json(transportResult(raced));
     }
     throw new HttpError(raced ? 409 : 403, 'Recipient or sender not allowed');
@@ -100,8 +132,8 @@ export async function inbox(url: URL, env: Env, machine: string, kind: MessageCl
     page.push(row);
   }
   return Response.json(page.map(row => {
-    const {coordination: metadata, availability: event, ...ordinary} = row;
-    return {...ordinary, reply_to:row.reply_to ?? undefined, ...(metadata === null ? {} : {coordination:JSON.parse(metadata)}), ...(event === null ? {} : {availability:JSON.parse(event)})};
+    const {coordination: metadata, availability: event, approval: evidence, ...ordinary} = row;
+    return {...ordinary, reply_to:row.reply_to ?? undefined, ...(metadata === null ? {} : {coordination:JSON.parse(metadata)}), ...(event === null ? {} : {availability:JSON.parse(event)}), ...(evidence === null ? {} : {approval:JSON.parse(evidence)})};
   }));
 }
 export async function receipt(request: Request, env: Env, machine: string, acknowledge: boolean): Promise<Response> {

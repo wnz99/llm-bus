@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
-from llm_bus.coordination.models import Availability, Direction
+from llm_bus.coordination.models import Approval, Availability, Direction
 from llm_bus.errors import BusError
 from llm_bus.mailbox.labels import validate_label
 from llm_bus.mailbox.models import MAX_MESSAGE_BYTES
@@ -86,13 +86,31 @@ def parse_delivery(value: object, repo: Repository, machine: str) -> Delivery:
         parent = required_text(data["reply_to"])
         validate_reply_uuid(parent)
         result["reply_to"] = parent
+    _typed_classes(result, data)
+    return result
+
+
+def _typed_classes(result: Delivery, data: dict[str, object]) -> None:
+    """Copy the one typed metadata class a delivery may carry, validated."""
+    # pylint: disable=clean-code-output-argument-mutation
     if "coordination" in data and "availability" in data:
         raise BusError("Conflicting remote message classes")
     if "availability" in data:
         result["availability"] = asdict(Availability.parse(data["availability"]))
     if "coordination" in data:
         result["coordination"] = asdict(Direction.parse(data["coordination"]))
-    return result
+    if "approval" in data:
+        result["approval"] = parse_approval(
+            data["approval"], Direction.parse(data.get("coordination")).operation
+        ).wire()
+
+
+def parse_approval(value: object, operation: str) -> Approval:
+    """Approvals travel only with gate operations and never carry a local gate record."""
+    approval = Approval.parse(value, operation)
+    if approval.record_id is not None:
+        raise BusError("Gate records stay local; remote approvals carry no record_id")
+    return approval
 
 
 def validate_status(key: str, value: object, *, require_id: bool = False) -> dict[str, object]:

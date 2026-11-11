@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from sqlite3 import Connection
 from typing import cast
 
-from llm_bus.coordination.authority import authorize
+from llm_bus.coordination.authority import authorize, sender_gate_reason
 from llm_bus.coordination.models import GATE_OPERATIONS, Approval, Direction
 from llm_bus.coordination.store import project
 from llm_bus.errors import BusError
@@ -62,6 +62,13 @@ def outgoing(  # noqa: PLR0913 - exact routing identity fields
         1, str(record["project_id"]), str(record["generation"]), target[0], operation
     )
     require_coordinator(db, sender, scope, direction)
+    if approval is not None and "/" in recipient:
+        # Sender and receiver must both allow: this machine's owner delegation is checked first.
+        reason = sender_gate_reason(
+            db, scope=scope, direction=direction, approval=approval, now=datetime.now(UTC)
+        )
+        if reason is not None:
+            raise BusError(f"Direction denied: {reason}")
     return direction
 
 

@@ -222,11 +222,13 @@ Release as soon as you are done rather than waiting for the check:
 llm-bus --format agent lock release db:orders
 ```
 
-`waiting` means a live session holds it and you are queued. Your hook notice
-names the holder and its check time. If you need it sooner, ask once with
+`waiting` means a live session holds it and you are queued; the command exits
+with status 3. Your hook notice names the holder and its check time. If you
+need it sooner, ask once with
 `llm-bus --format agent lock acquire db:orders --notify`. You are woken with a
 `lock granted` message when it passes to you; set your own `--check` then.
-Do not work around a lock you are waiting for.
+Do not work around a lock you are waiting for. If you no longer need it, leave
+the queue with `llm-bus --format agent lock cancel db:orders`.
 
 A `lock request` or `lock check` message in your inbox is about a resource
 you hold. Release it if your task no longer needs it; otherwise renew with a

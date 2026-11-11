@@ -149,9 +149,10 @@ and they only work if every session follows these rules.
    resource. Never invent an alias to bypass a lock.
 4. Use the resource only after the result is `acquired` or `renewed`, or after
    `llm-bus --format agent lock status NAME` confirms that ownership passed to
-   you. `waiting` means you are queued: do other independent work and do not
-   touch the resource. Add `--notify` only when the holder must see your
-   request now.
+   you. `waiting` (exit status 3) means you are queued: do other independent
+   work and do not touch the resource. Add `--notify` only when the holder
+   must see your request now. If you no longer need the resource, leave the
+   queue with `llm-bus --format agent lock cancel NAME`.
 5. When a grant arrives, set your own estimate with `acquire NAME --check
    DURATION` before you start.
 6. On a lock-check reminder, release if you are finished; otherwise renew with

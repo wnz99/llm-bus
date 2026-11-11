@@ -76,14 +76,14 @@ def read_messaging_socket(db: sqlite3.Connection, agent_address: str) -> str | N
 def upsert_agent(
     db: sqlite3.Connection, kind: str, session_id: str, project: str, scope: str
 ) -> str:
+    """Record the session's current scope without ending its join consent.
+
+    Hooks can register from a folder outside the repository, or after a git timeout,
+    while the session is still the joined worker. Authorization refuses directions
+    until the session is back in the project scope.
+    """
     agent_address = address(kind, session_id)
     expire_idle_agents(db)
-    previous = cast(
-        "tuple[str] | None",
-        db.execute("SELECT scope FROM agents WHERE address=?", (agent_address,)).fetchone(),
-    )
-    if previous is not None and previous[0] != scope:
-        end_session_consents(db, agent_address)
     db.execute("DELETE FROM agent_labels WHERE address=? AND scope<>?", (agent_address, scope))
     db.execute(
         "INSERT INTO agents(address, kind, project, scope, last_seen, ended_at) "

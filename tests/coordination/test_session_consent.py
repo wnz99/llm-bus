@@ -40,7 +40,83 @@ def test_owner_join_and_durable_arrival(tmp_path: Path) -> None:
         assert db.execute("SELECT count(*) FROM coordination_local_availability").fetchone()[0] == 2
 
 
-@pytest.mark.parametrize("ending", ["leave", "revoke", "replace", "scope", "expiry", "close"])
+def test_scope_change_keeps_consent_and_pauses_authority(tmp_path: Path) -> None:
+    mailbox = Store(tmp_path / "bus.sqlite3")
+    record = create(mailbox, tmp_path)
+    invoke(mailbox, tmp_path, "join", "demo", address="claude:worker")
+    with mailbox.transaction() as db:
+        grant_id = cast(
+            "tuple[str]", db.execute("SELECT grant_id FROM coordination_grants").fetchone()
+        )[0]
+    direction = Direction(
+        1, str(record["project_id"]), str(record["generation"]), grant_id, "assign"
+    )
+
+    def decision() -> tuple[bool, str | None]:
+        with mailbox.transaction() as db:
+            result = authorize(
+                db,
+                sender="codex:owner",
+                recipient="claude:worker",
+                scope=routing_scope(str(tmp_path)),
+                direction=direction,
+                now=datetime.now(UTC),
+            )
+        return result.verified, result.reason
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    mailbox.register("claude", "worker", str(elsewhere))
+    assert decision() == (False, "out_of_scope")
+    with mailbox.transaction() as db:
+        assert db.execute(
+            "SELECT ended_at FROM coordination_session_consents WHERE grant_id=?", (grant_id,)
+        ).fetchone() == (None,)
+        assert db.execute(
+            "SELECT revoked_at FROM coordination_grants WHERE grant_id=?", (grant_id,)
+        ).fetchone() == (None,)
+        assert db.execute(
+            "SELECT count(*) FROM coordination_enrollments WHERE address='claude:worker'"
+        ).fetchone() == (1,)
+    mailbox.register("claude", "worker", str(tmp_path))
+    assert decision()[0]
+
+
+def test_moved_worker_is_told_where_to_leave(tmp_path: Path) -> None:
+    mailbox = Store(tmp_path / "bus.sqlite3")
+    create(mailbox, tmp_path)
+    invoke(mailbox, tmp_path, "join", "demo", address="claude:worker")
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / ".beads").mkdir(parents=True)
+    mailbox.register("codex", "other-owner", str(elsewhere))
+    invoke(
+        mailbox,
+        elsewhere,
+        "coordinate",
+        "next",
+        "--objective",
+        "Other work",
+        "--beads-workspace",
+        str(elsewhere),
+        "--memory-ticket",
+        "bus-2",
+        address="codex:other-owner",
+    )
+    with mailbox.transaction() as db:
+        db.execute("UPDATE coordination_projects SET label='demo two' WHERE label='demo'")
+    mailbox.register("claude", "worker", str(elsewhere))
+    with pytest.raises(BusError) as refused:
+        invoke(mailbox, elsewhere, "join", "next", address="claude:worker")
+    assert str(refused.value).endswith(
+        f"run `llm-bus coordination leave 'demo two'` from folder {routing_scope(str(tmp_path))}"
+    )
+    mailbox.register("claude", "worker", str(tmp_path))
+    invoke(mailbox, tmp_path, "coordination", "leave", "demo two", address="claude:worker")
+    mailbox.register("claude", "worker", str(elsewhere))
+    invoke(mailbox, elsewhere, "join", "next", address="claude:worker")
+
+
+@pytest.mark.parametrize("ending", ["leave", "revoke", "replace", "expiry", "close"])
 def test_lifecycle_ends_authority(tmp_path: Path, ending: str) -> None:
     mailbox = Store(tmp_path / "bus.sqlite3")
     record = create(mailbox, tmp_path)

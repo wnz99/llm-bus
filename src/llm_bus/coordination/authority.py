@@ -77,13 +77,10 @@ def authorize(  # noqa: PLR0913, C901, PLR0911, PLR0912 - explicit denial preced
     )
     if consent is not None:
         owner, ended, current_scope, session_ended = consent
-        if (
-            owner != recipient
-            or ended is not None
-            or current_scope != scope
-            or session_ended is not None
-        ):
+        if owner != recipient or ended is not None or session_ended is not None:
             return deny("revoked")
+        if current_scope != scope:
+            return deny("out_of_scope")
     enrolled = cast(
         "tuple[str] | None",
         db.execute(

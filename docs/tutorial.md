@@ -206,11 +206,12 @@ Take a lock with an estimate of when you can release it. The first use of a new 
 llm-bus lock acquire db:orders --check 45m --describe "orders Postgres database" --reason "running migration 0042"
 ```
 
-The result is `acquired` for a free resource and `renewed` when you already hold it. When another live session holds it, you are queued and the result is `waiting`. To ask the holder now instead of waiting for its check time, add `--notify`:
+The result is `acquired` for a free resource and `renewed` when you already hold it. When another live session holds it, you are queued, the result is `waiting` and the command exits with status 3, so `lock acquire NAME && command` never runs the command without the lock. To ask the holder now instead of waiting for its check time, add `--notify`. To leave the queue when you no longer need the resource, use `cancel`:
 
 ```sh
 llm-bus lock acquire db:orders --notify --reason "need to run the export"
 llm-bus lock release db:orders
+llm-bus lock cancel db:orders
 ```
 
 *The acquire results above are described, not shown: the scratch run skipped `acquire`, because it starts a detached timer process.*
@@ -285,7 +286,7 @@ Your direct join request is your consent for that worker to accept directions fr
 
 The coordinator receives one informational message: `Worker claude:22222222-bbbb joined coordination project orders-export. Availability is informational; recheck current authority before assignments.`
 
-This automatic consent lasts through turns and compaction. It ends when the worker session closes, after 24 hours of inactivity, or on `leave`, `revoke` or replacement of the coordinator generation. One session can be enrolled in one project.
+This automatic consent lasts through turns and compaction. It ends when the worker session closes, after 24 hours of inactivity, or on `leave`, `revoke` or replacement of the coordinator generation. Moving the session to a folder outside the project does not end it. Until the session works in the project again, directions do not verify (a send is refused with a folder mismatch error, or with `wrong_scope` under `--cross-folder` and at delivery) and hook recovery shows state `out_of_scope`. To enroll in a project elsewhere, first run `leave` from a folder of the original project; the join error names the repository or folder and the exact command. One session can be enrolled in one project.
 
 If you want a grant with an explicit lifetime instead, ask the coordinator session to run `coordination grant` before the worker joins. `grant` is an owner action: run it only on your direct request (see [owner actions](#inspect-stop-and-replace)).
 
@@ -446,7 +447,7 @@ The flags depend on the gate:
    "approval": {"ticket": "demo-7", "branch": "feat/orders-export", "base": "main", "expires_at": "…"}, …}}
 ```
 
-An approval verifies only when the gate and base are in both the project delegation and the worker's binding, the work branch is neither the base nor a delegated target, it has not expired, and the worker's claim matches the ticket and branch. In the scratch run, approving `merge` for the worker narrowed to `commit` and `push` failed at once with `Direction denied: gate_not_delegated`. Other reasons you may see are `target_denied`, `expired`, `wrong_ticket`, `invalid_direction`, `revoked` and `stale_generation`.
+An approval verifies only when the gate and base are in both the project delegation and the worker's binding, the work branch is neither the base nor a delegated target, it has not expired, and the worker's claim matches the ticket and branch. In the scratch run, approving `merge` for the worker narrowed to `commit` and `push` failed at once with `Direction denied: gate_not_delegated`. Other reasons you may see are `target_denied`, `expired`, `wrong_ticket`, `invalid_direction`, `revoked`, `wrong_scope` and `stale_generation`.
 
 Before acting, the worker checks live evidence itself: the current branch and head SHA for commit and push, and for a merge the PR's base, head and state, every required check passing, and review evidence without unresolved high or medium findings. The exact checks are in [Gate approvals](../skills/llm-bus/references/coordination.md#gate-approvals-local-projects).
 
@@ -759,7 +760,7 @@ For each collaborator, you choose on your private owner page what their messages
 | Identity, label, roster | `whoami [--label NAME]`, `list [--all]`, `agents`, `guidance` | [3](#3-messages-between-local-sessions) |
 | Messages | `send TO [--body TEXT] [--reply-to ID] [--cross-folder]`, `inbox [--limit N]`, `ack ID…` | [3](#3-messages-between-local-sessions) |
 | History and diagnostics | `history [--folder P \| --repository P \| --all] [--before ID \| --after ID] [--limit N] [--conversation ID] [--peer ADDR]`, `status ID` | [3](#3-messages-between-local-sessions) |
-| Locks | `lock list [--all]`, `lock status [--all] [--shared] [NAME]`, `lock acquire NAME --check D [--describe T] [--reason T] [--new] [--ttl M] [--notify] [--shared]`, `lock release NAME [--shared]` | [4](#4-shared-resource-locks) |
+| Locks | `lock list [--all]`, `lock status [--all] [--shared] [NAME]`, `lock acquire NAME --check D [--describe T] [--reason T] [--new] [--ttl M] [--notify] [--shared]`, `lock release NAME [--shared]`, `lock cancel NAME [--shared]` | [4](#4-shared-resource-locks) |
 | Start or join a project | `coordinate PROJECT [--setup] [--objective T] [--beads-workspace P] [--memory-ticket ID] [--reference P] [--delegate G:B] [--auto-merge] [--owner-decisions] [--decision-defaults M]`, `join PROJECT [--narrow ITEM]` | [5](#5-coordinate-a-project), [6](#6-delegate-approval-gates) |
 | Directions | `send TO --project PROJECT --direction assign\|reprioritize\|clarify\|pause\|cancel\|review` | [5](#5-coordinate-a-project) |
 | Project lifecycle | `coordination show\|leave PROJECT`, `coordination grant PROJECT --recipient A (--until-revoked \| --expires-at T)`, `coordination revoke PROJECT [--recipient A]`, `coordination replace PROJECT --coordinator A --generation UUID`, `coordination target PROJECT --recipient A --grant-id ID` | [5](#5-coordinate-a-project) |

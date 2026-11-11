@@ -125,6 +125,8 @@ def _lock_parser(lock: argparse.ArgumentParser) -> None:
     )
     release = actions.add_parser("release", help="Give it up; the first waiter takes it")
     release.add_argument("resource")
+    cancel = actions.add_parser("cancel", help="Leave the queue for a resource you no longer need")
+    cancel.add_argument("resource")
     catalog = actions.add_parser(
         "list", help="Show known lock names, what they protect, and who holds them"
     )
@@ -132,7 +134,7 @@ def _lock_parser(lock: argparse.ArgumentParser) -> None:
     status = actions.add_parser("status", help="Show holders, leases, and queues")
     status.add_argument("resource", nargs="?")
     status.add_argument("--all", action="store_true", help="Every repository and folder")
-    for parser in (acquire, release, status):
+    for parser in (acquire, release, cancel, status):
         parser.add_argument(
             "--shared", action="store_true", help="Machine-wide name instead of this folder's"
         )

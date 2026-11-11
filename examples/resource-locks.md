@@ -45,8 +45,10 @@ llm-bus --format agent lock acquire db:orders-dev --check 45m \
   --reason "Apply development migrations"
 ```
 
-Agent B requests the same name. This returns `waiting` without blocking the
-command. `--notify` sends A a request and attempts a wake; omit it to queue quietly.
+Agent B requests the same name. This returns `waiting` with exit status 3,
+without blocking the command, so `acquire NAME && command` never runs the
+command unlocked. If B later no longer needs it, `lock cancel db:orders-dev`
+leaves the queue; an earlier `--notify` request stays in A's inbox. `--notify` sends A a request and attempts a wake; omit it to queue quietly.
 Repeated notifications are limited to once per five minutes per waiter.
 
 ```sh

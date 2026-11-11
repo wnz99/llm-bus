@@ -521,7 +521,9 @@ with D1 and vitest (`cloudflare/`, `bun run test`, `bun run check`); `git` and
   - PR1 expected output: exactly `tests/coordination/test_availability.py`, and
     `git diff -U0 origin/main...HEAD -- tests/coordination/test_availability.py | grep '^[-+] '`
     prints exactly one `-` line ending `== 12` and one `+` line ending `== 13`.
-  - PR2–PR4 expected output: empty. PR5 expected output: at most
+  - PR2 expected output (amended by D26): at most
+    `tests/coordination/test_setup.py` (PR1's own feature test).
+  - PR3–PR4 expected output: empty. PR5 expected output: at most
     `tests/coordination/test_approvals.py` (a file added by PR1 in this flow).
 - Bus code makes no network calls; hooks never run `gh`, Beads or network.
 - Sibling flow `bus-upgrade` (revision 3) lands first; PR1 is cut from `main` after it merges. Overlap is limited to `src/llm_bus/cli/app.py:main`: bus-upgrade adds an `upgrade` dispatch before `Store(...)`; this flow adds the `coordinate --setup` route before `host_identity` (Task 5) and the `coordination approve` route inside the coordination branch (Task 3). bus-upgrade's `cli/parser.py:build_parser` edit (new `upgrade` subparser) does not overlap: this flow adds no top-level command and edits only `coordination/cli.py:add_parsers`. Neither flow touches the schema. On a textual conflict, keep both branches; `uv run poe check` and `uv run llm-bus upgrade --help` must pass afterwards.
@@ -573,6 +575,36 @@ with D1 and vitest (`cloudflare/`, `bun run test`, `bun run check`); `git` and
   leave, revoke and replace; `create_for(..., *, current)`; `coordinate --setup`
   routing shares the `collab` branch before `host_identity`; `show` adds only
   `delegation` and `bindings`.
+- PR2 delivery status (revision 6, audit note; no semantic change): wave 6
+  (Task 7) is delivered as PR #68, merged into `main` as `479f966`; PR2
+  planner conformance `CONFORMS` (`conformance-pr2-a1.md`), PR review
+  approved (`pr68-review-r2.md`). Waves 7–11 remain. Accepted PR2 deviations
+  that later tasks consume:
+  - The TTY setup wizard asks about auto-merge when a merge or merge-admin
+    gate is kept (D26); `--setup` ignores `--auto-merge`.
+  - `coordination show` `gate_records` rows use the key `record_id` (not
+    `id`) and also carry `ticket`, `branch`, `base`, `review_evidence`,
+    `required_checks` and `submitted_at` (PR review M1). These fields are
+    untrusted worker-supplied references and appear in every command output
+    that returns `store.show` (review N3). The query lives in `store.py`.
+  - Dropping auto-merge blocks only new acceptances; `gate-reject` withdraws
+    an accepted approval (review L2, documented).
+  - The no-option amend error reads `amend needs --delegate, --no-delegation
+    or a delegation flag` until Task 8 (R1 below).
+  - `_declare_delegation(db, record, args, address, *, new)` takes `args`,
+    not `specs`.
+  - `ACTIONS` handlers take `(db, record, args, address)` and return
+    `(dict | None, list[Message])`.
+  - `Delegation.narrow` strips flag words and passes them as keywords to
+    `from_specs`; it does not build directly.
+  - Amend logic lives in `cli._amend`, called from `_transition`. Task 13's
+    remote `amend` branch edits `_amend`, not an inline `_transition` block.
+- PR2 carry-forward (implementer notes, no plan revision):
+  - R1 (Task 8): when adding `--objective`, replace the `cli._amend` error
+    text with `amend needs --objective or a delegation change` (SC2).
+  - R2 (Tasks 10–11): `narrow` must also strip `owner-decisions` and
+    `decision-defaults` and pass them as keywords to `from_specs`. Task 11
+    widens `_flags` (currently `dict[str, bool]`) to carry a number.
 - Parallel implementation permission: `not-requested`
 - Host/model policy: detected host Claude Code. Planner ran as `claude-opus-5-5` under the controller's delegation (effort not exposed). Implementer/fixer and reviewer roles use the controller's resolved controls; none were supplied to this planner. No user overrides observed.
 - Post-merge owner actions (not tasks; owner approval required; D25). No install, upgrade or copy happens after PR1–PR4; PR bodies list none. Once, after PR5 merges, on this machine only, in this order:

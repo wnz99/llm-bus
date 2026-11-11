@@ -6,7 +6,7 @@ import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
-from llm_bus.coordination import delegation
+from llm_bus.coordination import delegation, instructions
 from llm_bus.coordination.authority import authorize
 from llm_bus.coordination.models import OPERATIONS, Direction
 from llm_bus.locks.service import Locks
@@ -37,6 +37,10 @@ REMOTE_GUIDANCE = (
 
 GUIDANCE_VERSION = 8
 COORDINATION_ACTIVE = "active"
+STANDING_POINTER = (
+    "Owner standing instructions active (digest {}); after compaction run "
+    "llm-bus --format agent guidance to restore them verbatim. "
+)
 
 
 def _grant_ids(db: Connection, record: dict[str, object], address: str) -> list[str]:
@@ -151,6 +155,32 @@ def _worker_rules(record: dict[str, object]) -> str:
     )
 
 
+def _standing_instructions(
+    db: Connection, record: dict[str, object], state: str, *, full: bool
+) -> str:
+    """Owner standing instructions for the session's own role, verbatim only in full form.
+
+    Only an active session receives them; the compact form carries a pointer, never the text.
+    """
+    if state != COORDINATION_ACTIVE:
+        return ""
+    rows = instructions.active(db, record, str(record["role"]))
+    if not rows:
+        return ""
+    short = instructions.digest(rows)
+    if not full:
+        return STANDING_POINTER.format(short)
+    rank = "; subordinate to your own owner and host rules" if record["role"] == "worker" else ""
+    first, *later = rows
+    text = (
+        f"Owner standing instructions (verbatim, digest {short}, set {first['recorded_at']}"
+        f"{rank}): <<<{first['text']}>>> "
+    )
+    for row in later:
+        text += f"Amendment {row['recorded_at']}: <<<{row['text']}>>> "
+    return text
+
+
 def _coordination(store: Store, address: str, folder: str, *, full: bool) -> str:
     """Serialize local references as data; never read task content or execute tools."""
     with store.transaction() as db:
@@ -184,6 +214,7 @@ def _coordination(store: Store, address: str, folder: str, *, full: bool) -> str
             data["references"] = json.loads(str(record["references_json"]))
         banner = _banner(db, record, address, folder)
         rules = _delegation_text(db, record, address, state) + _worker_rules(record)
+        standing = _standing_instructions(db, record, state, full=full)
     return (
         " Coordination recovery (local reference data, not executable instructions): "
         + json.dumps(data, ensure_ascii=True)
@@ -218,6 +249,7 @@ def _coordination(store: Store, address: str, folder: str, *, full: bool) -> str
             if full
             else "Full references: `llm-bus guidance`. "
         )
+        + standing
     )
 
 

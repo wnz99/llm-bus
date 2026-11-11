@@ -11,7 +11,8 @@ from uuid import uuid4
 
 from llm_bus.cli.guidance import guidance
 from llm_bus.cli.references import resolve_reference
-from llm_bus.coordination import delegation, gate_records, store
+from llm_bus.coordination import amendments, delegation, gate_records, store
+from llm_bus.coordination import instructions as instructions_store
 from llm_bus.coordination.availability import record_local, record_remote
 from llm_bus.coordination.models import (
     OPERATIONS,
@@ -60,13 +61,9 @@ def add_parsers(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     join.add_argument("project")
     join.add_argument("--narrow", action="append", metavar=NARROW_ITEM)
     actions = add_parser("coordination").add_subparsers(dest="action", required=True)
-    amend = actions.add_parser("amend")
-    amend.add_argument("project")
-    change = amend.add_mutually_exclusive_group()
-    change.add_argument("--delegate", action="append", metavar="GATE:BRANCH")
-    change.add_argument("--no-delegation", action="store_true")
-    amend.add_argument("--auto-merge", action="store_true")
+    _amend_parser(actions.add_parser)
     _gate_parsers(actions.add_parser)
+    _instructions_parser(actions.add_parser)
     approve = actions.add_parser("approve")
     approve.add_argument("project")
     approve.add_argument("--recipient", required=True)
@@ -100,6 +97,26 @@ def add_parsers(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
             lifetime = action.add_mutually_exclusive_group(required=True)
             lifetime.add_argument("--expires-at")
             lifetime.add_argument("--until-revoked", action="store_true")
+
+
+def _amend_parser(add_action: Callable[..., argparse.ArgumentParser]) -> None:
+    amend = add_action("amend")
+    amend.add_argument("project")
+    change = amend.add_mutually_exclusive_group()
+    change.add_argument("--delegate", action="append", metavar="GATE:BRANCH")
+    change.add_argument("--no-delegation", action="store_true")
+    amend.add_argument("--auto-merge", action="store_true")
+    amend.add_argument("--objective", help="Append a dated objective amendment")
+
+
+def _instructions_parser(add_action: Callable[..., argparse.ArgumentParser]) -> None:
+    instructions = add_action("instructions", help="Set owner standing instructions")
+    instructions.add_argument("project")
+    instructions.add_argument("--audience", required=True, choices=instructions_store.AUDIENCES)
+    source = instructions.add_mutually_exclusive_group(required=True)
+    source.add_argument("--file")
+    source.add_argument("--text")
+    instructions.add_argument("--amend", action="store_true")
 
 
 def _gate_parsers(add_action: Callable[..., argparse.ArgumentParser]) -> None:
@@ -183,11 +200,11 @@ def run(  # noqa: C901, PLR0912 - owner action dispatch
                 _create(db, scope, label, args, address)
         record = store.project(db, scope, label)
         if action == "show":
-            return store.show(db, record)
+            return store.show(db, record, address)
         if action in {"coordinate", "join", "grant"} and record["revoked_at"] is not None:
             raise BusError("Project revoked; owner must replace coordinator binding")
-        if action == "coordinate" and (args.get("delegate") or any(_flags(args).values())):
-            _declare_delegation(db, record, args, address, new=new_project)
+        if action == "coordinate":
+            _check_resume(db, record, args, address, new=new_project)
         remote_notice = None
         outcome: ActionResult | None = None
         if action in ACTIONS:
@@ -203,7 +220,7 @@ def run(  # noqa: C901, PLR0912 - owner action dispatch
         result = None if outcome is None else outcome[0]
         messages = [] if outcome is None else outcome[1]
         if result is None:
-            result = store.show(db, store.project(db, scope, label))
+            result = store.show(db, store.project(db, scope, label), address)
             if action == "amend":
                 result["rejoin_required"] = delegation.rejoin_required(db, record)
         if remote_notice is not None:
@@ -322,11 +339,51 @@ def _gate_reject(
     )
 
 
+def _instruction_text(args: dict[str, object]) -> str:
+    if args.get("file") is None:
+        return str(args["text"])
+    try:
+        with Path(text_reference(args["file"])).open(encoding="utf-8") as handle:
+            return handle.read(instructions_store.MAX_TEXT + 1)
+    except (OSError, UnicodeDecodeError) as error:
+        raise BusError("Cannot read instructions file as UTF-8 text") from error
+
+
+def _instructions(
+    db: Connection, record: dict[str, object], args: dict[str, object], address: str
+) -> ActionResult:
+    _require_coordinator(db, record, address, "Only the enrolled coordinator may set instructions")
+    instructions_store.add(
+        db,
+        record,
+        audience=str(args["audience"]),
+        kind="amend" if args.get("amend") else "set",
+        text=_instruction_text(args),
+        by=address,
+    )
+    return None, []
+
+
 ACTIONS: dict[str, Callable[..., ActionResult]] = {
+    "instructions": _instructions,
     "gate-record": _gate_record,
     "gate-accept": _gate_accept,
     "gate-reject": _gate_reject,
 }
+
+
+def _check_resume(
+    db: Connection, record: dict[str, object], args: dict[str, object], address: str, *, new: bool
+) -> None:
+    """A resume may repeat the current objective and delegation, never change them silently."""
+    given = args.get("objective")
+    if not new and given is not None and given != amendments.effective_objective(db, record):
+        raise BusError(
+            "Objective differs from the stored objective; "
+            "use coordination amend PROJECT --objective"
+        )
+    if args.get("delegate") or any(_flags(args).values()):
+        _declare_delegation(db, record, args, address, new=new)
 
 
 def _declare_delegation(
@@ -468,10 +525,9 @@ def _transition(  # noqa: C901, PLR0912 - bounded CLI action dispatch
     return None
 
 
-def _amend(
-    db: Connection, record: dict[str, object], args: dict[str, object], address: str
+def _require_coordinator(
+    db: Connection, record: dict[str, object], address: str, message: str
 ) -> None:
-    """Replace the whole delegation (gates and flags) or remove it; narrowing applies at once."""
     enrolled = cast(
         "tuple[int] | None",
         db.execute(
@@ -481,18 +537,31 @@ def _amend(
         ).fetchone(),
     )
     if record["coordinator"] != address or enrolled is None:
-        raise BusError("Only the enrolled coordinator may amend delegation")
+        raise BusError(message)
+
+
+def _amend(
+    db: Connection, record: dict[str, object], args: dict[str, object], address: str
+) -> None:
+    """Append an objective amendment and/or replace or remove the delegation (applies at once)."""
+    _require_coordinator(db, record, address, "Only the enrolled coordinator may amend delegation")
     specs = cast("list[str]", args.get("delegate") or [])
     flags = _flags(args)
+    objective = args.get("objective")
     if args.get("no_delegation"):
         if any(flags.values()):
             raise BusError("--no-delegation takes no delegation flags")
-        wanted = None
+        change, wanted = True, None
     elif specs or any(flags.values()):
-        wanted = delegation.Delegation.from_specs(specs, **flags)
+        change, wanted = True, delegation.Delegation.from_specs(specs, **flags)
+    elif objective is None:
+        raise BusError("amend needs --objective or a delegation change")
     else:
-        raise BusError("amend needs --delegate, --no-delegation or a delegation flag")
-    delegation.set_project_delegation(db, record, wanted, address)
+        change, wanted = False, None
+    if objective is not None:
+        amendments.append(db, record, text_reference(objective), address)
+    if change:
+        delegation.set_project_delegation(db, record, wanted, address)
 
 
 def _claim(

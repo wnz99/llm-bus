@@ -21,6 +21,10 @@ BRANCH_HINT = (
 )
 ORIGIN_HEAD_TIMEOUT = 10
 YES = "yes"
+INSTRUCTIONS_STEP = (
+    "Optional: set owner standing instructions with llm-bus coordination instructions "
+    "PROJECT --audience coordinator|worker --file PATH"
+)
 
 
 def detect_integration_branch(cwd: str) -> tuple[str | None, str]:
@@ -75,6 +79,7 @@ def profile(cwd: str) -> dict[str, object]:
             ),
             "The owner may disable items or change target branches, never add floor items.",
             "Run only the confirmed flags with the command below.",
+            INSTRUCTIONS_STEP,
         ],
         "command": (
             "llm-bus --format agent coordinate PROJECT --objective OBJECTIVE "
@@ -160,7 +165,9 @@ def run_wizard(  # noqa: PLR0913 - explicit inputs
     if ask("Store this setup? (type yes): ").strip().lower() != YES:
         say("Nothing stored.")
         return None
-    return cli.create_for(store, cwd, label, args, coordinator, current=identity)
+    created = cli.create_for(store, cwd, label, args, coordinator, current=identity)
+    say(INSTRUCTIONS_STEP)
+    return created
 
 
 def _review(

@@ -110,8 +110,9 @@ owner setup commands after the corresponding direct owner authorization.
    the required-approvals rule; required checks must still pass on the exact
    head. Add `--auto-merge` (it needs a `merge` or `merge-admin` gate) to let a
    worker merge on a coordinator-accepted gate record; the profile lists it
-   under `flags`, and the wizard takes it from `--auto-merge` on the same
-   command. Resuming with `coordinate PROJECT --delegate ... [--auto-merge]`
+   under `flags`. The wizard ignores `--auto-merge` and instead asks "Delegate
+   auto-merge?" after the gate prompts, only when a `merge` or `merge-admin`
+   gate is kept. Resuming with `coordinate PROJECT --delegate ... [--auto-merge]`
    may only repeat the stored delegation; change it with `coordination amend`
    (below).
 

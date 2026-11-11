@@ -40,6 +40,10 @@ CODEX_THREAD_ENV = "CODEX_THREAD_ID"
 CODEX_SESSION_ENV = "CODEX_SESSION_ID"
 
 
+# Queued, not holding: `lock acquire NAME && use-resource` must not run the second command.
+LOCK_WAITING_EXIT = 3
+
+
 def host_identity(environment: dict[str, str]) -> tuple[str, str]:
     """Read native session identity from Claude or Codex shell tools."""
     claude_id = environment.get(CLAUDE_SESSION_ENV)
@@ -132,6 +136,11 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912 - com
             )
             result = registered_command(store, command, args, agent_address, project)
         print(serialize(result, str(command), str(args["format"])))
+        queued = (
+            command == "lock"
+            and isinstance(result, dict)
+            and cast("dict[str, object]", result).get("status") == "waiting"
+        )
     except (
         BusError,
         CollabError,
@@ -142,4 +151,4 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912 - com
     ) as error:
         print(f"llm-bus: {error}", file=sys.stderr)
         return 1
-    return 0
+    return LOCK_WAITING_EXIT if queued else 0

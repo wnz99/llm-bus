@@ -181,6 +181,7 @@ llm-bus lock acquire db:orders --check 45m --describe "orders Postgres database"
 llm-bus lock acquire db:orders --notify
 llm-bus lock status
 llm-bus lock release db:orders
+llm-bus lock cancel db:orders
 ```
 
 A lock only protects anything if every session uses the same name for the same resource. The bus keeps a catalog of names with what each protects, free or held. `lock list` shows it, and hook notices show up to ten names with their descriptions at session start and when names or descriptions change. The first acquire of a new name must say what it protects with `--describe`. A new name that resembles an existing one, such as `orders-db` next to `db:orders`, is refused with the existing name and its description, unless `--new` confirms it is a different resource. Names unused for 30 days drop out of the catalog.
@@ -189,7 +190,7 @@ A lock only protects anything if every session uses the same name for the same r
 
 The check fires from a small detached process that `acquire` starts and that sleeps until the estimate. If that process is gone, for example after a reboot, the next lock command or hook from any session on the machine sends the overdue check instead.
 
-`acquire` returns `acquired` for a free resource and `renewed` when you already hold it, which also resets the lease and the check. When another live session holds it, you are queued, the result is `waiting`, and nothing is sent unless you add `--notify`. With `--notify`, the holder receives a `lock request` message with your reason and is woken now rather than at its check time. Repeating `--notify` re-asks at most once every five minutes; the result's `notified` field says whether a message went out. On `release`, or when a lease lapses, the resource passes to the earliest live waiter, which is woken with a `lock granted` message asking for its own `--check`; otherwise the resource becomes free. Only the holder can release.
+`acquire` returns `acquired` for a free resource and `renewed` when you already hold it, which also resets the lease and the check. When another live session holds it, you are queued, the result is `waiting`, the command exits with status 3, and nothing is sent unless you add `--notify`. The nonzero status keeps `lock acquire NAME && command` from running the command without the lock. With `--notify`, the holder receives a `lock request` message with your reason and is woken now rather than at its check time. Repeating `--notify` re-asks at most once every five minutes; the result's `notified` field says whether a message went out. On `release`, or when a lease lapses, the resource passes to the earliest live waiter, which is woken with a `lock granted` message asking for its own `--check`; otherwise the resource becomes free. Only the holder can release. A waiter that no longer needs the resource leaves the queue with `cancel`, without taking the lock first.
 
 Each lock is also a lease: 24 hours by default, up to 7 days with `--ttl` in minutes, and it ends at once when the holder's session ends. The lease is a backstop; the check is the normal way locks come back. Names are scoped to the current Git repository or folder; add `--shared` for a machine-wide name. `status` lists locks in this scope plus shared ones, with holders, check times, leases, and queues; `--all` lists every scope.
 
@@ -288,7 +289,8 @@ sessions, requests `/llm-bus coordinate PROJECT` in one main session and
 `/llm-bus join PROJECT` in each worker. A direct owner join records consent to
 the current exact coordinator and objective. Automatic consent ends at session
 close, 24-hour inactivity expiry, leave, revoke or generation replacement;
-turn completion and compaction preserve it. Existing explicit owner grants keep
+turn completion, compaction and working outside the project folder preserve it,
+though directions are refused as `out_of_scope` while outside. Existing explicit owner grants keep
 their selected lifetimes. Local joins record the assignment target and one
 durable informational arrival per grant, even if the coordinator is offline.
 Native wake support determines whether the coordinator resumes automatically.

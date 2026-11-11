@@ -56,6 +56,8 @@ def _lock(store: Store, args: dict[str, object], agent_address: str, project: st
                 notify=cast("bool", args["notify"]),
             ),
         )
+    if action == "cancel":
+        return locks.cancel(key)
     return locks.release(key)
 
 

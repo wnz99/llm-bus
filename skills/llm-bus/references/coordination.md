@@ -49,7 +49,7 @@ changes, paid or live runs, and merge with failing or pending CI. Delegation
 specs naming a floor item are rejected. An approval counts only while verified
 (`coordination.verified: true`, `reason: verified`); other reasons
 (for example `gate_not_delegated`, `target_denied`, `expired`, `wrong_ticket`,
-`invalid_direction`, `revoked`, `stale_generation`)
+`invalid_direction`, `revoked`, `out_of_scope`, `stale_generation`)
 leave it historical and
 unverified. The bus never inspects CI, reviews or branches: the worker checks
 that evidence live (see "Gate approvals"). Merge gate records and auto-merge
@@ -150,7 +150,9 @@ owner setup commands after the corresponding direct owner authorization.
 
    With no existing explicit grant, join creates session-bound consent, enrollment
    and target automatically. Consent survives turns/compaction and ends on close,
-   24-hour inactivity, leave, revoke or generation replacement. Existing explicit
+   24-hour inactivity, leave, revoke or generation replacement. Working from a
+   folder outside the project keeps consent; directions verify again once the
+   session is back in the project scope (`out_of_scope` until then). Existing explicit
    grants retain their selected lifetimes. One native session enrolls in one project.
    Join assigns no specialty. The coordinator receives one durable informational
    availability notice per grant; this does not prove continued reachability.

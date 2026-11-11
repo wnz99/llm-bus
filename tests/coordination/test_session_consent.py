@@ -40,7 +40,49 @@ def test_owner_join_and_durable_arrival(tmp_path: Path) -> None:
         assert db.execute("SELECT count(*) FROM coordination_local_availability").fetchone()[0] == 2
 
 
-@pytest.mark.parametrize("ending", ["leave", "revoke", "replace", "scope", "expiry", "close"])
+def test_scope_change_keeps_consent_and_pauses_authority(tmp_path: Path) -> None:
+    mailbox = Store(tmp_path / "bus.sqlite3")
+    record = create(mailbox, tmp_path)
+    invoke(mailbox, tmp_path, "join", "demo", address="claude:worker")
+    with mailbox.transaction() as db:
+        grant_id = cast(
+            "tuple[str]", db.execute("SELECT grant_id FROM coordination_grants").fetchone()
+        )[0]
+    direction = Direction(
+        1, str(record["project_id"]), str(record["generation"]), grant_id, "assign"
+    )
+
+    def decision() -> tuple[bool, str | None]:
+        with mailbox.transaction() as db:
+            result = authorize(
+                db,
+                sender="codex:owner",
+                recipient="claude:worker",
+                scope=routing_scope(str(tmp_path)),
+                direction=direction,
+                now=datetime.now(UTC),
+            )
+        return result.verified, result.reason
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    mailbox.register("claude", "worker", str(elsewhere))
+    assert decision() == (False, "out_of_scope")
+    with mailbox.transaction() as db:
+        assert db.execute(
+            "SELECT ended_at FROM coordination_session_consents WHERE grant_id=?", (grant_id,)
+        ).fetchone() == (None,)
+        assert db.execute(
+            "SELECT revoked_at FROM coordination_grants WHERE grant_id=?", (grant_id,)
+        ).fetchone() == (None,)
+        assert db.execute(
+            "SELECT count(*) FROM coordination_enrollments WHERE address='claude:worker'"
+        ).fetchone() == (1,)
+    mailbox.register("claude", "worker", str(tmp_path))
+    assert decision()[0]
+
+
+@pytest.mark.parametrize("ending", ["leave", "revoke", "replace", "expiry", "close"])
 def test_lifecycle_ends_authority(tmp_path: Path, ending: str) -> None:
     mailbox = Store(tmp_path / "bus.sqlite3")
     record = create(mailbox, tmp_path)

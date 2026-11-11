@@ -18,6 +18,8 @@ from llm_bus.routing import routing_scope
 if TYPE_CHECKING:
     from llm_bus.mailbox.store import Store
 
+LEFT_QUEUE = "cancelled"
+
 
 class Locks:
     """Lock commands for one registered session; every call reaps lapsed holders first."""
@@ -122,6 +124,24 @@ class Locks:
             "lock": lock,
             "notices": deliver(self.store, sent),
         }
+
+    def cancel(self, key: Key) -> dict[str, object]:
+        """Leave the queue for a resource you no longer need, without taking it first."""
+        with self.store.transaction() as db:
+            db.execute("BEGIN IMMEDIATE")
+            notices = reap(db)
+            left = db.execute(
+                "DELETE FROM resource_lock_waiters WHERE scope=? AND resource=? AND waiter=?",
+                (*key, self.agent_address),
+            ).rowcount
+            if not left:
+                lock = read_lock(db, key)
+                if lock is not None and lock["holder"] == self.agent_address:
+                    raise BusError(f"You hold {key.resource!r}; `llm-bus lock release` gives it up")
+                raise BusError(f"You are not waiting for {key.resource!r}")
+            lock = read_lock(db, key)
+            sent = persist(self.store, self.agent_address, db, notices)
+        return {"status": LEFT_QUEUE, "lock": lock, "notices": deliver(self.store, sent)}
 
     def status(self, key: Key | None, *, every_scope: bool) -> dict[str, object]:
         """Read locks visible from this folder, plus shared ones, without changing ownership."""

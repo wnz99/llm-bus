@@ -54,7 +54,7 @@ def test_coordination_references_are_data_and_coordinator_state_is_current(
     assert str(record["project_id"]) in full
     assert "Persist bounded assignments" in full
     assert "return control" in full
-    assert '"state": "suspended"' in guidance(
+    assert '"state": "out_of_scope"' in guidance(
         store, "codex:owner", str(tmp_path / "other"), full=False
     )
     with store.transaction() as db:

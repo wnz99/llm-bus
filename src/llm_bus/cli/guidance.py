@@ -222,10 +222,9 @@ def _coordination(store: Store, address: str, folder: str, *, full: bool) -> str
         state = "suspended"
         if record["revoked_at"] is not None:
             state = "revoked"
-        elif (
-            record["scope"] == routing_scope(folder)
-            and record["generation"] == record["enrollment_generation"]
-        ):
+        elif record["scope"] != routing_scope(folder):
+            state = "out_of_scope"
+        elif record["generation"] == record["enrollment_generation"]:
             if record["role"] == "coordinator" and record["coordinator"] == address:
                 state = COORDINATION_ACTIVE
             elif record["role"] == "worker":

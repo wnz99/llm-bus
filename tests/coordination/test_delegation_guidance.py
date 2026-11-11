@@ -147,12 +147,12 @@ def test_foreign_folder_hides_gate_lines_but_keeps_rejoin_notice(tmp_path: Path)
     foreign = tmp_path / "elsewhere"
     foreign.mkdir()
     worker = guidance(mailbox, WORKER, str(foreign), full=True)
-    assert '"state": "suspended"' in worker
+    assert '"state": "out_of_scope"' in worker
     assert "Delegated gates" not in worker
     assert "Never delegated" not in worker
     assert NOTICE in worker
     owner = guidance(mailbox, OWNER, str(foreign), full=True)
-    assert '"state": "suspended"' in owner
+    assert '"state": "out_of_scope"' in owner
     assert "Delegated gates" not in owner
 
 

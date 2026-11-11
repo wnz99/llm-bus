@@ -200,7 +200,7 @@ def run(  # noqa: C901, PLR0912 - owner action dispatch
                 _create(db, scope, label, args, address)
         record = store.project(db, scope, label)
         if action == "show":
-            return store.show(db, record)
+            return store.show(db, record, address)
         if action in {"coordinate", "join", "grant"} and record["revoked_at"] is not None:
             raise BusError("Project revoked; owner must replace coordinator binding")
         if action == "coordinate":
@@ -220,7 +220,7 @@ def run(  # noqa: C901, PLR0912 - owner action dispatch
         result = None if outcome is None else outcome[0]
         messages = [] if outcome is None else outcome[1]
         if result is None:
-            result = store.show(db, store.project(db, scope, label))
+            result = store.show(db, store.project(db, scope, label), address)
             if action == "amend":
                 result["rejoin_required"] = delegation.rejoin_required(db, record)
         if remote_notice is not None:

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -26,8 +27,8 @@ if TYPE_CHECKING:
 
 COORDINATOR_TEXT = "Always ask the owner before touching billing code.\n\tUse small PRs."
 WORKER_TEXT = "Never edit generated files; run the formatter first."
-POINTER = "Owner standing instructions active (sha256 "
-VERBATIM = "Owner standing instructions (verbatim, sha256 "
+POINTER = "Owner standing instructions active (digest "
+VERBATIM = "Owner standing instructions (verbatim, digest "
 
 
 @pytest.fixture(autouse=True)
@@ -148,6 +149,59 @@ def test_guidance_matches_role_and_never_leaks_across_audiences(tmp_path: Path) 
     assert COORDINATOR_TEXT not in full
     assert COORDINATOR_TEXT not in worker(full=False)
     assert "subordinate" not in owner(full=True)
+
+
+def test_command_results_scope_instruction_text_by_role(tmp_path: Path) -> None:
+    project = Project(tmp_path, claim=False)
+    say(project, "coordinator", COORDINATOR_TEXT)
+    say(project, "worker", WORKER_TEXT)
+    results = [
+        invoke(project.store, tmp_path, "coordination", "show", "demo", address="claude:worker"),
+        invoke(project.store, tmp_path, "join", "demo", address="claude:worker"),
+        invoke(
+            project.store,
+            tmp_path,
+            *("coordination", "claim", "demo", "--ticket", "roam-22m"),
+            *("--branch", "roam-22m-login"),
+            address="claude:worker",
+        ),
+    ]
+    for result in results:
+        text = json.dumps(result)
+        assert COORDINATOR_TEXT not in text
+        assert json.dumps(COORDINATOR_TEXT)[1:-1] not in text
+        listed = cast("list[dict[str, object]]", result["instructions"])
+        assert [row["audience"] for row in listed] == ["worker"]
+        assert listed[0]["text"] == WORKER_TEXT
+    owner = project.owner("coordination", "show", "demo")
+    seen = {
+        row["audience"]: row["text"] for row in cast("list[dict[str, str]]", owner["instructions"])
+    }
+    assert seen == {"coordinator": COORDINATOR_TEXT, "worker": WORKER_TEXT}
+
+
+def test_unknown_viewer_sees_coordinator_metadata_only(tmp_path: Path) -> None:
+    project = Project(tmp_path)
+    say(project, "coordinator", COORDINATOR_TEXT)
+    with project.store.transaction() as db:
+        shown = store.show(db, store.project(db, str(tmp_path), "demo"))
+    listed = cast("list[dict[str, object]]", shown["instructions"])
+    assert [row["audience"] for row in listed] == ["coordinator"]
+    assert "text" not in listed[0]
+    assert COORDINATOR_TEXT not in json.dumps(shown)
+
+
+def test_control_characters_include_del_and_c1() -> None:
+    for bad in ("del\x7f", "c1\x85"):
+        with pytest.raises(BusError, match="Control characters"):
+            instructions.add(
+                sqlite3.connect(":memory:"),
+                {},
+                audience="worker",
+                kind="set",
+                text=bad,
+                by="x",
+            )
 
 
 def test_compact_form_carries_only_a_pointer(tmp_path: Path) -> None:

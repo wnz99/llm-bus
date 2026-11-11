@@ -38,7 +38,7 @@ REMOTE_GUIDANCE = (
 GUIDANCE_VERSION = 8
 COORDINATION_ACTIVE = "active"
 STANDING_POINTER = (
-    "Owner standing instructions active (sha256 {}); after compaction run "
+    "Owner standing instructions active (digest {}); after compaction run "
     "llm-bus --format agent guidance to restore them verbatim. "
 )
 
@@ -173,7 +173,7 @@ def _standing_instructions(
     rank = "; subordinate to your own owner and host rules" if record["role"] == "worker" else ""
     first, *later = rows
     text = (
-        f"Owner standing instructions (verbatim, sha256 {short}, set {first['recorded_at']}"
+        f"Owner standing instructions (verbatim, digest {short}, set {first['recorded_at']}"
         f"{rank}): <<<{first['text']}>>> "
     )
     for row in later:

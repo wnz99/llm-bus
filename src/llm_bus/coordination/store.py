@@ -213,7 +213,27 @@ def join_session(db: Connection, record: dict[str, object], address: str) -> str
     return grant_id
 
 
-def show(db: Connection, record: dict[str, object]) -> dict[str, object]:
+def _visible_instructions(
+    db: Connection, record: dict[str, object], viewer: str | None
+) -> list[dict[str, object]]:
+    """Standing instructions the viewer may read: coordinator text only for the coordinator.
+
+    Anyone else sees worker text; an unknown viewer sees coordinator entries as metadata only.
+    """
+    is_coordinator = viewer is not None and viewer == record["coordinator"]
+    standing: list[dict[str, object]] = []
+    for audience in instructions.AUDIENCES:
+        rows = instructions.active(db, record, audience)
+        if audience == "coordinator" and not is_coordinator:
+            rows = [{k: v for k, v in row.items() if k != "text"} for row in rows]
+            if viewer is not None:
+                rows = []
+        standing.extend(rows)
+    return standing
+
+
+def show(db: Connection, record: dict[str, object], viewer: str | None = None) -> dict[str, object]:
+    """Project state; ``viewer`` is the caller's address, used to scope instruction text."""
     result = dict(record)
     result["references"] = json.loads(str(result.pop("references_json")))
     for table in ("grants", "enrollments", "targets"):
@@ -251,11 +271,7 @@ def show(db: Connection, record: dict[str, object]) -> dict[str, object]:
     if recorded:
         result["amendments"] = recorded
         result["effective_objective"] = amendments.effective_objective(db, record)
-    standing = [
-        row
-        for audience in instructions.AUDIENCES
-        for row in instructions.active(db, record, audience)
-    ]
+    standing = _visible_instructions(db, record, viewer)
     if standing:
         result["instructions"] = standing
     return result

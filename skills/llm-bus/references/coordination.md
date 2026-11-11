@@ -53,9 +53,10 @@ specs naming a floor item are rejected. An approval counts only while verified
 leave it historical and
 unverified. The bus never inspects CI, reviews or branches: the worker checks
 that evidence live (see "Gate approvals"). Merge gate records and auto-merge
-(see "Merge gate records") are available for local projects. Remote gate
-approvals, standing instructions and decision requests are not available in
-this version. `record_withdrawn` marks a record-bound approval whose gate
+(see "Merge gate records") are available for local projects. Standing
+instructions and objective amendments are local-project data. Remote gate
+approvals and decision requests are not available in this version.
+`record_withdrawn` marks a record-bound approval whose gate
 record was rejected, superseded or is not accepted.
 
 Setup, grant, revoke and replacement are local owner actions, never actions
@@ -340,7 +341,8 @@ llm-bus --format agent coordination instructions PROJECT --audience worker --fil
 llm-bus --format agent coordination instructions PROJECT --audience coordinator --text "..." --amend
 ```
 
-Text is 1 to 8192 characters with no control characters except newline and tab.
+Text is 1 to 8192 characters with no control characters except newline and tab,
+no Unicode format characters and no `<<<` or `>>>` (the verbatim delimiters).
 Without `--amend` the command replaces the audience's instructions; `--amend`
 appends a dated entry (it needs existing instructions), and the active text
 (latest replacement plus later amendments) must stay within 8192 characters.

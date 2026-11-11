@@ -14,6 +14,7 @@ MAX_TEXT = 8192
 DIGEST_LENGTH = 12
 COLUMNS = "instruction_id,audience,kind,text,sha256,recorded_by,recorded_at"
 ALLOWED_CONTROLS = {"\n", "\t"}
+DELIMITERS = ("<<<", ">>>")  # bound the verbatim text in guidance
 
 # Active rows start at the newest replacement entry.
 ACTIVE_SQL = (
@@ -45,6 +46,10 @@ def _validate(text: str) -> None:
         raise BusError(f"Instruction text must be 1 to {MAX_TEXT} characters")
     if any(unicodedata.category(char) == "Cc" and char not in ALLOWED_CONTROLS for char in text):
         raise BusError("Control characters other than newline and tab are forbidden")
+    if any(unicodedata.category(char) == "Cf" for char in text):
+        raise BusError("Unicode format characters are forbidden in instruction text")
+    if any(mark in text for mark in DELIMITERS):
+        raise BusError("Instruction text must not contain '<<<' or '>>>'")
 
 
 def add(  # noqa: PLR0913 - explicit stored fields

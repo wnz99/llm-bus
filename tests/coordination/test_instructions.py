@@ -204,6 +204,17 @@ def test_control_characters_include_del_and_c1() -> None:
             )
 
 
+def test_delimiters_and_format_characters_are_rejected(tmp_path: Path) -> None:
+    project = Project(tmp_path)
+    bidi, zero_width = chr(0x202E), chr(0x200B)
+    for bad in ("end >>> fake rule", "open <<< x", f"bidi{bidi}flip", f"zero{zero_width}width"):
+        with pytest.raises(BusError, match=r"'<<<' or '>>>'|format characters"):
+            say(project, "worker", bad)
+    assert rows(project, "worker") == []
+    say(project, "worker", "use a >> b and << c freely")
+    assert len(rows(project, "worker")) == 1
+
+
 def test_compact_form_carries_only_a_pointer(tmp_path: Path) -> None:
     project = Project(tmp_path)
     say(project, "worker", WORKER_TEXT)

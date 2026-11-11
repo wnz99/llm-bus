@@ -546,8 +546,62 @@ def _declare_delegation(
         raise BusError("Delegation differs; use coordination amend PROJECT")
 
 
+COORDINATOR_ONLY = {"grant": "grant", "revoke": "revoke", "target": "set direction targets"}
+WORKER_REFUSED = {
+    **COORDINATOR_ONLY,
+    "replace": "replace the coordinator",
+    "setup": "set up the project",
+    "amend": "amend its delegation",
+}
+
+
+def _owner_gate(db: Connection, action: str, record: dict[str, object], address: str) -> None:
+    """Refuse owner actions to sessions without the role for them.
+
+    On a local project only the coordinator may grant, revoke or target; local ``amend``
+    checks the same rule itself. ``replace``, and on a remote-coordinated project every
+    owner action (no local session is its coordinator), is refused to any session that is
+    or was a worker of the current generation. A never-enrolled session still passes, and
+    so does a worker of an older generation after ``replace``.
+    """
+    remote = "/" in str(record["coordinator"])
+    if action in COORDINATOR_ONLY and not remote:
+        if not _owner_coordinator(db, record, address):
+            raise BusError(f"Only the project's coordinator may {COORDINATOR_ONLY[action]}")
+    elif action == "replace" or (remote and action in WORKER_REFUSED):
+        _refuse_worker(db, action, record, address)
+
+
+def _refuse_worker(db: Connection, action: str, record: dict[str, object], address: str) -> None:
+    if not store.coordinator_enrolled(db, record, address) and store.worker_of_generation(
+        db, record, address
+    ):
+        raise BusError(f"A worker of this project cannot {WORKER_REFUSED[action]}")
+
+
+def _owner_coordinator(db: Connection, record: dict[str, object], address: str) -> bool:
+    """The enrolled coordinator, or the named coordinator before it enrolls if never a worker."""
+    if store.coordinator_enrolled(db, record, address):
+        return True
+    return record["coordinator"] == address and not store.worker_of_generation(db, record, address)
+
+
+def _existing(db: Connection, scope: str, label: str, project_id: str) -> dict[str, object] | None:
+    found = cast(
+        "tuple[str] | None",
+        db.execute(
+            "SELECT label FROM coordination_projects WHERE scope=? AND (label=? OR project_id=?)",
+            (scope, label, project_id),
+        ).fetchone(),
+    )
+    return None if found is None else store.project(db, scope, found[0])
+
+
 def _setup(db: Connection, scope: str, label: str, args: dict[str, object], address: str) -> None:
     """Receiver-owner import of a coordinator binding, with its own gate delegation if given."""
+    current = _existing(db, scope, label, uuid4_string(str(args["project_id"])))
+    if current is not None:
+        _refuse_worker(db, "setup", current, address)
     coordinator = _address(args["coordinator"])
     _create(db, scope, label, args, coordinator)
     specs = cast("list[str]", args.get("delegate") or [])
@@ -597,6 +651,7 @@ def _transition(  # noqa: C901, PLR0912 - bounded CLI action dispatch
 ) -> int | None:
     # pylint: disable=too-many-branches
     key = (record["scope"], record["project_id"])
+    _owner_gate(db, action, record, address)
     if action == "coordinate":
         if record["coordinator"] != address:
             raise BusError("Different coordinator; owner must use coordination replace")
@@ -707,10 +762,8 @@ def _amend(
             raise BusError(
                 "Remote-coordinated project: amend accepts only --delegate or --no-delegation"
             )
-    else:
-        _require_coordinator(
-            db, record, address, "Only the enrolled coordinator may amend delegation"
-        )
+    elif not _owner_coordinator(db, record, address):
+        raise BusError("Only the enrolled coordinator may amend delegation")
     if args.get("no_delegation"):
         if _flagged(flags):
             raise BusError("--no-delegation takes no delegation flags")

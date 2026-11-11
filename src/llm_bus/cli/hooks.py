@@ -62,8 +62,11 @@ def hook(store: Store, kind: str) -> None:
         project = str(Path.cwd())
     project = str(Path(project).resolve())
     agent_address = store.register(kind, session_id, project, messaging_socket=claude_socket(kind))
-    if event == "UserPromptSubmit" and parse_wake_notice(hook_data.get("prompt")) is None:
-        record_turn(store, agent_address)
+    if event == "UserPromptSubmit":
+        # A recognized bus wake marks the turn as not owner-started; see decisions.record_turn.
+        record_turn(
+            store, agent_address, wake=parse_wake_notice(hook_data.get("prompt")) is not None
+        )
     count = store.pending_count(agent_address, limit=HOOK_COUNT_LIMIT)
     if (
         kind == "codex"

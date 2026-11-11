@@ -1,0 +1,28 @@
+// Operator deploy settings. Copy to wrangler.local.jsonc (ignored by git), fill in your
+// values, and pass `--config wrangler.local.jsonc` to every wrangler command that reaches
+// Cloudflare. Keep the remaining keys in step with the committed wrangler.jsonc, which
+// builds and tests use.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "llm-bus-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  // Choose how clients reach the relay:
+  // - custom domain: keep workers_dev false and set routes;
+  // - workers.dev URL: set workers_dev to true and delete routes.
+  // Deploying with workers_dev false removes an existing *.workers.dev route.
+  "workers_dev": false,
+  "routes": [{"pattern": "bus.example.com", "custom_domain": true}],
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "llm-bus",
+    // The ID printed by `bunx wrangler d1 create llm-bus`.
+    "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+    "migrations_dir": "migrations"
+  }],
+  "queues": {
+    "producers": [{"binding": "DELIVERY", "queue": "llm-bus-delivery"}],
+    "consumers": [{"queue": "llm-bus-delivery", "max_batch_size": 100, "max_batch_timeout": 1, "max_retries": 5, "dead_letter_queue": "llm-bus-dead-letter"}]
+  },
+  "triggers": {"crons": ["* * * * *"]}
+}

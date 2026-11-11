@@ -21,18 +21,31 @@ bunx wrangler queues create llm-bus-delivery
 bunx wrangler queues create llm-bus-dead-letter
 ```
 
-Replace the placeholder `database_id` in `cloudflare/wrangler.jsonc` with the D1 ID returned by Cloudflare. Configure a custom domain in the same file, for example:
-
-```json
-"routes": [{"pattern": "bus.example.com", "custom_domain": true}]
-```
-
-The example domain must belong to the operator's Cloudflare account. `workers_dev` is disabled in the supplied configuration. Back up existing D1 data before upgrades. Apply all migrations before deploying the matching Worker:
+Keep your deploy settings in a local file that git ignores, so that repository updates never change them:
 
 ```sh
-bunx wrangler d1 migrations apply llm-bus --remote
-bunx wrangler deploy
+cp wrangler.local.example.jsonc wrangler.local.jsonc
 ```
+
+In `wrangler.local.jsonc`, replace the placeholder `database_id` with the D1 ID returned by Cloudflare, then choose how clients reach the relay:
+
+- Custom domain: keep `"workers_dev": false` and set `routes`, for example `[{"pattern": "bus.example.com", "custom_domain": true}]`. The domain must belong to the operator's Cloudflare account.
+- `workers.dev` URL: set `"workers_dev": true` and delete `routes`.
+
+The committed `wrangler.jsonc` keeps a placeholder D1 ID and `workers_dev: false`; `bun run build` and `bun run test` use it. Do not deploy with it.
+
+> **Warning:** Deploying a configuration with `workers_dev: false` disables any existing `*.workers.dev` route for the Worker. If your clients' `url` uses a `workers.dev` address, keep `workers_dev: true` in `wrangler.local.jsonc`, or move every client to a custom domain before you deploy.
+
+When your Cloudflare login can see more than one account, set `CLOUDFLARE_ACCOUNT_ID` for the `wrangler` commands so that they select the right account.
+
+Back up existing D1 data before upgrades. Apply all migrations before deploying the matching Worker:
+
+```sh
+bunx wrangler d1 migrations apply llm-bus --remote --config wrangler.local.jsonc
+bunx wrangler deploy --config wrangler.local.jsonc
+```
+
+Pass `--config wrangler.local.jsonc` to every other `wrangler d1` command in this guide as well; without it, `wrangler` reads the committed placeholder D1 ID.
 
 `0001_bus.sql` owns machine admission and messages. The additive `0002_reports.sql` migration adds work-report storage; `0003_reply_to.sql` adds nullable reply UUIDs and their index. These migrations do not configure peer trust or change machine grants. See [upgrade ordering](#migration-and-rollback) for existing relays.
 
@@ -67,8 +80,8 @@ Securely give the token file to the machine owner. Do not put its contents in a 
 From `cloudflare/`, register the machine and its repository grant in D1, substituting the printed hash:
 
 ```sh
-bunx wrangler d1 execute llm-bus --remote --command "INSERT INTO machines(id,token_hash) VALUES ('whitenoise','PRINTED_SHA256_HASH');"
-bunx wrangler d1 execute llm-bus --remote --command "INSERT INTO repo_grants(machine_id,repo_id) VALUES ('whitenoise','xyz');"
+bunx wrangler d1 execute llm-bus --remote --config wrangler.local.jsonc --command "INSERT INTO machines(id,token_hash) VALUES ('whitenoise','PRINTED_SHA256_HASH');"
+bunx wrangler d1 execute llm-bus --remote --config wrangler.local.jsonc --command "INSERT INTO repo_grants(machine_id,repo_id) VALUES ('whitenoise','xyz');"
 ```
 
 Repeat with a different token for `herdr-dev-1`, granting it `xyz` too. Shared repository IDs are operator-assigned; choosing the same name in a local file cannot create a server grant. There is no public enrollment or permission-administration endpoint.
@@ -299,13 +312,13 @@ A permissive sender can still upload text to the relay if server admission permi
 From `cloudflare/`, revoke a machine without affecting other machines:
 
 ```sh
-bunx wrangler d1 execute llm-bus --remote --command "UPDATE machines SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id='whitenoise';"
+bunx wrangler d1 execute llm-bus --remote --config wrangler.local.jsonc --command "UPDATE machines SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id='whitenoise';"
 ```
 
 Remove access to one repository:
 
 ```sh
-bunx wrangler d1 execute llm-bus --remote --command "DELETE FROM repo_grants WHERE machine_id='whitenoise' AND repo_id='xyz';"
+bunx wrangler d1 execute llm-bus --remote --config wrangler.local.jsonc --command "DELETE FROM repo_grants WHERE machine_id='whitenoise' AND repo_id='xyz';"
 ```
 
 Every request checks current server permissions. Revocation or grant removal also withholds pending downloads from that machine or sender. Previously downloaded copies cannot be retracted. Positive authorization is not cached in the Worker.
@@ -384,8 +397,11 @@ operations on its own.
   `amend --delegate ...` on the receiver, then rejoin each worker; the
   coordinator owner re-declares its own side with `amend` on its machine. On a
   remote-coordinated project `amend` takes only those two options. Worker
-  sessions never run `setup`, `replace` or `amend`: any local session on the
-  receiver could, so only the owner does, directly.
+  sessions never run `setup`, `replace` or `amend`. On the receiver, the bus
+  refuses `setup`, `replace`, `amend`, `grant`, `revoke` and `target` to any
+  session that is or was a worker of the project's current generation. A
+  session that never joined still could run them, so only the owner does,
+  directly.
 - Known limit: remote addresses receive no decision notices and cannot be a
   `--worker`. Gate records, owner decisions, standing instructions and
   auto-merge stay on the coordinator machine.

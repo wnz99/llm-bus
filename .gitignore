@@ -21,4 +21,5 @@ dist/
 .claude/
 .clean-code-tools/
 .mcp.json
+cloudflare/wrangler.local.jsonc
 tools/ci/launch_clean_code_mcp.py

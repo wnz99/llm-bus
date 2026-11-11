@@ -6,6 +6,8 @@ Let your Claude Code and Codex sessions talk to each other.
 
 Local messaging needs no server. An optional Cloudflare relay connects machines, with each owner controlling which peers can send or receive. Start with the local setup below, or follow the [remote guide](docs/remote-bus.md) for cross-machine messaging.
 
+New to the bus? The [tutorial](docs/tutorial.md) walks through every mode and configuration, from local messages to coordinated projects and remote machines, with commands and example output.
+
 - [Install and verify](#install-and-verify)
 - [Send, read, and acknowledge](#send-read-and-acknowledge)
 - [Agent labels](#agent-labels)

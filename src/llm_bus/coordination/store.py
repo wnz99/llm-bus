@@ -122,6 +122,25 @@ def coordinator_enrolled(db: Connection, record: dict[str, object], address: str
     return record["coordinator"] == address and enrolled is not None
 
 
+def worker_of_generation(db: Connection, record: dict[str, object], address: str) -> bool:
+    """True when the address is or was a worker of the project's current generation.
+
+    Every join holds a grant row for its address and generation, and grant rows are never
+    deleted: revoke, leave and session end only set ``revoked_at``. A grant issued to an
+    address that never joined also counts, because the coordinator named it a worker.
+    """
+    row = cast(
+        "tuple[int] | None",
+        db.execute(
+            "SELECT 1 FROM coordination_grants WHERE scope=? AND project_id=? AND recipient=? "
+            "AND generation=? UNION ALL SELECT 1 FROM coordination_enrollments WHERE scope=? "
+            "AND project_id=? AND address=? AND role='worker' AND generation=? LIMIT 1",
+            (record["scope"], record["project_id"], address, record["generation"]) * 2,
+        ).fetchone(),
+    )
+    return row is not None
+
+
 def enroll(db: Connection, record: dict[str, object], address: str, role: str) -> None:
     existing = cast(
         "tuple[str, str] | None",

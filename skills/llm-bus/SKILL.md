@@ -47,7 +47,9 @@ checks no CI or review state; verify it live before acting, as the reference
 describes. For guided setup an agent runs
 `llm-bus --format agent coordinate PROJECT --setup` and asks the owner through
 the native question UI; without `--format agent` a terminal gets the owner's
-interactive wizard. Remote gate approvals are not available yet.
+interactive wizard. Remote gate approvals need every owner's own permission
+(see "Remote gate approvals" in the reference). A worker never runs
+`coordination setup`, `replace` or `amend`: those are direct owner commands.
 Command results and hooks supply role duties. Workers use their own worktrees,
 persist Beads progress and report evidence/blockers. Coordinators persist bounded
 assignments, resolve dependencies/ownership and verify results. After events,

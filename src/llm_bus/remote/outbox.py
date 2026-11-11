@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from sqlite3 import Connection
 
-    from llm_bus.coordination.models import Availability, Direction
+    from llm_bus.coordination.models import Approval, Availability, Direction
     from llm_bus.mailbox.models import SenderContext
 
 if TYPE_CHECKING:
@@ -46,6 +46,7 @@ def enqueue(  # noqa: PLR0913 - additive public API preserves optional keywords
     scope: str | None = None,
     reply_to: int | None = None,
     direction: Direction | None = None,
+    approval: Approval | None = None,
 ) -> dict[str, object]:
     # pylint: disable=too-many-arguments
     with self.store.transaction() as db:
@@ -60,7 +61,16 @@ def enqueue(  # noqa: PLR0913 - additive public API preserves optional keywords
             scope=scope,
             reply_to=reply_to,
             direction=direction,
+            approval=approval,
         )
+
+
+def remote_approval(direction: Direction | None, approval: Approval) -> dict[str, object]:
+    """Wire form of an approval; gate records stay local so a record-bound one is refused."""
+    if direction is None or approval.record_id is not None:
+        raise BusError("Remote approval needs a gate direction and no gate record")
+    approval.validate(direction.operation)
+    return approval.wire()
 
 
 def enqueue_in_transaction(  # noqa: PLR0913, PLR0917 - shared transaction writer
@@ -75,6 +85,7 @@ def enqueue_in_transaction(  # noqa: PLR0913, PLR0917 - shared transaction write
     reply_to: int | None = None,
     direction: Direction | None = None,
     availability: Availability | None = None,
+    approval: Approval | None = None,
 ) -> dict[str, object]:
     """Caller owns the immediate transaction; public enqueue shares this writer."""
     # pylint: disable=too-many-arguments,too-many-locals,too-many-positional-arguments
@@ -94,6 +105,8 @@ def enqueue_in_transaction(  # noqa: PLR0913, PLR0917 - shared transaction write
     if direction is not None:
         require_coordinator(db, native, scope, direction)
         envelope["coordination"] = asdict(direction)
+    if approval is not None:
+        envelope["approval"] = remote_approval(direction, approval)
     self.store.validate_reply(db, reply_to, (native, scope), (recipient, f"remote:{repo_id}"))
     if reply_to is not None:
         parent = cast(

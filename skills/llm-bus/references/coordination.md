@@ -49,13 +49,13 @@ changes, paid or live runs, and merge with failing or pending CI. Delegation
 specs naming a floor item are rejected. An approval counts only while verified
 (`coordination.verified: true`, `reason: verified`); other reasons
 (for example `gate_not_delegated`, `target_denied`, `expired`, `wrong_ticket`,
-`remote_gate_unsupported`, `invalid_direction`, `revoked`, `stale_generation`)
+`invalid_direction`, `revoked`, `stale_generation`)
 leave it historical and
 unverified. The bus never inspects CI, reviews or branches: the worker checks
 that evidence live (see "Gate approvals"). Merge gate records and auto-merge
 (see "Merge gate records") are available for local projects. Standing
 instructions and objective amendments are local-project data. Remote gate
-approvals and decision requests are not available in this version.
+approvals exist (see "Remote gate approvals"); decision requests stay local.
 `record_withdrawn` marks a record-bound approval whose gate
 record was rejected, superseded or is not accepted.
 
@@ -448,6 +448,34 @@ recipient grant UUID out of band or as ordinary data. Coordinator stores it with
 then sends with the same paired direction flags. Claimed IDs cannot authorize
 the receiver. Local receive policy and current local grant must both allow
 delivery; monitor/report channels never become agent assignment channels.
+
+### Remote gate approvals
+
+A remote coordinator's `coordination approve` reaches the worker only when every
+side allows it; no side can grant another's permission:
+
+- Coordinator owner: its own project delegation covers the gate, the base
+  target and expiry, and the work branch is not a target. Checked at `approve`
+  and again at each upload, so `amend` narrowing, `replace` or expiry holds the
+  queued approval (`queued_local`; it is never resent as ordinary text).
+- Receiver owner: imports the project with `setup ... --delegate GATE:BRANCH`
+  (gate specs only), and sets `accept_delegated_gates` for that coordinator's
+  machine in the local peer policy (omitted means deny). The worker's own `join`
+  binding (optionally `--narrow`) must also cover the gate. The approval must
+  expire within 24 hours of admission.
+- Relay: version 1 `GET /v2/coordination/approvals/capabilities`; migration
+  `0007_coordination_approvals.sql` precedes the Worker deployment. Otherwise
+  the approval stays queued with `unsupported_approvals`.
+
+After a receiver-local `replace`, the receiver owner runs
+`coordination amend PROJECT --delegate GATE:BRANCH` (or `--no-delegation`;
+narrowing applies at once), then each worker owner rejoins. On a
+remote-coordinated project `amend` accepts only those two options; the
+coordinator owner re-declares its own delegation with `amend` on its machine.
+Workers never run `setup`, `replace` or `amend`, because any local session
+could: these stay direct owner commands. Gate records, auto-merge, owner
+decisions and standing instructions stay on the coordinator machine; remote
+addresses get no decision notices and cannot be a `--worker`.
 
 ## Durable work and ownership
 

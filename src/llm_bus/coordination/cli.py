@@ -93,6 +93,12 @@ def add_parsers(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
             action.add_argument("--project-id", required=True)
             action.add_argument("--generation", required=True)
             action.add_argument("--coordinator", required=True)
+            action.add_argument(
+                "--delegate",
+                action="append",
+                metavar="GATE:BRANCH",
+                help="Receiver owner's own gate delegation for this remote coordinator",
+            )
             _references(action, required=True)
         if name == "replace":
             action.add_argument("--generation", required=True)
@@ -232,7 +238,7 @@ def run(  # noqa: C901, PLR0912 - owner action dispatch
         db.execute("BEGIN IMMEDIATE")
         new_project = False
         if action == "setup":
-            _create(db, scope, label, args, _address(args["coordinator"]))
+            _setup(db, scope, label, args)
         elif action == "coordinate":
             exists = cast(
                 "tuple[int] | None",
@@ -540,6 +546,20 @@ def _declare_delegation(
         raise BusError("Delegation differs; use coordination amend PROJECT")
 
 
+def _setup(db: Connection, scope: str, label: str, args: dict[str, object]) -> None:
+    """Receiver-owner import of a coordinator binding, with its own gate delegation if given."""
+    coordinator = _address(args["coordinator"])
+    _create(db, scope, label, args, coordinator)
+    specs = cast("list[str]", args.get("delegate") or [])
+    if specs:
+        delegation.set_project_delegation(
+            db,
+            store.project(db, scope, label),
+            delegation.Delegation.from_specs(specs),
+            coordinator,
+        )
+
+
 def _create(
     db: Connection, scope: str, label: str, args: dict[str, object], coordinator: str
 ) -> None:
@@ -677,10 +697,20 @@ def _amend(
     db: Connection, record: dict[str, object], args: dict[str, object], address: str
 ) -> None:
     """Append an objective amendment and/or replace or remove the delegation (applies at once)."""
-    _require_coordinator(db, record, address, "Only the enrolled coordinator may amend delegation")
     specs = cast("list[str]", args.get("delegate") or [])
     flags = _flags(args)
     objective = args.get("objective")
+    if "/" in str(record["coordinator"]):
+        # No local session is the remote coordinator, so this carries the receiver owner's own
+        # authority over gate delegation. Every other record stays on the coordinator machine.
+        if _flagged(flags) or objective is not None:
+            raise BusError(
+                "Remote-coordinated project: amend accepts only --delegate or --no-delegation"
+            )
+    else:
+        _require_coordinator(
+            db, record, address, "Only the enrolled coordinator may amend delegation"
+        )
     if args.get("no_delegation"):
         if _flagged(flags):
             raise BusError("--no-delegation takes no delegation flags")

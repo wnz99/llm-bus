@@ -157,8 +157,6 @@ def send(
     store: Store, args: dict[str, object], sender: SenderContext, approval: Approval | None = None
 ) -> object:
     args = {**args, "to": resolve_reference(store, str(args["to"]), sender.project)}
-    if approval is not None and "/" in cast("str", args["to"]):
-        raise BusError("Remote approval directions are not supported by this version")
     label, operation = args.get("project"), args.get("direction")
     if (label is None) != (operation is None):
         raise BusError("Use --project and --direction together")
@@ -187,7 +185,8 @@ def send(
             cast("str", args["to"]),
             body,
             reply_to=cast("int | None", args["reply_to"]),
-            **({"direction": direction} if direction is not None else {}),
+            direction=direction,
+            approval=approval,
         )
     sent = store.send(
         sender,

@@ -11,15 +11,24 @@ from typing import TYPE_CHECKING, cast
 from llm_bus.coordination.authority import authorize
 from llm_bus.coordination.availability import accept
 from llm_bus.coordination.delivery import persist
-from llm_bus.coordination.models import Availability, Direction
+from llm_bus.coordination.models import (
+    GATE_OPERATIONS,
+    MAX_LIFETIME,
+    Availability,
+    Direction,
+    timestamp,
+)
 from llm_bus.errors import BusError
 from llm_bus.hosts.sessions import is_subagent
 from llm_bus.policy.inbound import receive_mode
 from llm_bus.remote import outbox
 from llm_bus.remote.models import Delivery, validate_reply_uuid
+from llm_bus.remote.protocol import parse_approval
 
 if TYPE_CHECKING:
     from sqlite3 import Connection
+
+    from llm_bus.coordination.models import Approval
 
 
 if TYPE_CHECKING:
@@ -49,6 +58,44 @@ def incoming_parent(self: RemoteStore, db: Connection, item: Delivery, scope: st
     return parent[0]
 
 
+def _screen(
+    db: Connection,
+    item: Delivery,
+    recipient: tuple[str, str],
+    direction: Direction | None,
+    *,
+    inbox: bool,
+) -> tuple[bool, Approval | None]:
+    """Parse the approval and, for inbox delivery, apply the lifetime cap and receiver authority.
+
+    An approval rides only with a gate direction; a missing one is left to ``authorize``.
+    """
+    approval = None
+    if "approval" in item:
+        if direction is None or direction.operation not in GATE_OPERATIONS:
+            return False, None
+        try:
+            approval = parse_approval(item["approval"], direction.operation)
+        except BusError:
+            return False, None
+    if direction is None or not inbox:
+        return True, approval
+    now = datetime.now(UTC)
+    # A peer cannot widen the local approval lifetime cap.
+    if approval is not None and timestamp(approval.expires_at) > now + MAX_LIFETIME:
+        return False, None
+    decision = authorize(
+        db,
+        sender=item["sender"],
+        recipient=recipient[0],
+        scope=recipient[1],
+        direction=direction,
+        now=now,
+        approval=approval,
+    )
+    return decision.verified, approval
+
+
 def admit_message(  # noqa: C901, PLR0911 - explicit transport and authority denials
     self: RemoteStore, item: Delivery, scope: str
 ) -> tuple[str, int | None, bool] | None:
@@ -75,18 +122,8 @@ def admit_message(  # noqa: C901, PLR0911 - explicit transport and authority den
             raise BusError("Conflicting remote message classes")
         event = Availability.parse(item["availability"]) if "availability" in item else None
         direction = Direction.parse(item["coordination"]) if "coordination" in item else None
-        if (
-            direction is not None
-            and mode == "inbox"
-            and not authorize(
-                db,
-                sender=item["sender"],
-                recipient=native,
-                scope=scope,
-                direction=direction,
-                now=datetime.now(UTC),
-            ).verified
-        ):
+        admit, approval = _screen(db, item, (native, scope), direction, inbox=mode == "inbox")
+        if not admit:
             return None
         prior = cast(
             "tuple[str, int | None, str] | None",
@@ -145,7 +182,7 @@ def admit_message(  # noqa: C901, PLR0911 - explicit transport and authority den
             db.execute("RELEASE availability_admission")
             return None
         if direction is not None:
-            persist(db, local_id, direction)
+            persist(db, local_id, direction, approval)
         db.execute(
             "INSERT INTO remote_imports(id,local_id,envelope) VALUES (?,?,?)",
             (item["id"], local_id, payload),

@@ -5,9 +5,9 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
-from llm_bus.coordination.authority import authorize
+from llm_bus.coordination.authority import authorize, sender_gate_reason
 from llm_bus.coordination.delivery import require_coordinator
-from llm_bus.coordination.models import Availability, Direction
+from llm_bus.coordination.models import GATE_OPERATIONS, Availability, Direction
 from llm_bus.errors import BusError
 from llm_bus.hosts.sessions import is_subagent
 from llm_bus.policy.config import NATIVE, Config
@@ -15,11 +15,12 @@ from llm_bus.policy.fields import IDENTIFIER, object_fields
 from llm_bus.remote import discovery, protocol
 from llm_bus.remote.constants import BATCH_CAPABILITY_SECONDS, UNSUPPORTED_BATCH
 from llm_bus.remote.http import HTTP_GET, HTTP_POST, RelayError
-from llm_bus.remote.protocol import ADDRESS_PARTS
+from llm_bus.remote.protocol import ADDRESS_PARTS, parse_approval
 from llm_bus.remote.store import RemoteStore
 from llm_bus.reports.store import Reports
 
 if TYPE_CHECKING:
+    from llm_bus.coordination.models import Approval
     from llm_bus.mailbox.models import SenderContext
     from llm_bus.mailbox.store import Store
     from llm_bus.remote.models import Envelope
@@ -37,6 +38,7 @@ def enqueue_remote(  # noqa: PLR0913 - additive reply keyword preserves callers
     *,
     reply_to: int | None = None,
     direction: Direction | None = None,
+    approval: Approval | None = None,
 ) -> dict[str, object]:
     # pylint: disable=too-many-arguments
     repo = config.repository(sender.project)
@@ -62,6 +64,7 @@ def enqueue_remote(  # noqa: PLR0913 - additive reply keyword preserves callers
         scope=repo.scope,
         reply_to=reply_to,
         direction=direction,
+        approval=approval,
     )
 
 
@@ -116,7 +119,43 @@ def permits_outgoing(self: Bridge, envelope: Envelope) -> bool:  # noqa: PLR0911
     )
 
 
+def gate_direction(envelope: Envelope) -> Direction | None:
+    """The parsed direction when the envelope names a gate operation; otherwise None."""
+    try:
+        direction = Direction.parse(envelope.get("coordination"))
+    except BusError:
+        return None
+    return direction if direction.operation in GATE_OPERATIONS else None
+
+
+def sender_allows_gate(self: Bridge, envelope: Envelope, direction: Direction | None) -> bool:
+    """Coordinator owner's own delegation, rechecked at every upload attempt (not for status).
+
+    An approval on a non-gate envelope is never uploaded.
+    """
+    if direction is None:
+        return "approval" not in envelope
+    try:
+        approval = parse_approval(envelope.get("approval"), direction.operation)
+        with self.store.transaction() as db:
+            return (
+                sender_gate_reason(
+                    db,
+                    scope=self.remote.source_scope(envelope["id"]) or "",
+                    direction=direction,
+                    approval=approval,
+                    now=datetime.now(UTC),
+                )
+                is None
+            )
+    except BusError:
+        return False
+
+
 def upload(self: Bridge, envelope: Envelope) -> bool:
+    gate = gate_direction(envelope)
+    if not sender_allows_gate(self, envelope, gate):
+        return False
     if "availability" in envelope:
         Availability.parse(envelope["availability"])
         if "coordination" in envelope:
@@ -125,6 +164,8 @@ def upload(self: Bridge, envelope: Envelope) -> bool:
             raise RelayError("unsupported_availability")
     if "coordination" in envelope and not supports_coordination(self):
         raise RelayError("unsupported_coordination")
+    if gate is not None and not supports_approvals(self):
+        raise RelayError("unsupported_approvals")
     if "reply_to" in envelope and not supports_reply(self):
         raise RelayError("unsupported_reply_link")
     discovery.publish_original_sender(self, envelope)
@@ -173,6 +214,25 @@ def supports_coordination(self: Bridge) -> bool:
         and isinstance(data["version"], int)
         and not isinstance(data["version"], bool)
         and data["version"] == 1
+    )
+
+
+def supports_approvals(self: Bridge) -> bool:
+    """Probe separately; an old relay answers 404 and the approval stays queued."""
+    try:
+        value = self.relay.request(HTTP_GET, "/v2/coordination/approvals/capabilities")
+    except RelayError as error:
+        if error.http_status not in UNSUPPORTED_BATCH:
+            raise
+        return False
+    if not isinstance(value, dict):
+        return False
+    data = object_fields(cast("object", value))
+    return (
+        set(data) == {"approval_version"}
+        and isinstance(data["approval_version"], int)
+        and not isinstance(data["approval_version"], bool)
+        and data["approval_version"] == 1
     )
 
 

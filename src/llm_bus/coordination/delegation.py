@@ -100,6 +100,10 @@ class Delegation:
             ),
         )
 
+    def only_gates(self, gates: tuple[str, ...]) -> Delegation:
+        """Keep only the listed gates (a gate-level cap); flags never survive the cap."""
+        return self._build({gate: set(branches) for gate, branches in self.gates if gate in gates})
+
     def covers(self, other: Delegation) -> bool:
         """Gate subset and every flag of ``other`` set here; minutes count by presence only."""
         return (

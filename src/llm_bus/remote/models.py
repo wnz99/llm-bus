@@ -29,6 +29,7 @@ class Envelope(TypedDict):
     reply_to: NotRequired[str]
     coordination: NotRequired[dict[str, object]]
     availability: NotRequired[dict[str, object]]
+    approval: NotRequired[dict[str, object]]
 
 
 class Peer(TypedDict):

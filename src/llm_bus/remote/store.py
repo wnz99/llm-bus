@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from datetime import datetime
     from sqlite3 import Connection
 
-    from llm_bus.coordination.models import Direction
+    from llm_bus.coordination.models import Approval, Direction
     from llm_bus.mailbox.models import SenderContext
     from llm_bus.mailbox.store import Store
     from llm_bus.remote.models import Delivery, Envelope, Peer
@@ -104,6 +104,7 @@ class RemoteStore:
         scope: str | None = None,
         reply_to: int | None = None,
         direction: Direction | None = None,
+        approval: Approval | None = None,
     ) -> dict[str, object]:
         return outbox.enqueue(
             self,
@@ -114,6 +115,7 @@ class RemoteStore:
             scope=scope,
             reply_to=reply_to,
             direction=direction,
+            approval=approval,
         )
 
     def outgoing(self, *, after: int = 0) -> list[tuple[Envelope, str]]:

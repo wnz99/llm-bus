@@ -160,6 +160,13 @@ receivers retain their last local policy; revoke/replace on each machine and
 reconcile active work before issuing fresh grants and targets.
 Automatic remote join availability additionally requires migration
 `0006_coordination_availability.sql` and matching client/relay capability.
+Remote gate approvals need relay migration `0007_coordination_approvals.sql`
+before the Worker, the `/v2/coordination/approvals/capabilities` probe (an old
+relay leaves them queued with `unsupported_approvals`), the coordinator owner's
+own delegation, and on the receiver the owner's project delegation, the worker's
+binding and the peer key `accept_delegated_gates` (default deny); see
+[coordination.md](coordination.md#remote-gate-approvals). Held approvals stay in
+the outbox. Workers never run `setup`, `replace` or `amend`.
 Receiver-owner project setup and peer policy remain prerequisites; availability
 cannot create trust or authorization. Unsupported relays leave it queued with
 `unsupported_coordination`. Install/deploy separately; repository changes do not

@@ -16,6 +16,9 @@ from llm_bus.coordination.models import (
 )
 from llm_bus.errors import BusError
 from llm_bus.mailbox.agents import expire_idle_agents
+from llm_bus.policy.config import optional_config
+
+REMOTE_PARTS = 3
 
 
 def authorize(  # noqa: PLR0913, C901, PLR0911, PLR0912 - explicit denial precedence
@@ -160,7 +163,64 @@ def _record_accepted(db: Connection, record: dict[str, object], approval: Approv
     )
 
 
-def _gate_decision(  # noqa: C901, PLR0911, PLR0913 - explicit denial precedence
+def _peer_gates(record: dict[str, object], coordinator: str) -> tuple[str, ...]:
+    """Gates this machine's owner lets a remote coordinator use; no config or peer allows none."""
+    config = optional_config()
+    parts = coordinator.split("/")
+    repo = None if config is None else config.repository_scope(str(record["scope"]))
+    if repo is None or len(parts) != REMOTE_PARTS or parts[1] != repo.repo_id:
+        return ()
+    peer = next((item for item in repo.peers if item.machine_id == parts[0]), None)
+    return () if peer is None else peer.accept_delegated_gates
+
+
+def _delegation_reason(
+    project: delegation.Delegation | None,
+    granted: delegation.Delegation | None,
+    gate: str,
+    approval: Approval,
+    now: datetime,
+) -> str | None:
+    """The one ordered gate, target and expiry check, shared by receiver and sender."""
+    if project is None or granted is None or not granted.targets(gate):
+        return "gate_not_delegated"
+    if approval.base not in granted.targets(gate):
+        return "target_denied"
+    # The work branch is checked against the whole project set, never a narrower binding or cap.
+    if approval.branch == approval.base or approval.branch in project.all_targets():
+        return "target_denied"
+    if timestamp(approval.expires_at) <= now:
+        return "expired"
+    return None
+
+
+def sender_gate_reason(
+    db: Connection, *, scope: str, direction: Direction, approval: Approval, now: datetime
+) -> str | None:
+    """Coordinator-machine check against its own owner's project delegation; None allows."""
+    gate = GATE_OPERATIONS.get(direction.operation)
+    row = cast(
+        "tuple[str, str | None] | None",
+        db.execute(
+            "SELECT generation,revoked_at FROM coordination_projects "
+            "WHERE scope=? AND project_id=?",
+            (scope, direction.project_id),
+        ).fetchone(),
+    )
+    if gate is None:
+        return "invalid_direction"
+    if row is None or row[1] is not None or row[0] != direction.generation:
+        return "gate_not_delegated"
+    record: dict[str, object] = {
+        "scope": scope,
+        "project_id": direction.project_id,
+        "generation": direction.generation,
+    }
+    project = delegation.project_delegation(db, record)
+    return _delegation_reason(project, project, gate, approval, now)
+
+
+def _gate_decision(  # noqa: PLR0911, PLR0913 - explicit denial precedence
     db: Connection,
     record: dict[str, object],
     *,
@@ -183,21 +243,22 @@ def _gate_decision(  # noqa: C901, PLR0911, PLR0913 - explicit denial precedence
         approval.validate(direction.operation)
     except BusError:
         return deny("invalid_direction")
-    if "/" in coordinator:
-        return deny("remote_gate_unsupported")
-    if approval.record_id is not None and not _record_accepted(db, record, approval):
-        return deny("record_withdrawn")
-    gate = GATE_OPERATIONS[direction.operation]
+    remote = "/" in coordinator
+    if approval.record_id is not None:
+        # Gate records stay local: a record-bound approval never verifies from a remote machine.
+        if remote:
+            return deny("invalid_direction")
+        if not _record_accepted(db, record, approval):
+            return deny("record_withdrawn")
     project = delegation.project_delegation(db, record)
     granted = delegation.effective(db, record, direction.grant_id, now=now)
-    if project is None or granted is None or not granted.targets(gate):
-        return deny("gate_not_delegated")
-    if approval.base not in granted.targets(gate):
-        return deny("target_denied")
-    if approval.branch == approval.base or approval.branch in project.all_targets():
-        return deny("target_denied")
-    if timestamp(approval.expires_at) <= now:
-        return deny("expired")
+    if remote and granted is not None:
+        granted = granted.only_gates(_peer_gates(record, coordinator))
+    reason = _delegation_reason(
+        project, granted, GATE_OPERATIONS[direction.operation], approval, now
+    )
+    if reason is not None:
+        return deny(reason)
     claim = cast(
         "tuple[int] | None",
         db.execute(

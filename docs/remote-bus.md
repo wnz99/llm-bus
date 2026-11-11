@@ -138,6 +138,7 @@ Capabilities apply only to the exact `machine_id` under that repository:
 | `receive_messages` | `"deny"` | `deny` stores no incoming copy; `monitor` stores separate human history; `inbox` admits text to native agents and the existing wake path. |
 | `send_reports` | `[]` | Allow listed built-in statuses for imported messages from this peer. |
 | `receive_reports` | `[]` | Accept listed built-in statuses for this machine's outgoing messages to this peer. |
+| `accept_delegated_gates` | `[]` | Gates (`commit`, `push`, `merge`, `merge-admin`; unique) a coordinator on this peer may use for gate approvals. It only caps this machine's own project delegation and the worker's binding; it needs `receive_messages = "inbox"` and grants nothing alone. An omitted or empty list denies every remote gate approval. |
 
 Unlisted peers are denied. There are no wildcards, inferred reciprocal permissions, custom report labels, or configurable reason sets. Selecting a status permits its fixed reasons listed [below](#structured-work-reports). Use `receive_messages = "monitor"` in a chosen peer entry to opt into human-only storage; it grants no normal reply or report permission.
 
@@ -344,6 +345,48 @@ receive no native inbox admission or delivered receipt. Previously admitted but
 now stale directions remain in history, labeled unverified, and are suppressed
 from pending work. Monitor text and fixed-code reports do not become assignment
 authority or automatic agent prompts. Ordinary sends/replies remain unchanged.
+
+### Remote gate approvals
+
+A coordinator on another machine can send `commit`, `push`, `merge` and
+`merge-admin` approvals to a local worker only while both owners allow it.
+Relay migration `0007_coordination_approvals.sql` must be applied before the
+matching Worker is deployed (a Worker that selects the new column fails without
+it). The Worker adds `GET /v2/coordination/approvals/capabilities`
+(`{"approval_version": 1}`) and an `approval` object on the coordination route;
+the client sends one only after that probe succeeds. An old relay leaves the
+approval queued with `unsupported_approvals`. Gate records and `record_id`
+bound approvals stay local and are rejected at the outbox, relay and receiver.
+The client probe does not protect an old receiver; an old receiver denies gate
+operations on its own.
+
+- Coordinator machine: the approval must fit that owner's own project
+  delegation (gate, base target, a work branch that is not a target, expiry).
+  This is checked when `coordination approve` queues it and again before every
+  upload attempt, so a later `coordination amend` that narrows the delegation, a
+  `replace`, or expiry holds an already queued approval in the outbox as
+  `queued_local`. Held approvals stay there like other refused items; inspect them
+  with `remote-status` and do not resend them. Status updates for approvals that
+  were already uploaded still arrive.
+- Receiver machine: the receiver owner imports the project with
+  `coordination setup ... --delegate GATE:BRANCH` (gate specs only), the worker
+  joins (optionally `--narrow`), and the peer sets `accept_delegated_gates`.
+  An approval is admitted and shown only while the receiver's project delegation,
+  the worker's binding and the peer cap all cover the gate, and it expires within
+  24 hours of admission. Local policy is checked before inbox admission, pending
+  exposure and wake, and again at each exposure. A peer in `monitor` mode never
+  reaches the inbox or a wake; a peer cannot widen this machine's permissions.
+- The receiver owner changes delegation later with `coordination amend PROJECT
+  --delegate GATE:BRANCH` or `--no-delegation`, which narrows at once. After a
+  receiver-local `replace` (new generation, no delegation and no bindings) run
+  `amend --delegate ...` on the receiver, then rejoin each worker; the
+  coordinator owner re-declares its own side with `amend` on its machine. On a
+  remote-coordinated project `amend` takes only those two options. Worker
+  sessions never run `setup`, `replace` or `amend`: any local session on the
+  receiver could, so only the owner does, directly.
+- Known limit: remote addresses receive no decision notices and cannot be a
+  `--worker`. Gate records, owner decisions, standing instructions and
+  auto-merge stay on the coordinator machine.
 
 Stop and reconcile work before replacement. Each owner applies the fresh
 generation locally, regrants/rejoins workers, and refreshes sender targets.

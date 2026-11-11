@@ -18,7 +18,7 @@ from llm_bus.routing import routing_scope
 if TYPE_CHECKING:
     from llm_bus.mailbox.store import Store
 
-LEFT_QUEUE = "cancelled"
+CANCELLED = "cancelled"
 
 
 class Locks:
@@ -141,7 +141,7 @@ class Locks:
                 raise BusError(f"You are not waiting for {key.resource!r}")
             lock = read_lock(db, key)
             sent = persist(self.store, self.agent_address, db, notices)
-        return {"status": LEFT_QUEUE, "lock": lock, "notices": deliver(self.store, sent)}
+        return {"status": CANCELLED, "lock": lock, "notices": deliver(self.store, sent)}
 
     def status(self, key: Key | None, *, every_scope: bool) -> dict[str, object]:
         """Read locks visible from this folder, plus shared ones, without changing ownership."""

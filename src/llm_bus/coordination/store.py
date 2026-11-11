@@ -149,7 +149,18 @@ def enroll(db: Connection, record: dict[str, object], address: str, role: str) -
         ).fetchone(),
     )
     if existing and existing != (record["scope"], record["project_id"]):
-        raise BusError("Leave current project before enrolling elsewhere")
+        row = cast(
+            "tuple[str] | None",
+            db.execute(
+                "SELECT label FROM coordination_projects WHERE scope=? AND project_id=?", existing
+            ).fetchone(),
+        )
+        label = row[0] if row is not None else existing[1]
+        # Consent survives folder moves, so name where `leave` must run to end it.
+        raise BusError(
+            f"Leave current project before enrolling elsewhere: run "
+            f"`llm-bus coordination leave {label}` from its scope {existing[0]}"
+        )
     db.execute(
         "INSERT OR REPLACE INTO coordination_enrollments VALUES (?,?,?,?,?)",
         (record["scope"], record["project_id"], address, role, record["generation"]),

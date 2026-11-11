@@ -286,7 +286,7 @@ Your direct join request is your consent for that worker to accept directions fr
 
 The coordinator receives one informational message: `Worker claude:22222222-bbbb joined coordination project orders-export. Availability is informational; recheck current authority before assignments.`
 
-This automatic consent lasts through turns and compaction. It ends when the worker session closes, after 24 hours of inactivity, or on `leave`, `revoke` or replacement of the coordinator generation. Moving the session to a folder outside the project does not end it: directions are refused with `out_of_scope`, and hook recovery shows state `out_of_scope`, until the session works in the project again. One session can be enrolled in one project.
+This automatic consent lasts through turns and compaction. It ends when the worker session closes, after 24 hours of inactivity, or on `leave`, `revoke` or replacement of the coordinator generation. Moving the session to a folder outside the project does not end it. Until the session works in the project again, directions do not verify (a send is refused with `wrong_scope`) and hook recovery shows state `out_of_scope`. To enroll in a project elsewhere, first run `leave` from the original project folder; the join error names it. One session can be enrolled in one project.
 
 If you want a grant with an explicit lifetime instead, ask the coordinator session to run `coordination grant` before the worker joins. `grant` is an owner action: run it only on your direct request (see [owner actions](#inspect-stop-and-replace)).
 
@@ -447,7 +447,7 @@ The flags depend on the gate:
    "approval": {"ticket": "demo-7", "branch": "feat/orders-export", "base": "main", "expires_at": "…"}, …}}
 ```
 
-An approval verifies only when the gate and base are in both the project delegation and the worker's binding, the work branch is neither the base nor a delegated target, it has not expired, and the worker's claim matches the ticket and branch. In the scratch run, approving `merge` for the worker narrowed to `commit` and `push` failed at once with `Direction denied: gate_not_delegated`. Other reasons you may see are `target_denied`, `expired`, `wrong_ticket`, `invalid_direction`, `revoked`, `out_of_scope` and `stale_generation`.
+An approval verifies only when the gate and base are in both the project delegation and the worker's binding, the work branch is neither the base nor a delegated target, it has not expired, and the worker's claim matches the ticket and branch. In the scratch run, approving `merge` for the worker narrowed to `commit` and `push` failed at once with `Direction denied: gate_not_delegated`. Other reasons you may see are `target_denied`, `expired`, `wrong_ticket`, `invalid_direction`, `revoked`, `wrong_scope` and `stale_generation`.
 
 Before acting, the worker checks live evidence itself: the current branch and head SHA for commit and push, and for a merge the PR's base, head and state, every required check passing, and review evidence without unresolved high or medium findings. The exact checks are in [Gate approvals](../skills/llm-bus/references/coordination.md#gate-approvals-local-projects).
 

@@ -82,6 +82,35 @@ def test_scope_change_keeps_consent_and_pauses_authority(tmp_path: Path) -> None
     assert decision()[0]
 
 
+def test_moved_worker_is_told_where_to_leave(tmp_path: Path) -> None:
+    mailbox = Store(tmp_path / "bus.sqlite3")
+    create(mailbox, tmp_path)
+    invoke(mailbox, tmp_path, "join", "demo", address="claude:worker")
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / ".beads").mkdir(parents=True)
+    mailbox.register("codex", "other-owner", str(elsewhere))
+    invoke(
+        mailbox,
+        elsewhere,
+        "coordinate",
+        "next",
+        "--objective",
+        "Other work",
+        "--beads-workspace",
+        str(elsewhere),
+        "--memory-ticket",
+        "bus-2",
+        address="codex:other-owner",
+    )
+    mailbox.register("claude", "worker", str(elsewhere))
+    with pytest.raises(BusError, match=r"`llm-bus coordination leave demo` from its scope"):
+        invoke(mailbox, elsewhere, "join", "next", address="claude:worker")
+    mailbox.register("claude", "worker", str(tmp_path))
+    invoke(mailbox, tmp_path, "coordination", "leave", "demo", address="claude:worker")
+    mailbox.register("claude", "worker", str(elsewhere))
+    invoke(mailbox, elsewhere, "join", "next", address="claude:worker")
+
+
 @pytest.mark.parametrize("ending", ["leave", "revoke", "replace", "expiry", "close"])
 def test_lifecycle_ends_authority(tmp_path: Path, ending: str) -> None:
     mailbox = Store(tmp_path / "bus.sqlite3")

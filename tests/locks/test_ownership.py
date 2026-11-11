@@ -209,6 +209,32 @@ def test_scopes_separate_folders_unless_shared(
     everything = cast("list[dict[str, object]]", two.status(None, every_scope=True)["locks"])
     assert len(everything) == 3
 
+    with pytest.raises(BusError, match="You hold 'db'"):
+        two.cancel(two.key("db", shared=False))
+    left = two.cancel(two.key("db", shared=True))
+    assert left["status"] == "cancelled"
+    assert cast("dict[str, object]", left["lock"])["holder"] == first
+    assert cast("dict[str, object]", left["lock"])["waiters"] == []
+
+
+def test_cancel_by_promoted_waiter_reports_the_hold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _record_wakes(monkeypatch)
+    store, holder = holder_store(tmp_path)
+    waiter = store.register("codex", "two", "/project")
+    key = Locks(store, holder, "/project").key("db:orders", shared=False)
+    Locks(store, holder, "/project").acquire(key, Request(check="1m", describe="database"))
+    Locks(store, waiter, "/project").acquire(key, Request())
+    with store.transaction() as db:
+        db.execute("UPDATE resource_locks SET expires_at='2000-01-01T00:00:00.000Z'")
+    with pytest.raises(BusError, match="You hold 'db:orders'"):
+        Locks(store, waiter, "/project").cancel(key)
+    status = Locks(store, waiter, "/project").status(key, every_scope=False)
+    [lock] = cast("list[dict[str, object]]", status["locks"])
+    assert lock["holder"] == waiter
+    assert lock["waiters"] == []
+
 
 def test_cli_lock_round_trip(
     tmp_path: Path,

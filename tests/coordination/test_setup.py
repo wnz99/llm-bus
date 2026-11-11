@@ -76,11 +76,16 @@ def answers(
     *,
     gates: tuple[str, ...] = ("yes",) * 4,
     auto_merge: str | None = "yes",
+    decide: tuple[str, ...] = ("no",),
     confirm: str = "yes",
 ) -> list[str]:
-    """None skips the auto-merge answer: the wizard asks only when a merge gate remains."""
+    """None skips an answer the wizard asks only conditionally.
+
+    Auto-merge is asked only when a merge gate remains. ``decide`` holds the owner-decisions
+    answer, always asked, then the default-minutes answer, asked only when decisions are on.
+    """
     merge = [] if auto_merge is None else [auto_merge]
-    return ["Ship it", str(repo), "bus-1", "", *gates, *merge, "", confirm]
+    return ["Ship it", str(repo), "bus-1", "", *gates, *merge, *decide, "", confirm]
 
 
 def test_detects_origin_head_without_network(repo: Path, tmp_path: Path) -> None:
@@ -326,10 +331,68 @@ def test_wizard_without_merge_gate_does_not_ask_about_auto_merge(
 
 
 def test_profile_command_names_auto_merge_only_with_the_flag(repo: Path, tmp_path: Path) -> None:
-    assert "--auto-merge" in str(profile(str(repo))["command"])
+    full = profile(str(repo))
+    assert full["flags"] == ["auto-merge", "owner-decisions", "decision-defaults"]
+    assert "--auto-merge --owner-decisions --decision-defaults 30" in str(full["command"])
     bare = profile(str(tmp_path))
-    assert bare["flags"] == []
+    assert bare["flags"] == ["owner-decisions", "decision-defaults"]
     assert "--auto-merge" not in str(bare["command"])
+    assert str(bare["command"]).endswith("--owner-decisions --decision-defaults 30")
+
+
+def test_wizard_always_asks_about_owner_decisions(repo: Path, tmp_path: Path) -> None:
+    for number, (gates, merge) in enumerate(((("yes",) * 4, "yes"), (("no",) * 4, None))):
+        store = Store(tmp_path / f"bus{number}.sqlite3")
+        store.register("codex", "owner", str(repo))
+        ask, prompts = scripted(answers(repo, gates=gates, auto_merge=merge))
+        assert run_wizard(store, "demo", str(repo), "codex:owner", ask=ask, say=lambda _line: None)
+        assert sum("owner decisions" in prompt for prompt in prompts) == 1
+        assert not any("Decision defaults" in prompt for prompt in prompts)
+
+
+def test_wizard_decisions_only_delegation_with_default_minutes(repo: Path, tmp_path: Path) -> None:
+    store = Store(tmp_path / "bus.sqlite3")
+    store.register("codex", "owner", str(repo))
+    script = answers(repo, gates=("no",) * 4, auto_merge=None, decide=("yes", "45"))
+    ask, prompts = scripted(script)
+    said: list[str] = []
+    assert run_wizard(store, "demo", str(repo), "codex:owner", ask=ask, say=said.append)
+    assert sum("Decision defaults" in prompt for prompt in prompts) == 1
+    assert _stored_delegation(store) == {
+        "version": 1,
+        "gates": {},
+        "owner_decisions": True,
+        "decision_default_minutes": 45,
+    }
+    screen = "\n".join(said)
+    assert "Delegations: owner-decisions, decision-defaults" in screen
+    assert "after 45 minutes" in screen
+
+
+@pytest.mark.parametrize(
+    ("answer", "stored"), [("", 30), ("no", None), ("n", None), ("1440", 1440)]
+)
+def test_wizard_default_minutes_answers(
+    repo: Path, tmp_path: Path, answer: str, stored: int | None
+) -> None:
+    store = Store(tmp_path / "bus.sqlite3")
+    store.register("codex", "owner", str(repo))
+    ask, _ = scripted(answers(repo, decide=("yes", answer)))
+    assert run_wizard(store, "demo", str(repo), "codex:owner", ask=ask, say=lambda _line: None)
+    assert _stored_delegation(store).get("decision_default_minutes") == stored
+
+
+@pytest.mark.parametrize("bad", ["0", "1441", "soon", "-5"])
+def test_wizard_rejects_bad_default_minutes_before_storing(
+    repo: Path, tmp_path: Path, bad: str
+) -> None:
+    store = Store(tmp_path / "bus.sqlite3")
+    store.register("codex", "owner", str(repo))
+    before = counts(store)
+    ask, _ = scripted(answers(repo, decide=("yes", bad)))
+    with pytest.raises(BusError):
+        run_wizard(store, "demo", str(repo), "codex:owner", ask=ask, say=lambda _line: None)
+    assert counts(store) == before
 
 
 def test_setup_without_identity_stores_nothing(

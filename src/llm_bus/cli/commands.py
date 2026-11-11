@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 from llm_bus.cli.guidance import guidance
 from llm_bus.cli.output import serialize
 from llm_bus.cli.references import resolve_reference
+from llm_bus.coordination.decisions import run_decision_timer
 from llm_bus.coordination.delivery import outgoing
 from llm_bus.errors import BusError
 from llm_bus.locks.models import Key, Request
@@ -58,10 +59,21 @@ def _lock(store: Store, args: dict[str, object], agent_address: str, project: st
     return locks.release(key)
 
 
-def human_command(store: Store, command: object, args: dict[str, object]) -> bool:
+def _hidden_timer(store: Store, command: object, args: dict[str, object]) -> bool:
+    """Run a detached hidden timer command; the parent returns at once, the child waits."""
     if command == "lock" and args["lock_command"] == "timer":
         if not detach():
             run_timer(store, Key(cast("str", args["scope"]), cast("str", args["resource"])))
+        return True
+    if command == "coordination" and args["action"] == "decision-timer":
+        if not detach():
+            run_decision_timer(store, cast("str", args["decision_id"]))
+        return True
+    return False
+
+
+def human_command(store: Store, command: object, args: dict[str, object]) -> bool:
+    if _hidden_timer(store, command, args):
         return True
     if command == "status":
         print(

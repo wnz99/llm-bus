@@ -1,12 +1,12 @@
 # Project State
 
-Last activity: 2026-11-11 - 261110-wft PR1 (#67) and PR2 (#68) merged; PR3 (Tasks 8-9) in progress; PR4-PR5 pending.
+Last activity: 2026-11-11 - 261110-wft PR1 (#67), PR2 (#68) and PR3 (#69) merged; PR4 (Tasks 10-11) in progress; PR5 pending.
 
 ## Registered Work
 
 | # | Description | Status | Directory |
 |---|-------------|--------|-----------|
-| 261110-wft | Coordinator-delegated approval gates and guided setup | PR1 (#67) and PR2 (#68) merged; PR3 (Tasks 8-9) in progress; PR4-PR5 pending (plan revision 6) | [261110-wft-coordinator-delegated-approval-gates-and](./quick/261110-wft-coordinator-delegated-approval-gates-and/) |
+| 261110-wft | Coordinator-delegated approval gates and guided setup | PR1 (#67), PR2 (#68) and PR3 (#69) merged; PR4 (Tasks 10-11) in progress; PR5 pending (plan revision 6) | [261110-wft-coordinator-delegated-approval-gates-and](./quick/261110-wft-coordinator-delegated-approval-gates-and/) |
 
 ## Quick Tasks Completed
 

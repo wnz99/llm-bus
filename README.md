@@ -329,6 +329,17 @@ owns project memory/assignments and workers own task progress notes. Beads setup
 and synchronization remain owner configured; local bus locks cannot serialize
 remote database updates.
 
+Owner decisions are opt-in with `--owner-decisions` on `coordinate` or
+`coordination amend`; no gate is needed. The coordinator records the owner's
+answers with `coordination decision-ask`/`decision-answer` only when the owner
+gave them directly in its session, and a bound worker acts on one only after
+`coordination decision-show` reports `accepted: true`. `--decision-defaults
+MINUTES` (1 to 1440, needs `--owner-decisions`) lets an unanswered `scope`
+decision with a recommended option take that option after the time, waking the
+coordinator and the worker named with `--worker`; other classes never default.
+`decision-list --defaulted` and the `decision_digest` key of `coordination show`
+list the defaults for the owner.
+
 Owner standing instructions for the coordinator or the workers are set only by
 the enrolled coordinator with
 `llm-bus coordination instructions PROJECT --audience coordinator|worker (--file PATH | --text TEXT) [--amend]`,

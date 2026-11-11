@@ -109,6 +109,19 @@ def project(db: Connection, scope: str, label: str) -> dict[str, object]:
     return dict(zip((column[0] for column in cursor.description), row, strict=True))
 
 
+def coordinator_enrolled(db: Connection, record: dict[str, object], address: str) -> bool:
+    """True for the project's current coordinator while it stays enrolled as coordinator."""
+    enrolled = cast(
+        "tuple[int] | None",
+        db.execute(
+            "SELECT 1 FROM coordination_enrollments "
+            "WHERE scope=? AND project_id=? AND address=? AND role='coordinator'",
+            (record["scope"], record["project_id"], address),
+        ).fetchone(),
+    )
+    return record["coordinator"] == address and enrolled is not None
+
+
 def enroll(db: Connection, record: dict[str, object], address: str, role: str) -> None:
     existing = cast(
         "tuple[str, str] | None",
@@ -274,4 +287,12 @@ def show(db: Connection, record: dict[str, object], viewer: str | None = None) -
     standing = _visible_instructions(db, record, viewer)
     if standing:
         result["instructions"] = standing
+    if viewer is not None and coordinator_enrolled(db, record, viewer):
+        # Deferred import: decisions imports this module.
+        # pylint: disable-next=import-outside-toplevel
+        from llm_bus.coordination import decisions  # noqa: PLC0415
+
+        defaulted = decisions.decision_rows(db, record, defaulted=True)
+        if defaulted:
+            result["decision_digest"] = defaulted
     return result

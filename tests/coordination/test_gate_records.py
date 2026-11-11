@@ -513,7 +513,7 @@ def test_wizard_stores_auto_merge_without_flag_words_in_specs(
         return real(specs, **flags)
 
     monkeypatch.setattr(Delegation, "from_specs", staticmethod(spy))
-    replies = iter(["Ship", str(tmp_path), "bus-2", "develop", "", "", "", "", "", "", "yes"])
+    replies = iter(["Ship", str(tmp_path), "bus-2", "develop", "", "", "", "", "", "no", "", "yes"])
     said: list[str] = []
     result = setup.run_wizard(
         store,
@@ -546,8 +546,8 @@ def test_setup_profile_lists_auto_merge_under_flags(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(setup, "detect_integration_branch", detected)
     out = setup.profile("/nowhere")
-    assert out["flags"] == ["auto-merge"]
+    assert out["flags"] == ["auto-merge", "owner-decisions", "decision-defaults"]
     assert "auto-merge" not in cast("list[str]", out["delegate"])
     assert "--auto-merge" in str(out["command"])
     monkeypatch.setattr(setup, "detect_integration_branch", undetected)
-    assert setup.profile("/nowhere")["flags"] == []
+    assert setup.profile("/nowhere")["flags"] == ["owner-decisions", "decision-defaults"]

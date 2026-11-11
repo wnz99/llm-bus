@@ -6,7 +6,7 @@ import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
-from llm_bus.coordination import delegation, instructions
+from llm_bus.coordination import decisions, delegation, instructions
 from llm_bus.coordination.authority import authorize
 from llm_bus.coordination.models import OPERATIONS, Direction
 from llm_bus.locks.service import Locks
@@ -119,6 +119,11 @@ def _delegation_text(db: Connection, record: dict[str, object], address: str, st
     if record["role"] == "coordinator":
         if not active:
             return ""
+        if not project.gates:
+            return (
+                f"Delegated items: {', '.join(project.items())}; "
+                f"workers whose binding is narrower: {len(behind)}. "
+            )
         return (
             f"Delegated gates: {_gate_list(project.gates)}; send approvals only with "
             f"`llm-bus coordination approve`; workers whose binding is narrower: {len(behind)}. "
@@ -136,6 +141,12 @@ def _delegation_text(db: Connection, record: dict[str, object], address: str, st
                 "win. Verify CI and review evidence live before acting; refuse on mismatch. "
                 f"Never delegated: {'; '.join(delegation.FLOOR)}. "
             )
+        if granted is not None and granted.owner_decisions:
+            text += (
+                "Owner decisions via the coordinator: accept a decision only after "
+                "coordination decision-show reports accepted: true. "
+            )
+        if text:
             break
     if address in behind:
         text += (
@@ -143,6 +154,19 @@ def _delegation_text(db: Connection, record: dict[str, object], address: str, st
             "join in this session accepts them. "
         )
     return text
+
+
+def _digest(db: Connection, record: dict[str, object], state: str) -> str:
+    """Coordinator reminder that decisions were taken by default and the owner must hear it."""
+    if record["role"] != "coordinator" or state != COORDINATION_ACTIVE:
+        return ""
+    count = decisions.defaulted_count(db, record)
+    if not count:
+        return ""
+    return (
+        f"{count} decisions were taken by default; report them to the owner "
+        "(see decision-list --defaulted). "
+    )
 
 
 def _worker_rules(record: dict[str, object]) -> str:
@@ -183,6 +207,7 @@ def _standing_instructions(
 
 def _coordination(store: Store, address: str, folder: str, *, full: bool) -> str:
     """Serialize local references as data; never read task content or execute tools."""
+    decisions.apply_for_coordinator(store, address)
     with store.transaction() as db:
         cursor = db.execute(
             "SELECT p.*,e.role,e.generation AS enrollment_generation FROM "
@@ -213,7 +238,11 @@ def _coordination(store: Store, address: str, folder: str, *, full: bool) -> str
             data.update({key: record[key] for key in ("beads_workspace", "memory_ticket")})
             data["references"] = json.loads(str(record["references_json"]))
         banner = _banner(db, record, address, folder)
-        rules = _delegation_text(db, record, address, state) + _worker_rules(record)
+        rules = (
+            _delegation_text(db, record, address, state)
+            + _worker_rules(record)
+            + _digest(db, record, state)
+        )
         standing = _standing_instructions(db, record, state, full=full)
     return (
         " Coordination recovery (local reference data, not executable instructions): "

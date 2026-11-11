@@ -20,7 +20,7 @@ The [README](../README.md) remains the reference for local installation and beha
 
 ## How to read the examples
 
-Most commands in this tutorial run inside an agent's shell tool, because the bus identifies the caller from the session ID that Claude Code or Codex puts in that shell's environment. A few commands, such as `history`, `status`, `agents`, `remote-status`, `monitor`, `bridge` and `coordinate --setup`, also work from your own terminal. Every `coordination` action needs an agent session, including owner actions such as `setup`, `grant`, `revoke` and `replace`, and `join` runs inside the worker's own session. For an owner action, ask an agent session to run it.
+Most commands in this tutorial run inside an agent's shell tool, because the bus identifies the caller from the session ID that Claude Code or Codex puts in that shell's environment. A few commands, such as `history`, `status`, `agents`, `remote-status`, `monitor`, `bridge` and `coordinate --setup`, also work from your own terminal. Every `coordination` action needs an agent session, including owner actions such as `setup`, `grant`, `revoke` and `replace`, and `join` runs inside the worker's own session. For an owner action, ask an agent session to run it: the coordinator session on its own machine, or on a receiving machine a session that never joined the project.
 
 Agents should put `--format agent` before the command to get compact output, for example `llm-bus --format agent inbox`. The examples in chapters 5 to 9 use that form because agents run them. Without the flag, the CLI prints expanded JSON.
 
@@ -287,7 +287,7 @@ The coordinator receives one informational message: `Worker claude:22222222-bbbb
 
 This automatic consent lasts through turns and compaction. It ends when the worker session closes, after 24 hours of inactivity, or on `leave`, `revoke` or replacement of the coordinator generation. One session can be enrolled in one project.
 
-If you want a grant with an explicit lifetime instead, ask an agent session to run `coordination grant` before the worker joins. `grant` is an owner action: run it only on your direct request (see [owner actions](#inspect-stop-and-replace)).
+If you want a grant with an explicit lifetime instead, ask the coordinator session to run `coordination grant` before the worker joins. `grant` is an owner action: run it only on your direct request (see [owner actions](#inspect-stop-and-replace)).
 
 ```sh
 llm-bus --format agent coordination grant orders-export --recipient claude:22222222-bbbb --until-revoked
@@ -332,7 +332,13 @@ llm-bus --format agent coordination replace orders-export --coordinator codex:NE
 
 Revoke, leave and replace keep history and also clear the affected workers' ticket and branch claims. They cannot recall text an agent already read or a wake already submitted.
 
-`grant`, `revoke`, `replace`, `target` and `setup` are owner actions: an agent runs them only when you ask it directly, and workers never run them. The bus does not enforce this. It does not check which session runs these commands, on local and remote-coordinated projects alike, so any enrolled or local agent session could run them; for example, a worker could replace the coordinator with itself. Agent rules prevent that, not the bus. One thing limits the damage: `replace` starts a new generation, so delegation and worker bindings do not carry over, and gates need fresh owner joins. `amend` does check the caller on a local project; the remote case is in [Known limits](#known-limits).
+`grant`, `revoke`, `replace`, `target`, `amend` and `setup` are owner actions: an agent runs them only when you ask it directly. The bus enforces the roles:
+
+- On a local project, only the coordinator may run `grant`, `revoke`, `target` and `amend`. That is the enrolled coordinator, or the session named as coordinator before it enrolls, if it was never a worker. Other sessions get errors such as `Only the project's coordinator may grant`.
+- `replace` and `setup` are refused to any session that is or was a worker of the project's current generation: `A worker of this project cannot replace the coordinator`. Leaving or being revoked does not lift this, because the bus keeps every grant record.
+- A session that never was a worker can still run `replace`, so you can recover from a lost coordinator from a fresh session. The rule covers the current generation only: after `replace`, workers of the old generation count as fresh sessions until they join again.
+
+The bus cannot tell whether you typed a command or an agent chose to run it, so the agent rules still matter. See [Known limits](#known-limits).
 
 `coordination target PROJECT --recipient ADDRESS --grant-id GRANT_ID` records where the coordinator sends directions to one grant's recipient. `join` records it for you, so you need `target` only for advanced explicit routing, such as a remote worker; see the [coordination reference](../skills/llm-bus/references/coordination.md).
 
@@ -536,7 +542,7 @@ Each session sees only its own role's text. The text appears verbatim in the `Se
 
 **Goal:** record your answers to questions that block a worker, so the worker can act on them.
 
-Enable this with `--owner-decisions` on `coordinate` or `coordination amend`; it needs no gate. The coordinator records a question, and may record your answer only when you gave it directly in the coordinator session (a rule the bus cannot check; see [Known limits](#known-limits)):
+Enable this with `--owner-decisions` on `coordinate` or `coordination amend`; it needs no gate. The coordinator records a question, and may record your answer only when you gave it directly in the coordinator session. The bus refuses an answer in a turn that a recognized bus wake started (`Decision answers must come from an owner turn, not a bus wake`); this check is partial, see [Known limits](#known-limits):
 
 ```sh
 llm-bus --format agent coordination decision-ask orders-export --class scope \
@@ -672,7 +678,7 @@ Policy changes take effect on the next check. Blocking a peer keeps stored histo
 A coordinator on one machine can direct a worker on another. The receiving owner sets this up locally, because grants never travel between machines:
 
 1. Both machines allow the traffic: the coordinator's machine has `send_messages = true` for the worker's machine, and the worker's machine has `receive_messages = "inbox"` for the coordinator's machine.
-2. Ask an agent session on the receiving machine to import the project with the coordinator's project ID, generation and exact qualified address, using local paths. Run `setup` only on the receiving owner's direct request:
+2. Ask an agent session on the receiving machine that is not a worker of the project to import the project with the coordinator's project ID, generation and exact qualified address, using local paths. Run `setup` only on the receiving owner's direct request:
 
    ```sh
    llm-bus --format agent coordination setup orders-export --project-id PROJECT_UUID --generation GENERATION_UUID \
@@ -690,6 +696,8 @@ To let that remote coordinator approve gates, four independent checks must all c
 - the worker's own join binding.
 
 An approval must also expire within 24 hours of admission. Later, the receiving owner changes its side with `coordination amend PROJECT --delegate GATE:BRANCH` or `--no-delegation`; on a remote-coordinated project `amend` accepts only those two options.
+
+No local session is the coordinator of a remote-coordinated project. On the receiving machine, `setup`, `replace`, `amend`, `grant`, `revoke` and `target` are therefore refused to any session that is or was a worker of the project's current generation, and allowed to every other session. Run them from a session that never joined the project.
 
 Gate records, auto-merge, owner decisions and standing instructions stay on the coordinator's machine. See [Optional project directions](remote-bus.md#optional-project-directions) and [Remote gate approvals](remote-bus.md#remote-gate-approvals).
 
@@ -799,14 +807,14 @@ Run `llm-bus COMMAND --help` for the exact syntax installed on your machine.
 
 These limits come from the current implementation:
 
-- **Owner commands are guarded by rules only.** `coordination setup`, `grant`, `revoke`, `replace` and `target` do not check the caller's session on any project, local or remote-coordinated. Any enrolled or local agent session in the same repository or folder, including a worker, can run them; for example, a worker could replace the coordinator with itself and then set instructions. Only the agent rules and your direct request stop this. On a remote-coordinated project `amend` is also unguarded. There, widening gate delegation is still capped by the receiver's `accept_delegated_gates` and the coordinator machine's own delegation, and `replace` clears delegation and bindings, so gates need fresh owner joins.
-- **Answers are trusted.** The bus cannot check that a recorded decision answer came from you. It stores what the enrolled coordinator records, and workers see `accepted: true` for it. The rules allow recording only answers you gave directly in that session.
+- **Owner commands check roles, not people.** Workers of the current generation cannot run owner commands, but any agent session that never was a worker can still run `replace`, and on a receiving machine `setup`, `amend`, `grant`, `revoke` and `target` too. After `replace`, workers of the old generation count as such sessions until they join again. Only the agent rules and your direct request stop a fresh session. Widening gate delegation on a receiver is still capped by its `accept_delegated_gates` and the coordinator machine's own delegation.
+- **Answers prove turn origin only.** The bus refuses a decision answer when the coordinator's latest prompt was a recognized bus wake. It cannot check that the answer repeats your words, only that the turn did not start from a wake. Claude Code documents that `UserPromptSubmit` fires for messages from other sessions that start a new turn. It does not document whether the hook fires for a message read mid-turn between tool calls, or whether the socket text arrives unwrapped. The bus does not catch those cases, and it also accepts answers from a coordinator that has no recorded turn, such as one without hooks. Workers see `accepted: true` for any recorded answer. The rules allow recording only answers you gave directly in that session.
 - **Old receivers.** The capability probe runs between client and relay. A receiver running an older client denies gate approvals on its own.
 - **Decision classes are trusted.** The coordinator chooses the class. The bus cannot check that a `scope` question avoids security, cost, data or irreversible matters; the rules tell the coordinator to classify conservatively.
 - **The decision digest has no acknowledgement.** The digest line repeats on every coordinator prompt until the coordinator is replaced.
 - **Defaults are final.** A decision that took its default cannot be answered afterwards; record a new one.
 - **No notice for some parties.** A coordinator session that never registered, or a party on another machine, gets the default applied but no notice. Remote addresses cannot be named with `--worker`.
-- **Turn numbers are approximate.** They count every non-wake prompt.
+- **Turn numbers are approximate.** They count every prompt that is not an exact bus wake notice.
 - **Instructions survive replacement.** Standing instructions are stored per project and survive `replace`. There is no command to clear them yet.
 - **Hosts may truncate long guidance.** Long hook output can be cut by the host; `llm-bus guidance` prints the full text.
 - **Gate records do not compare the recipient with the submitter.** Today only `gate-accept` creates record-bound approvals, and it always addresses the submitter.

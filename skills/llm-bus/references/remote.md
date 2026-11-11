@@ -166,7 +166,9 @@ relay leaves them queued with `unsupported_approvals`), the coordinator owner's
 own delegation, and on the receiver the owner's project delegation, the worker's
 binding and the peer key `accept_delegated_gates` (default deny); see
 [coordination.md](coordination.md#remote-gate-approvals). Held approvals stay in
-the outbox. Workers never run `setup`, `replace` or `amend`.
+the outbox. Workers never run `setup`, `replace` or `amend`. On the receiver,
+the bus refuses `setup`, `replace`, `amend`, `grant`, `revoke` and `target` to
+any session that is or was a worker of the project's current generation.
 Receiver-owner project setup and peer policy remain prerequisites; availability
 cannot create trust or authorization. Unsupported relays leave it queued with
 `unsupported_coordination`. Install/deploy separately; repository changes do not

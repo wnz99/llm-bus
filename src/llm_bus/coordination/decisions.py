@@ -35,6 +35,7 @@ ANSWERED = "answered"
 DEFAULTED = "defaulted"
 DEFAULT_SOURCE = "default"
 NOT_PENDING = "Decision not answered: not_pending"
+WAKE_TURN = "Decision answers must come from an owner turn, not a bus wake"
 MAX_TEXT = 4096
 DELIMITERS = ("<<<", ">>>")
 COLUMNS = (
@@ -64,8 +65,13 @@ def _require_coordinator(db: Connection, record: dict[str, object], caller: str)
         raise BusError("Only the enrolled coordinator may record or list decisions")
 
 
-def record_turn(mailbox: Store, address: str) -> None:
-    """Count one prompt turn for an enrolled coordinator; any other address writes nothing."""
+def record_turn(mailbox: Store, address: str, *, wake: bool = False) -> None:
+    """Record one prompt turn for an enrolled coordinator; any other address writes nothing.
+
+    ``coordination_owner_turns.turn`` holds the owner-turn count N. A positive value means the
+    latest prompt was an owner turn; a bus-wake prompt stores ``-N`` (``0`` before any owner
+    turn), and the next owner turn stores ``N + 1``. ``at`` is the latest owner turn's time.
+    """
     with mailbox.transaction() as db:
         enrolled = cast(
             "tuple[int] | None",
@@ -77,14 +83,22 @@ def record_turn(mailbox: Store, address: str) -> None:
         if enrolled is None:
             return
         db.execute("BEGIN IMMEDIATE")
+        if wake:
+            db.execute(
+                "INSERT INTO coordination_owner_turns VALUES (?,0,?) "
+                "ON CONFLICT(address) DO UPDATE SET turn=-abs(turn)",
+                (address, _stamp(datetime.now(UTC))),
+            )
+            return
         db.execute(
             "INSERT INTO coordination_owner_turns VALUES (?,1,?) "
-            "ON CONFLICT(address) DO UPDATE SET turn=turn+1,at=excluded.at",
+            "ON CONFLICT(address) DO UPDATE SET turn=abs(turn)+1,at=excluded.at",
             (address, _stamp(datetime.now(UTC))),
         )
 
 
 def _source_turn(db: Connection, address: str) -> int | None:
+    """The coordinator's latest recorded turn: negative or 0 after a bus wake, None if none."""
     row = cast(
         "tuple[int] | None",
         db.execute(
@@ -92,6 +106,17 @@ def _source_turn(db: Connection, address: str) -> int | None:
         ).fetchone(),
     )
     return None if row is None else row[0]
+
+
+def _require_owner_turn(db: Connection, caller: str) -> None:
+    """Refuse an answer in a turn that a recognized bus wake started.
+
+    This proves turn origin only, not that the answer repeats the owner's words. A caller
+    without any turn record passes (no hook installed, or enrolled in this very turn).
+    """
+    turn = _source_turn(db, caller)
+    if turn is not None and turn <= 0:
+        raise BusError(WAKE_TURN)
 
 
 def _row(db: Connection, decision_id: str) -> dict[str, object] | None:
@@ -174,6 +199,7 @@ def ask(  # noqa: PLR0913 - explicit decision fields
     if worker is not None and not _enrolled_worker(db, record, worker):
         raise BusError("Decision worker must be an enrolled worker of this project")
     if answer is not None:
+        _require_owner_turn(db, caller)
         answer = _text(answer, "answer")
     decision_id = uuid4().hex
     deadline = (
@@ -254,6 +280,7 @@ def answer(  # noqa: PLR0913, PLR0917 - plan signature: positional record fields
     """Store the owner's verbatim answer to a pending decision."""
     # pylint: disable=too-many-arguments,too-many-positional-arguments,redefined-outer-name
     _require_coordinator(db, record, caller)
+    _require_owner_turn(db, caller)
     text = _text(answer, "answer")
     row = _current(db, record, decision_id, ANSWERED)
     if row["status"] != PENDING:

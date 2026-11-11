@@ -290,8 +290,9 @@ sessions, requests `/llm-bus coordinate PROJECT` in one main session and
 the current exact coordinator and objective. Automatic consent ends at session
 close, 24-hour inactivity expiry, leave, revoke or generation replacement;
 turn completion, compaction and working outside the project folder preserve it,
-though directions do not verify while the session is outside (sends are refused
-with `wrong_scope`). Existing explicit owner grants keep
+though directions do not verify while the session is outside: a send is refused
+with a folder mismatch error, or with `wrong_scope` under `--cross-folder` and at
+delivery. Existing explicit owner grants keep
 their selected lifetimes. Local joins record the assignment target and one
 durable informational arrival per grant, even if the coordinator is offline.
 Native wake support determines whether the coordinator resumes automatically.

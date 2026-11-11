@@ -5,6 +5,7 @@
 # pylint: disable=cyclic-import,clean-code-commented-out-code
 
 import json
+import shlex
 from datetime import UTC, datetime
 from sqlite3 import Connection
 from typing import cast
@@ -156,10 +157,16 @@ def enroll(db: Connection, record: dict[str, object], address: str, role: str) -
             ).fetchone(),
         )
         label = row[0] if row is not None else existing[1]
+        scope = str(existing[0])
+        place = (
+            f"a folder in repository {scope.removeprefix('git:').removesuffix('/.git')}"
+            if scope.startswith("git:")
+            else f"folder {scope}"
+        )
         # Consent survives folder moves, so name where `leave` must run to end it.
+        command = shlex.join(["llm-bus", "coordination", "leave", label])
         raise BusError(
-            f"Leave current project before enrolling elsewhere: run "
-            f"`llm-bus coordination leave {label}` from its scope {existing[0]}"
+            f"Leave current project before enrolling elsewhere: run `{command}` from {place}"
         )
     db.execute(
         "INSERT OR REPLACE INTO coordination_enrollments VALUES (?,?,?,?,?)",

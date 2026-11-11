@@ -102,11 +102,16 @@ def test_moved_worker_is_told_where_to_leave(tmp_path: Path) -> None:
         "bus-2",
         address="codex:other-owner",
     )
+    with mailbox.transaction() as db:
+        db.execute("UPDATE coordination_projects SET label='demo two' WHERE label='demo'")
     mailbox.register("claude", "worker", str(elsewhere))
-    with pytest.raises(BusError, match=r"`llm-bus coordination leave demo` from its scope"):
+    with pytest.raises(BusError) as refused:
         invoke(mailbox, elsewhere, "join", "next", address="claude:worker")
+    assert str(refused.value).endswith(
+        f"run `llm-bus coordination leave 'demo two'` from folder {routing_scope(str(tmp_path))}"
+    )
     mailbox.register("claude", "worker", str(tmp_path))
-    invoke(mailbox, tmp_path, "coordination", "leave", "demo", address="claude:worker")
+    invoke(mailbox, tmp_path, "coordination", "leave", "demo two", address="claude:worker")
     mailbox.register("claude", "worker", str(elsewhere))
     invoke(mailbox, elsewhere, "join", "next", address="claude:worker")
 

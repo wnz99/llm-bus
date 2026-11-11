@@ -10,7 +10,7 @@ from sqlite3 import Connection
 from typing import cast
 from uuid import uuid4
 
-from llm_bus.coordination import delegation
+from llm_bus.coordination import amendments, delegation
 from llm_bus.errors import BusError
 
 
@@ -247,4 +247,7 @@ def show(db: Connection, record: dict[str, object]) -> dict[str, object]:
         gate["required_checks"] = json.loads(str(gate.pop("checks_json")))
     if gates:
         result["gate_records"] = gates
+    recorded = amendments.history(db, record)
+    if recorded:
+        result["amendments"] = recorded
     return result

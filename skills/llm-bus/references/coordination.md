@@ -54,8 +54,8 @@ leave it historical and
 unverified. The bus never inspects CI, reviews or branches: the worker checks
 that evidence live (see "Gate approvals"). Merge gate records and auto-merge
 (see "Merge gate records") are available for local projects. Remote gate
-approvals, amendments with instructions and decision requests are not available
-in this version. `record_withdrawn` marks a record-bound approval whose gate
+approvals, standing instructions and decision requests are not available in
+this version. `record_withdrawn` marks a record-bound approval whose gate
 record was rejected, superseded or is not accepted.
 
 Setup, grant, revoke and replacement are local owner actions, never actions
@@ -114,7 +114,10 @@ owner setup commands after the corresponding direct owner authorization.
    auto-merge?" after the gate prompts, only when a `merge` or `merge-admin`
    gate is kept. Resuming with `coordinate PROJECT --delegate ... [--auto-merge]`
    may only repeat the stored delegation; change it with `coordination amend`
-   (below).
+   (below). Resuming with `--objective` must repeat the current objective (the
+   latest amendment, else the stored one); a different text fails with
+   `Objective differs from the stored objective` and stores nothing. Change the
+   objective with `coordination amend PROJECT --objective` (below).
 
 2. In Claude, the owner's `/llm-bus join PROJECT` invokes:
 
@@ -298,6 +301,23 @@ llm-bus --format agent coordination amend PROJECT --no-delegation
 ```
 
 State every flag again: an omitted `--auto-merge` is removed.
+
+### Amending the objective
+
+Only the enrolled coordinator appends objective amendments:
+
+```sh
+llm-bus --format agent coordination amend PROJECT --objective "New objective text"
+```
+
+Each amendment is stored append-only with its author and time for the current
+generation, and the latest one is the effective objective; the objective stored
+at creation is never rewritten. `coordination show` lists `amendments` once any
+exist. `--objective` may be combined with `--delegate`, `--no-delegation` or
+`--auto-merge` in one command (both apply together or neither). Alone it leaves
+the delegation and worker bindings untouched. `amend` with neither an objective
+nor a delegation change fails with `amend needs --objective or a delegation
+change`.
 
 Narrowing takes effect at once: worker bindings drop items the project no
 longer delegates. Widening reaches a worker only through that worker's fresh

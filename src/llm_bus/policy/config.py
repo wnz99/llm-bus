@@ -112,13 +112,16 @@ def _peer(value: object, machine: str) -> PeerPolicy:
     receive = data.get("receive_messages", "deny")
     if not isinstance(send, bool) or receive not in ("deny", "monitor", "inbox"):
         raise BusError("Invalid message capability policy")
+    gates = _gates(data.get("accept_delegated_gates", []))
+    if gates and receive != "inbox":
+        raise BusError('accept_delegated_gates needs receive_messages = "inbox"')
     return PeerPolicy(
         peer,
         send,
         cast("str", receive),
         _reports(data.get("send_reports", [])),
         _reports(data.get("receive_reports", [])),
-        _gates(data.get("accept_delegated_gates", [])),
+        gates,
     )
 
 

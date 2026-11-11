@@ -238,7 +238,7 @@ def run(  # noqa: C901, PLR0912 - owner action dispatch
         db.execute("BEGIN IMMEDIATE")
         new_project = False
         if action == "setup":
-            _setup(db, scope, label, args)
+            _setup(db, scope, label, args, address)
         elif action == "coordinate":
             exists = cast(
                 "tuple[int] | None",
@@ -546,7 +546,7 @@ def _declare_delegation(
         raise BusError("Delegation differs; use coordination amend PROJECT")
 
 
-def _setup(db: Connection, scope: str, label: str, args: dict[str, object]) -> None:
+def _setup(db: Connection, scope: str, label: str, args: dict[str, object], address: str) -> None:
     """Receiver-owner import of a coordinator binding, with its own gate delegation if given."""
     coordinator = _address(args["coordinator"])
     _create(db, scope, label, args, coordinator)
@@ -556,7 +556,7 @@ def _setup(db: Connection, scope: str, label: str, args: dict[str, object]) -> N
             db,
             store.project(db, scope, label),
             delegation.Delegation.from_specs(specs),
-            coordinator,
+            address,
         )
 
 

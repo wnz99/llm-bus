@@ -138,7 +138,7 @@ Capabilities apply only to the exact `machine_id` under that repository:
 | `receive_messages` | `"deny"` | `deny` stores no incoming copy; `monitor` stores separate human history; `inbox` admits text to native agents and the existing wake path. |
 | `send_reports` | `[]` | Allow listed built-in statuses for imported messages from this peer. |
 | `receive_reports` | `[]` | Accept listed built-in statuses for this machine's outgoing messages to this peer. |
-| `accept_delegated_gates` | `[]` | Gates (`commit`, `push`, `merge`, `merge-admin`; unique) a coordinator on this peer may use for gate approvals. It only caps this machine's own project delegation and the worker's binding; it needs `receive_messages = "inbox"` and grants nothing alone. An omitted or empty list denies every remote gate approval. |
+| `accept_delegated_gates` | `[]` | Gates (`commit`, `push`, `merge`, `merge-admin`; unique) a coordinator on this peer may use for gate approvals. It only caps this machine's own project delegation and the worker's binding; it needs `receive_messages = "inbox"` (a non-empty list with `deny` or `monitor` is a configuration error, and switching the peer away from `inbox` ends verification of approvals already admitted) and grants nothing alone. An omitted or empty list denies every remote gate approval. |
 
 Unlisted peers are denied. There are no wildcards, inferred reciprocal permissions, custom report labels, or configurable reason sets. Selecting a status permits its fixed reasons listed [below](#structured-work-reports). Use `receive_messages = "monitor"` in a chosen peer entry to opt into human-only storage; it grants no normal reply or report permission.
 
@@ -376,6 +376,8 @@ operations on its own.
   24 hours of admission. Local policy is checked before inbox admission, pending
   exposure and wake, and again at each exposure. A peer in `monitor` mode never
   reaches the inbox or a wake; a peer cannot widen this machine's permissions.
+  Clock skew can make an approval sent near the 24-hour limit fail the
+  receiver's lifetime check; the coordinator then sends it again.
 - The receiver owner changes delegation later with `coordination amend PROJECT
   --delegate GATE:BRANCH` or `--no-delegation`, which narrows at once. After a
   receiver-local `replace` (new generation, no delegation and no bindings) run

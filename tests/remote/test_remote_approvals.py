@@ -91,14 +91,19 @@ def machine(tmp_path: Path, name: str, gates: tuple[str, ...] = ()) -> tuple[Sto
     return store, config
 
 
-def set_receive_mode(mode: str) -> None:
+def set_receive_mode(mode: str, *, keep_gates: bool = False) -> None:
+    """Switch the peer's mode; a valid config holds gates only for ``inbox``, so drop them."""
     path = Path(os.environ["LLM_BUS_CONFIG"])
-    path.write_text(
-        path.read_text(encoding="utf-8").replace(
-            'receive_messages = "inbox"', f'receive_messages = "{mode}"'
-        ),
-        encoding="utf-8",
+    text = path.read_text(encoding="utf-8").replace(
+        'receive_messages = "inbox"', f'receive_messages = "{mode}"'
     )
+    if not keep_gates:
+        text = "".join(
+            line
+            for line in text.splitlines(keepends=True)
+            if not line.startswith("accept_delegated_gates")
+        )
+    path.write_text(text, encoding="utf-8")
 
 
 def part(envelope: Mapping[str, object], key: str) -> dict[str, object]:
@@ -370,6 +375,45 @@ def test_exposure_rechecks_peer_cap_after_admission(tmp_path: Path) -> None:
     machine(tmp_path, "b")
     assert receiver.verdict(local_id)["reason"] == "gate_not_delegated"
     assert receiver.exposed() == []
+
+
+@pytest.mark.parametrize("mode", ["deny", "monitor"])
+def test_admitted_approval_stops_verifying_when_peer_leaves_inbox(
+    tmp_path: Path, mode: str
+) -> None:
+    receiver = Receiver(tmp_path)
+    receiver.join()
+    local_id = admitted_inbox(receiver, receiver.item())
+    assert receiver.verdict(local_id)["verified"] is True
+    messages = receiver.count("messages")
+    wakes = receiver.count("wake_dispatch")  # the admission itself requested one
+    # The gate list stays in the file, so the config is the owner's stale edit, not a clean switch.
+    set_receive_mode(mode, keep_gates=True)
+    verdict = receiver.verdict(local_id)
+    assert verdict["verified"] is False
+    assert verdict["reason"] == "gate_not_delegated"
+    assert receiver.exposed() == []
+    # History is retained; nothing new wakes the worker.
+    assert receiver.count("coordination_approvals") == 1
+    assert receiver.count("messages") == messages
+    assert receiver.count("wake_dispatch") == wakes
+
+
+@pytest.mark.parametrize("mode", ["deny", "monitor"])
+def test_peer_gate_list_needs_inbox_mode(tmp_path: Path, mode: str) -> None:
+    Receiver(tmp_path)
+    set_receive_mode(mode, keep_gates=True)
+    with pytest.raises(BusError, match="inbox"):
+        load_config()
+
+
+def test_setup_delegate_records_the_local_owner_not_the_coordinator(tmp_path: Path) -> None:
+    receiver = Receiver(tmp_path)
+    with receiver.store.transaction() as db:
+        by = cast(
+            "str", db.execute("SELECT updated_by FROM coordination_delegations").fetchone()[0]
+        )
+    assert by == "codex:receiver"
 
 
 def test_receiver_amend_after_replace_restores_and_narrows(tmp_path: Path) -> None:

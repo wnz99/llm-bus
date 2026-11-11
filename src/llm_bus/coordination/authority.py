@@ -171,7 +171,10 @@ def _peer_gates(record: dict[str, object], coordinator: str) -> tuple[str, ...]:
     if repo is None or len(parts) != REMOTE_PARTS or parts[1] != repo.repo_id:
         return ()
     peer = next((item for item in repo.peers if item.machine_id == parts[0]), None)
-    return () if peer is None else peer.accept_delegated_gates
+    # A peer blocked or monitor-only now holds no cap, so an admitted approval stops verifying.
+    if peer is None or peer.receive_messages != "inbox":
+        return ()
+    return peer.accept_delegated_gates
 
 
 def _delegation_reason(

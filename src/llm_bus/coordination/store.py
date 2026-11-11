@@ -287,4 +287,12 @@ def show(db: Connection, record: dict[str, object], viewer: str | None = None) -
     standing = _visible_instructions(db, record, viewer)
     if standing:
         result["instructions"] = standing
+    if viewer is not None and coordinator_enrolled(db, record, viewer):
+        # Deferred import: decisions imports this module.
+        # pylint: disable-next=import-outside-toplevel
+        from llm_bus.coordination import decisions  # noqa: PLC0415
+
+        defaulted = decisions.decision_rows(db, record, defaulted=True)
+        if defaulted:
+            result["decision_digest"] = defaulted
     return result

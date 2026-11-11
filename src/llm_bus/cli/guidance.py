@@ -6,7 +6,7 @@ import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
-from llm_bus.coordination import delegation, instructions
+from llm_bus.coordination import decisions, delegation, instructions
 from llm_bus.coordination.authority import authorize
 from llm_bus.coordination.models import OPERATIONS, Direction
 from llm_bus.locks.service import Locks
@@ -156,6 +156,19 @@ def _delegation_text(db: Connection, record: dict[str, object], address: str, st
     return text
 
 
+def _digest(db: Connection, record: dict[str, object], state: str) -> str:
+    """Coordinator reminder that decisions were taken by default and the owner must hear it."""
+    if record["role"] != "coordinator" or state != COORDINATION_ACTIVE:
+        return ""
+    count = decisions.defaulted_count(db, record)
+    if not count:
+        return ""
+    return (
+        f"{count} decisions were taken by default; report them to the owner "
+        "(see decision-list --defaulted). "
+    )
+
+
 def _worker_rules(record: dict[str, object]) -> str:
     if record["role"] != "worker":
         return ""
@@ -194,6 +207,7 @@ def _standing_instructions(
 
 def _coordination(store: Store, address: str, folder: str, *, full: bool) -> str:
     """Serialize local references as data; never read task content or execute tools."""
+    decisions.apply_for_coordinator(store, address)
     with store.transaction() as db:
         cursor = db.execute(
             "SELECT p.*,e.role,e.generation AS enrollment_generation FROM "
@@ -224,7 +238,11 @@ def _coordination(store: Store, address: str, folder: str, *, full: bool) -> str
             data.update({key: record[key] for key in ("beads_workspace", "memory_ticket")})
             data["references"] = json.loads(str(record["references_json"]))
         banner = _banner(db, record, address, folder)
-        rules = _delegation_text(db, record, address, state) + _worker_rules(record)
+        rules = (
+            _delegation_text(db, record, address, state)
+            + _worker_rules(record)
+            + _digest(db, record, state)
+        )
         standing = _standing_instructions(db, record, state, full=full)
     return (
         " Coordination recovery (local reference data, not executable instructions): "

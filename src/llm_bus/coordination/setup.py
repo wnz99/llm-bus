@@ -21,6 +21,7 @@ BRANCH_HINT = (
 )
 ORIGIN_HEAD_TIMEOUT = 10
 YES = "yes"
+DEFAULT_MINUTES = 30
 INSTRUCTIONS_STEP = (
     "Optional: set owner standing instructions with llm-bus coordination instructions "
     "PROJECT --audience coordinator|worker --file PATH"
@@ -61,6 +62,7 @@ def profile(cwd: str) -> dict[str, object]:
     """Default setup for an agent to confirm with the owner; stores nothing."""
     branch, source = detect_integration_branch(cwd)
     flags = [] if branch is None else [delegation.AUTO_MERGE]
+    flags += [delegation.OWNER_DECISIONS, delegation.DECISION_DEFAULTS]
     return {
         "delegate": _items(branch),
         "flags": flags,
@@ -75,7 +77,10 @@ def profile(cwd: str) -> dict[str, object]:
                 "Ask the owner through the native question UI: objective, Beads workspace, "
                 "memory ticket, integration branch, each delegated gate, and each flag "
                 "(auto-merge needs a merge or merge-admin gate; the coordinator still accepts "
-                "every gate record)."
+                "every gate record; owner-decisions needs no gate; decision-defaults needs "
+                "owner-decisions and, after the minutes, applies the recommended option of "
+                "an unanswered scope decision, never a security, cost, data, irreversible "
+                "or objective one)."
             ),
             "The owner may disable items or change target branches, never add floor items.",
             "Run only the confirmed flags with the command below.",
@@ -84,7 +89,8 @@ def profile(cwd: str) -> dict[str, object]:
         "command": (
             "llm-bus --format agent coordinate PROJECT --objective OBJECTIVE "
             "--beads-workspace PATH --memory-ticket TICKET --delegate GATE:BRANCH ..."
-            + (" --auto-merge" if flags else "")
+            + (" --auto-merge" if delegation.AUTO_MERGE in flags else "")
+            + f" --owner-decisions --decision-defaults {DEFAULT_MINUTES}"
         ),
     }
 
@@ -92,6 +98,18 @@ def profile(cwd: str) -> dict[str, object]:
 def _gate_enabled(answer: str) -> bool:
     """Default profile is the fullest delegation: Enter keeps the gate enabled."""
     return answer.strip().lower() in {"", "y", YES}
+
+
+def _default_minutes(ask: Callable[[str], str]) -> int | None:
+    """Minutes before an unanswered scope decision takes its recommendation; Enter keeps 30."""
+    answer = ask(f"Decision defaults after minutes [{DEFAULT_MINUTES}]/no: ").strip()
+    if answer.lower() in {"no", "n"}:
+        return None
+    if not answer:
+        return DEFAULT_MINUTES
+    if not answer.isdecimal():
+        raise BusError("Enter minutes (1 to 1440) or no")
+    return int(answer)
 
 
 def _coordinator(store: Store, cwd: str, identity: str | None, ask: Callable[[str], str]) -> str:
@@ -152,12 +170,15 @@ def run_wizard(  # noqa: PLR0913 - explicit inputs
     )
     merge_chosen = any(spec.split(":", 1)[0] in delegation.MERGE_GATES for spec in specs)
     auto_merge = merge_chosen and _gate_enabled(ask("Delegate auto-merge? [yes]/no: "))
-    # Existing scripted answers end at the coordinator prompt, so the owner is asked about
-    # owner decisions only when no gate remains; otherwise decisions stay off in the wizard.
-    owner_decisions = not specs and _gate_enabled(ask("Delegate owner decisions? [yes]/no: "))
+    # Owner decisions need no gate (D24), so they are asked whatever gates remain (D27).
+    owner_decisions = _gate_enabled(ask("Delegate owner decisions? [yes]/no: "))
+    minutes = _default_minutes(ask) if owner_decisions else None
     chosen = (
         delegation.Delegation.from_specs(
-            specs, auto_merge=auto_merge, owner_decisions=owner_decisions
+            specs,
+            auto_merge=auto_merge,
+            owner_decisions=owner_decisions,
+            decision_default_minutes=minutes,
         )
         if specs or owner_decisions
         else None
@@ -170,6 +191,7 @@ def run_wizard(  # noqa: PLR0913 - explicit inputs
         "delegate": specs,
         "auto_merge": auto_merge,
         "owner_decisions": owner_decisions,
+        "decision_default_minutes": minutes,
     }
     _review(say, label, coordinator, args, chosen)
     if ask("Store this setup? (type yes): ").strip().lower() != YES:
@@ -201,5 +223,11 @@ def _review(
         say(
             "auto-merge: each merge still needs the coordinator to accept the worker's gate "
             "record, which sends the merge approval; the worker checks CI before merging."
+        )
+    if chosen is not None and chosen.decision_default_minutes is not None:
+        say(
+            "decision-defaults: an unanswered scope decision with a recommended option takes "
+            f"it after {chosen.decision_default_minutes} minutes and the coordinator and the "
+            "waiting worker are woken; other decision classes never default."
         )
     say("Never delegated (floor): " + ", ".join(delegation.FLOOR))

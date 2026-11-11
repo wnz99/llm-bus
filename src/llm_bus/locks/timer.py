@@ -29,9 +29,14 @@ def schedule_check(key: Key) -> None:
     The child forks the timer and exits at once, so this returns without waiting for it.
     Without a timer, the next lock command or hook of any session raises the check.
     """
+    spawn("lock", "timer", key.scope, key.resource)
+
+
+def spawn(*command: str) -> None:
+    """Run ``llm-bus COMMAND`` in a child that forks its hidden timer and exits at once."""
     with contextlib.suppress(OSError, subprocess.SubprocessError):
         subprocess.run(  # noqa: S603 - fixed argument list, no shell
-            [sys.executable, "-m", "llm_bus", "lock", "timer", key.scope, key.resource],
+            [sys.executable, "-m", "llm_bus", *command],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

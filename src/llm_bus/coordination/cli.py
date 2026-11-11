@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 from uuid import uuid4
 
 from llm_bus.cli.guidance import guidance
@@ -27,7 +28,6 @@ from llm_bus.routing import routing_scope
 from llm_bus.wake.dispatch import dispatch_pending
 
 if TYPE_CHECKING:
-    import argparse
     from collections.abc import Callable
     from sqlite3 import Connection
 
@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     ActionResult = tuple[dict[str, object] | None, list[Message]]
 
 NARROW_ITEM = "ITEM"
+MINUTES_ITEM = "MINUTES"
 MAX_TEXT = 4096
 MAX_REFERENCES = 32
 CONTROL_BOUNDARY = 32
@@ -57,6 +58,7 @@ def add_parsers(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
         action="store_true",
         help="Delegate owner decisions: workers accept coordinator-recorded owner answers",
     )
+    _decision_defaults(coordinate)
     coordinate.add_argument(
         "--setup",
         action="store_true",
@@ -105,6 +107,19 @@ def add_parsers(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
             lifetime.add_argument("--until-revoked", action="store_true")
 
 
+def _decision_defaults(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--decision-defaults",
+        dest="decision_default_minutes",
+        type=int,
+        metavar=MINUTES_ITEM,
+        help=(
+            "Default an unanswered scope decision with a recommended option after MINUTES "
+            "(1-1440); needs --owner-decisions"
+        ),
+    )
+
+
 def _amend_parser(add_action: Callable[..., argparse.ArgumentParser]) -> None:
     amend = add_action("amend")
     amend.add_argument("project")
@@ -113,6 +128,7 @@ def _amend_parser(add_action: Callable[..., argparse.ArgumentParser]) -> None:
     change.add_argument("--no-delegation", action="store_true")
     amend.add_argument("--auto-merge", action="store_true")
     amend.add_argument("--owner-decisions", action="store_true")
+    _decision_defaults(amend)
     amend.add_argument("--objective", help="Append a dated objective amendment")
 
 
@@ -130,7 +146,12 @@ def _decision_parsers(add_action: Callable[..., argparse.ArgumentParser]) -> Non
     show = add_action("decision-show", help="Show a decision and whether you may act on it")
     show.add_argument("project")
     show.add_argument("--decision-id", required=True)
-    add_action("decision-list", help="List the project's decisions").add_argument("project")
+    listed = add_action("decision-list", help="List the project's decisions")
+    listed.add_argument("project")
+    listed.add_argument("--defaulted", action="store_true", help="Only decisions taken by default")
+    timer = add_action("decision-timer", help=argparse.SUPPRESS)
+    timer.add_argument("project")
+    timer.add_argument("--decision-id", required=True)
 
 
 def _instructions_parser(add_action: Callable[..., argparse.ArgumentParser]) -> None:
@@ -223,8 +244,7 @@ def run(  # noqa: C901, PLR0912 - owner action dispatch
             if new_project:
                 _create(db, scope, label, args, address)
         record = store.project(db, scope, label)
-        if action == "show":
-            return store.show(db, record, address)
+        lazy = decisions.apply_due(db, record) if action in LAZY_DEFAULTS else []
         if action in {"coordinate", "join", "grant"} and record["revoked_at"] is not None:
             raise BusError("Project revoked; owner must replace coordinator binding")
         if action == "coordinate":
@@ -242,13 +262,14 @@ def run(  # noqa: C901, PLR0912 - owner action dispatch
         else:
             notice_id = _transition(db, action, record, args, address)
         result = None if outcome is None else outcome[0]
-        messages = [] if outcome is None else outcome[1]
+        messages = lazy + ([] if outcome is None else outcome[1])
         if result is None:
             result = store.show(db, store.project(db, scope, label), address)
             if action == "amend":
                 result["rejoin_required"] = delegation.rejoin_required(db, record)
         if remote_notice is not None:
             result["availability"] = remote_notice
+    _schedule_default(action, label, result)
     if messages:
         result["wakes"] = notices.deliver(mailbox, messages)
     if notice_id is not None:
@@ -259,6 +280,12 @@ def run(  # noqa: C901, PLR0912 - owner action dispatch
         # Reuse hook recovery text; command success must teach the same role duties.
         result["guidance"] = guidance(mailbox, address, cwd, full=True)
     return result
+
+
+def _schedule_default(action: str, label: str, result: dict[str, object]) -> None:
+    """After commit, start the default timer for a new decision that has a deadline."""
+    if action == "decision-ask" and result.get("deadline_at") is not None:
+        decisions.schedule_default(label, str(result["decision_id"]))
 
 
 def new_project_label(mailbox: Store, cwd: str, label: object) -> str:
@@ -304,7 +331,7 @@ def create_for(  # noqa: PLR0913 - explicit setup inputs
         record = store.project(db, scope, label)
         specs = cast("list[str]", args.get("delegate") or [])
         flags = _flags(args)
-        if specs or any(flags.values()):
+        if specs or _flagged(flags):
             delegation.set_project_delegation(
                 db, record, delegation.Delegation.from_specs(specs, **flags), coordinator
             )
@@ -318,12 +345,30 @@ def create_for(  # noqa: PLR0913 - explicit setup inputs
     return result
 
 
-def _flags(args: dict[str, object]) -> dict[str, bool]:
-    """Delegation flags given on the command line, as ``Delegation.from_specs`` keywords."""
+class Flags(TypedDict):
+    """Delegation flags, spelled as ``Delegation.from_specs`` keywords."""
+
+    auto_merge: bool
+    owner_decisions: bool
+    decision_default_minutes: int | None
+
+
+def _flags(args: dict[str, object]) -> Flags:
+    """Delegation flags given on the command line or by the setup wizard."""
+    minutes = args.get("decision_default_minutes")
     return {
         "auto_merge": bool(args.get("auto_merge")),
         "owner_decisions": bool(args.get("owner_decisions")),
+        "decision_default_minutes": None if minutes is None else cast("int", minutes),
     }
+
+
+def _flagged(flags: Flags) -> bool:
+    return (
+        flags["auto_merge"]
+        or flags["owner_decisions"]
+        or flags["decision_default_minutes"] is not None
+    )
 
 
 def _gate_record(
@@ -406,9 +451,15 @@ def _decision_show(
 
 
 def _decision_list(
+    db: Connection, record: dict[str, object], args: dict[str, object], address: str
+) -> ActionResult:
+    return decisions.listing(db, record, address, defaulted=bool(args.get("defaulted"))), []
+
+
+def _show(
     db: Connection, record: dict[str, object], _args: dict[str, object], address: str
 ) -> ActionResult:
-    return decisions.listing(db, record, address), []
+    return store.show(db, record, address), []
 
 
 def _instruction_text(args: dict[str, object]) -> str:
@@ -437,6 +488,7 @@ def _instructions(
 
 
 ACTIONS: dict[str, Callable[..., ActionResult]] = {
+    "show": _show,
     "instructions": _instructions,
     "gate-record": _gate_record,
     "gate-accept": _gate_accept,
@@ -446,6 +498,19 @@ ACTIONS: dict[str, Callable[..., ActionResult]] = {
     "decision-show": _decision_show,
     "decision-list": _decision_list,
 }
+# Actions that run inside ``run`` and apply due decision defaults first (SC4). ``approve`` and
+# the join/coordinate paths are not lazy callers.
+LAZY_DEFAULTS = frozenset(
+    {
+        "show",
+        "amend",
+        "gate-record",
+        "gate-accept",
+        "gate-reject",
+        "decision-show",
+        "decision-list",
+    }
+)
 
 
 def _check_resume(
@@ -458,7 +523,7 @@ def _check_resume(
             "Objective differs from the stored objective; "
             "use coordination amend PROJECT --objective"
         )
-    if args.get("delegate") or any(_flags(args).values()):
+    if args.get("delegate") or _flagged(_flags(args)):
         _declare_delegation(db, record, args, address, new=new)
 
 
@@ -617,10 +682,10 @@ def _amend(
     flags = _flags(args)
     objective = args.get("objective")
     if args.get("no_delegation"):
-        if any(flags.values()):
+        if _flagged(flags):
             raise BusError("--no-delegation takes no delegation flags")
         change, wanted = True, None
-    elif specs or any(flags.values()):
+    elif specs or _flagged(flags):
         change, wanted = True, delegation.Delegation.from_specs(specs, **flags)
     elif objective is None:
         raise BusError("amend needs --objective or a delegation change")

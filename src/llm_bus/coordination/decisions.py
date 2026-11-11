@@ -7,16 +7,21 @@ nothing by itself: a worker acts on a decision only after ``status`` reports ``a
 from __future__ import annotations
 
 import hashlib
+import time
 import unicodedata
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
 from llm_bus.coordination import amendments, delegation, store
 from llm_bus.coordination.models import ticket_text
 from llm_bus.errors import BusError
+from llm_bus.locks import notices
+from llm_bus.locks.timer import TIMER_POLL_SECONDS, spawn
+from llm_bus.mailbox.writes import send_in_transaction
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from sqlite3 import Connection
 
     from llm_bus.mailbox.models import Message
@@ -24,8 +29,11 @@ if TYPE_CHECKING:
 
 CLASSES = ("scope", "security", "cost", "data", "irreversible", "objective")
 OBJECTIVE = "objective"
+DEFAULTABLE = "scope"
 PENDING = "pending"
 ANSWERED = "answered"
+DEFAULTED = "defaulted"
+DEFAULT_SOURCE = "default"
 NOT_PENDING = "Decision not answered: not_pending"
 MAX_TEXT = 4096
 DELIMITERS = ("<<<", ">>>")
@@ -41,10 +49,10 @@ def _stamp(moment: datetime) -> str:
 
 
 def _text(value: object, name: str) -> str:
-    """Bounded printable text that can safely be shown verbatim between delimiters."""
+    """Bounded text safe to show verbatim between delimiters; newline and tab are allowed."""
     if not isinstance(value, str) or not value.strip() or len(value) > MAX_TEXT:
         raise BusError(f"Decision {name} must be 1 to {MAX_TEXT} characters")
-    if any(unicodedata.category(char) in {"Cc", "Cf"} for char in value):
+    if any(unicodedata.category(char) in {"Cc", "Cf"} and char not in "\n\t" for char in value):
         raise BusError(f"Decision {name} must not contain control or format characters")
     if any(mark in value for mark in DELIMITERS):
         raise BusError(f"Decision {name} must not contain '<<<' or '>>>'")
@@ -168,10 +176,15 @@ def ask(  # noqa: PLR0913 - explicit decision fields
     if answer is not None:
         answer = _text(answer, "answer")
     decision_id = uuid4().hex
+    deadline = (
+        _deadline(db, record, now)
+        if answer is None and _defaultable(decision_class, recommended)
+        else None
+    )
     db.execute(
         "INSERT INTO coordination_decisions(decision_id,scope,project_id,generation,class,"
-        "ticket,worker,question,recommended,status,created_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        "ticket,worker,question,recommended,status,created_at,deadline_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             decision_id,
             record["scope"],
@@ -184,13 +197,33 @@ def ask(  # noqa: PLR0913 - explicit decision fields
             recommended,
             PENDING,
             _stamp(now),
+            deadline,
         ),
     )
     if answer is not None:
         _settle(
             db, record, caller, decision_id, decision_class=decision_class, text=answer, now=now
         )
-    return {"decision_id": decision_id, "status": ANSWERED if answer else PENDING}, []
+    created: dict[str, object] = {
+        "decision_id": decision_id,
+        "status": ANSWERED if answer else PENDING,
+    }
+    if deadline is not None:
+        created["deadline_at"] = deadline
+    return created, []
+
+
+def _defaultable(decision_class: str, recommended: str | None) -> bool:
+    """Only an unanswered ``scope`` decision with a recommended option may take a default."""
+    return decision_class == DEFAULTABLE and recommended is not None
+
+
+def _deadline(db: Connection, record: dict[str, object], now: datetime) -> str | None:
+    """When the project's decision defaults are on, the time a new decision defaults."""
+    current = delegation.project_delegation(db, record)
+    if current is None or not current.owner_decisions or current.decision_default_minutes is None:
+        return None
+    return _stamp(now + timedelta(minutes=current.decision_default_minutes))
 
 
 def _settle(  # noqa: PLR0913 - explicit stored fields
@@ -239,10 +272,21 @@ def _reason(
     """Why the caller may not act on the decision; None means accepted."""
     if row["generation"] != record["generation"]:
         return "stale_generation"
-    if row["status"] not in {ANSWERED, "defaulted"}:
+    if row["status"] not in {ANSWERED, DEFAULTED}:
         return "not_answered"
     if store.coordinator_enrolled(db, record, caller):
         return None
+    return _worker_reason(db, record, row, caller, now)
+
+
+def _worker_reason(
+    db: Connection,
+    record: dict[str, object],
+    row: dict[str, object],
+    caller: str,
+    now: datetime,
+) -> str | None:
+    """Whether a bound worker may act on an answered or defaulted decision."""
     grants = cast(
         "list[tuple[str]]",
         db.execute(
@@ -254,7 +298,11 @@ def _reason(
     for (grant_id,) in grants:
         granted = delegation.effective(db, record, grant_id, now=now)
         if granted is not None and granted.owner_decisions:
-            return None if row["worker"] in {None, caller} else "wrong_session"
+            if row["worker"] not in {None, caller}:
+                return "wrong_session"
+            if row["status"] == DEFAULTED and granted.decision_default_minutes is None:
+                return "default_not_bound"
+            return None
     return "not_delegated"
 
 
@@ -278,17 +326,178 @@ def status(
     }
 
 
-def listing(db: Connection, record: dict[str, object], caller: str) -> dict[str, object]:
-    """Every decision of the current generation, oldest first; coordinator only."""
-    _require_coordinator(db, record, caller)
+def decision_rows(
+    db: Connection, record: dict[str, object], *, defaulted: bool = False
+) -> list[dict[str, object]]:
+    """Decisions of the current generation, oldest first; ``defaulted`` keeps defaults only."""
     cursor = db.execute(
         f"SELECT {COLUMNS} FROM coordination_decisions "  # noqa: S608 - fixed column list
-        "WHERE scope=? AND project_id=? AND generation=? ORDER BY rowid",
+        "WHERE scope=? AND project_id=? AND generation=?"
+        + (" AND status='defaulted'" if defaulted else "")
+        + " ORDER BY rowid",
         (record["scope"], record["project_id"], record["generation"]),
     )
-    return {
-        "decisions": [
-            dict(zip((column[0] for column in cursor.description), row, strict=True))
-            for row in cast("list[tuple[object, ...]]", cursor.fetchall())
-        ]
-    }
+    return [
+        dict(zip((column[0] for column in cursor.description), row, strict=True))
+        for row in cast("list[tuple[object, ...]]", cursor.fetchall())
+    ]
+
+
+def listing(
+    db: Connection, record: dict[str, object], caller: str, *, defaulted: bool = False
+) -> dict[str, object]:
+    """Decisions of the current generation, oldest first; coordinator only."""
+    _require_coordinator(db, record, caller)
+    return {"decisions": decision_rows(db, record, defaulted=defaulted)}
+
+
+def _known(db: Connection, address: str) -> bool:
+    return db.execute("SELECT 1 FROM agents WHERE address=?", (address,)).fetchone() is not None
+
+
+def _tell(db: Connection, record: dict[str, object], recipient: str, body: str) -> list[Message]:
+    """A plain notice from the coordinator; it grants nothing. Unregistered recipients get none."""
+    coordinator = str(record["coordinator"])
+    if not (_known(db, coordinator) and _known(db, recipient)):
+        return []
+    return [send_in_transaction(db, coordinator, recipient, body, cross_folder=True)]
+
+
+def apply_due(
+    db: Connection, record: dict[str, object], *, now: datetime | None = None
+) -> list[Message]:
+    """Default every due, still eligible pending decision of the current generation.
+
+    Eligibility is rechecked on every call (M1): nothing is applied after revoke, and a
+    project without owner decisions or decision defaults loses its deadlines. The caller
+    holds ``BEGIN IMMEDIATE``, commits, then passes the notices to ``notices.deliver``.
+    """
+    if record["revoked_at"] is not None:
+        return []
+    key = (record["scope"], record["project_id"], record["generation"])
+    current = delegation.project_delegation(db, record)
+    if current is None or not current.owner_decisions or current.decision_default_minutes is None:
+        db.execute(
+            "UPDATE coordination_decisions SET deadline_at=NULL WHERE scope=? AND project_id=? "
+            "AND generation=? AND status='pending' AND deadline_at IS NOT NULL",
+            key,
+        )
+        return []
+    moment = now or datetime.now(UTC)
+    due = cast(
+        "list[tuple[str, str, str | None]]",
+        db.execute(
+            "SELECT decision_id,recommended,worker FROM coordination_decisions "
+            "WHERE scope=? AND project_id=? AND generation=? AND status='pending' "
+            "AND class=? AND recommended IS NOT NULL AND deadline_at<=? ORDER BY rowid",
+            (*key, DEFAULTABLE, _stamp(moment)),
+        ).fetchall(),
+    )
+    messages: list[Message] = []
+    for decision_id, recommended, worker in due:
+        db.execute(
+            "UPDATE coordination_decisions SET status=?,answer=?,source_session=?,resolved_at=? "
+            "WHERE decision_id=? AND status='pending'",
+            (DEFAULTED, recommended, DEFAULT_SOURCE, _stamp(moment), decision_id),
+        )
+        messages += _tell(
+            db,
+            record,
+            str(record["coordinator"]),
+            f"Decision {decision_id} took its recommended option by default: {recommended}. "
+            "Report it to the owner.",
+        )
+        if worker is not None and _enrolled_worker(db, record, worker):
+            messages += _tell(
+                db,
+                record,
+                worker,
+                f"Decision {decision_id} was answered by default: {recommended}. "
+                f"Run coordination decision-show {decision_id}; act on it only if it reports "
+                "accepted: true.",
+            )
+    return messages
+
+
+def apply_for_coordinator(mailbox: Store, address: str) -> None:
+    """Hook-time lazy application for an enrolled coordinator, then wakes after commit.
+
+    Worker and unenrolled sessions never reach the write; only a due row opens it.
+    """
+    moment = datetime.now(UTC)
+    with mailbox.transaction() as db:
+        found = db.execute(
+            "SELECT p.* FROM coordination_enrollments e JOIN coordination_projects p "
+            "ON p.scope=e.scope AND p.project_id=e.project_id "
+            "WHERE e.address=? AND e.role='coordinator'",
+            (address,),
+        )
+        row = cast("tuple[object, ...] | None", found.fetchone())
+        if row is None:
+            return
+        record = dict(zip((column[0] for column in found.description), row, strict=True))
+        if record["coordinator"] != address or not _due_exists(db, record, moment):
+            return
+        db.execute("BEGIN IMMEDIATE")
+        messages = apply_due(db, store.project(db, str(record["scope"]), str(record["label"])))
+    notices.deliver(mailbox, messages)
+
+
+def _due_exists(db: Connection, record: dict[str, object], moment: datetime) -> bool:
+    return (
+        db.execute(
+            "SELECT 1 FROM coordination_decisions WHERE scope=? AND project_id=? "
+            "AND generation=? AND status='pending' AND deadline_at<=? LIMIT 1",
+            (record["scope"], record["project_id"], record["generation"], _stamp(moment)),
+        ).fetchone()
+        is not None
+    )
+
+
+def defaulted_count(db: Connection, record: dict[str, object]) -> int:
+    return cast(
+        "tuple[int]",
+        db.execute(
+            "SELECT COUNT(*) FROM coordination_decisions WHERE scope=? AND project_id=? "
+            "AND generation=? AND status='defaulted'",
+            (record["scope"], record["project_id"], record["generation"]),
+        ).fetchone(),
+    )[0]
+
+
+def schedule_default(label: str, decision_id: str) -> None:
+    """Start the detached default timer; without it the next coordination action or hook applies."""
+    spawn("coordination", "decision-timer", label, "--decision-id", decision_id)
+
+
+def run_decision_timer(
+    mailbox: Store, decision_id: str, *, sleep: Callable[[float], None] = time.sleep
+) -> None:
+    """Sleep to the decision's deadline, then make one application attempt and wake both sides."""
+    while True:
+        with mailbox.transaction() as db:
+            row = cast(
+                "tuple[str, str, str] | None",
+                db.execute(
+                    "SELECT deadline_at,scope,project_id FROM coordination_decisions "
+                    "WHERE decision_id=? AND status='pending' AND deadline_at IS NOT NULL",
+                    (decision_id,),
+                ).fetchone(),
+            )
+        if row is None:
+            return
+        remaining = (datetime.fromisoformat(row[0]) - datetime.now(UTC)).total_seconds()
+        if remaining <= 0:
+            break
+        sleep(min(remaining, TIMER_POLL_SECONDS))
+    with mailbox.transaction() as db:
+        db.execute("BEGIN IMMEDIATE")
+        found = db.execute(
+            "SELECT * FROM coordination_projects WHERE scope=? AND project_id=?", row[1:]
+        )
+        project = cast("tuple[object, ...] | None", found.fetchone())
+        if project is None:
+            return
+        record = dict(zip((column[0] for column in found.description), project, strict=True))
+        messages = apply_due(db, record)
+    notices.deliver(mailbox, messages)

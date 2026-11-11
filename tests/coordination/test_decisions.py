@@ -427,7 +427,7 @@ def test_wizard_with_every_gate_disabled_stores_decisions_only(tmp_path: Path) -
     store = Project(tmp_path, claim=False).store
     store.register("codex", "wiz", str(tmp_path))
     replies = iter(
-        ["Ship", str(tmp_path), "bus-2", "develop", "no", "no", "no", "no", "", "", "yes"]
+        ["Ship", str(tmp_path), "bus-2", "develop", "no", "no", "no", "no", "", "no", "", "yes"]
     )
     prompts: list[str] = []
 

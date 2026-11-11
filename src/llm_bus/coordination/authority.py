@@ -137,7 +137,30 @@ def authorize(  # noqa: PLR0913, C901, PLR0911, PLR0912 - explicit denial preced
     return AuthorityDecision(verified=True, reason="verified", grant_id=grant_id)
 
 
-def _gate_decision(  # noqa: PLR0911, PLR0913 - explicit denial precedence
+def _record_accepted(db: Connection, record: dict[str, object], approval: Approval) -> bool:
+    """A record-bound approval holds only while its gate record is accepted and unchanged."""
+    row = cast(
+        "tuple[str, str, str, str, str, str, str, int, str] | None",
+        db.execute(
+            "SELECT scope,project_id,generation,status,ticket,branch,base,pr,head_sha "
+            "FROM coordination_gate_records WHERE record_id=?",
+            (approval.record_id,),
+        ).fetchone(),
+    )
+    return row == (
+        record["scope"],
+        record["project_id"],
+        record["generation"],
+        "accepted",
+        approval.ticket,
+        approval.branch,
+        approval.base,
+        approval.pr,
+        approval.head_sha,
+    )
+
+
+def _gate_decision(  # noqa: C901, PLR0911, PLR0913 - explicit denial precedence
     db: Connection,
     record: dict[str, object],
     *,
@@ -162,6 +185,8 @@ def _gate_decision(  # noqa: PLR0911, PLR0913 - explicit denial precedence
         return deny("invalid_direction")
     if "/" in coordinator:
         return deny("remote_gate_unsupported")
+    if approval.record_id is not None and not _record_accepted(db, record, approval):
+        return deny("record_withdrawn")
     gate = GATE_OPERATIONS[direction.operation]
     project = delegation.project_delegation(db, record)
     granted = delegation.effective(db, record, direction.grant_id, now=now)

@@ -22,6 +22,8 @@ FLOOR = (
     "paid or live runs",
     "merge with failing or pending CI",
 )
+AUTO_MERGE = "auto-merge"
+MERGE_GATES = frozenset({"merge", "merge-admin"})
 MAX_TARGETS = 8
 VERSION = 1
 SPEC_PARTS = 2
@@ -40,13 +42,17 @@ def _reject_floor(spec: str) -> None:
 
 @dataclass(frozen=True)
 class Delegation:
-    """Gate to explicit target branches; never empty per gate, canonical order."""
+    """Gate to explicit target branches, never empty per gate, plus optional flags."""
 
     gates: tuple[tuple[str, tuple[str, ...]], ...]
+    auto_merge: bool = False
 
     @classmethod
-    def _build(cls, mapping: dict[str, set[str]]) -> Delegation:
-        return cls(tuple((gate, tuple(sorted(mapping[gate]))) for gate in sorted(mapping)))
+    def _build(cls, mapping: dict[str, set[str]], *, auto_merge: bool = False) -> Delegation:
+        return cls(
+            tuple((gate, tuple(sorted(mapping[gate]))) for gate in sorted(mapping)),
+            auto_merge=auto_merge,
+        )
 
     def targets(self, gate: str) -> tuple[str, ...]:
         return dict(self.gates).get(gate, ())
@@ -56,28 +62,40 @@ class Delegation:
 
     def intersect(self, other: Delegation) -> Delegation:
         common = {gate: set(branches) & set(other.targets(gate)) for gate, branches in self.gates}
-        return self._build({gate: branches for gate, branches in common.items() if branches})
+        return self._build(
+            {gate: branches for gate, branches in common.items() if branches},
+            auto_merge=self.auto_merge and other.auto_merge,
+        )
 
     def covers(self, other: Delegation) -> bool:
-        return all(set(branches) <= set(self.targets(gate)) for gate, branches in other.gates)
+        return all(set(branches) <= set(self.targets(gate)) for gate, branches in other.gates) and (
+            self.auto_merge or not other.auto_merge
+        )
 
     def items(self) -> tuple[str, ...]:
-        return tuple(f"{gate}:{branch}" for gate, branches in self.gates for branch in branches)
+        gates = tuple(f"{gate}:{branch}" for gate, branches in self.gates for branch in branches)
+        return gates + ((AUTO_MERGE,) if self.auto_merge else ())
 
     def wire(self) -> dict[str, object]:
-        return {
+        fields: dict[str, object] = {
             "version": VERSION,
             "gates": {gate: list(branches) for gate, branches in self.gates},
         }
+        if self.auto_merge:
+            fields["auto_merge"] = True
+        return fields
 
     @classmethod
     def parse(cls, value: object) -> Delegation:
         if not isinstance(value, dict):
             raise BusError("Invalid delegation fields")
         fields = cast("dict[str, object]", value)
-        if set(fields) != {"version", "gates"}:
+        if not {"version", "gates"} <= set(fields) <= {"version", "gates", "auto_merge"}:
             raise BusError("Invalid delegation fields")
         gates = fields["gates"]
+        auto_merge = fields.get("auto_merge")
+        if auto_merge is not None and not isinstance(auto_merge, bool):
+            raise BusError("Invalid delegation flag")
         # bool subclasses int but is not a valid protocol version.
         # pylint: disable=unidiomatic-typecheck
         if type(fields["version"]) is not int or fields["version"] != VERSION:
@@ -92,14 +110,14 @@ class Delegation:
             if not 0 < len(listed) <= MAX_TARGETS:
                 raise BusError("Invalid delegation gate")
             mapping[gate] = {branch_name(branch) for branch in listed}
-        return cls._build(mapping)
+        return cls._build(mapping, auto_merge=auto_merge is True)
 
     @classmethod
     def load(cls, text: str) -> Delegation:
         return cls.parse(cast("object", json.loads(text)))
 
     @classmethod
-    def from_specs(cls, specs: list[str]) -> Delegation:
+    def from_specs(cls, specs: list[str], *, auto_merge: bool = False) -> Delegation:
         mapping: dict[str, set[str]] = {}
         for spec in specs:
             _reject_floor(spec)
@@ -107,17 +125,22 @@ class Delegation:
             if len(parts) != SPEC_PARTS or parts[0] not in GATES:
                 raise BusError(f"Expected GATE:BRANCH with gate in {', '.join(GATES)}: {spec!r}")
             mapping.setdefault(parts[0], set()).add(branch_name(parts[1]))
+        if auto_merge and not MERGE_GATES & set(mapping):
+            raise BusError("auto-merge needs a merge or merge-admin gate")
         if not mapping:
             raise BusError("Delegation needs at least one GATE:BRANCH")
         if any(len(branches) > MAX_TARGETS for branches in mapping.values()):
             raise BusError(f"At most {MAX_TARGETS} target branches per gate")
-        return cls._build(mapping)
+        return cls._build(mapping, auto_merge=auto_merge)
 
     def narrow(self, items: list[str]) -> Delegation:
+        """Keep exactly the listed items; each must already be in this delegation."""
         outside = [item for item in items if item not in self.items()]
         if outside:
             raise BusError(f"Not delegated by the project: {', '.join(outside)}")
-        return Delegation.from_specs(items)
+        return Delegation.from_specs(
+            [item for item in items if item != AUTO_MERGE], auto_merge=AUTO_MERGE in items
+        )
 
 
 def project_delegation(db: Connection, record: dict[str, object]) -> Delegation | None:

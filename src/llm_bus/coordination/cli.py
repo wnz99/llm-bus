@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from llm_bus.cli.guidance import guidance
 from llm_bus.cli.references import resolve_reference
-from llm_bus.coordination import delegation, store
+from llm_bus.coordination import delegation, gate_records, store
 from llm_bus.coordination.availability import record_local, record_remote
 from llm_bus.coordination.models import (
     OPERATIONS,
@@ -21,6 +21,7 @@ from llm_bus.coordination.models import (
     uuid4_string,
 )
 from llm_bus.errors import BusError
+from llm_bus.locks import notices
 from llm_bus.routing import routing_scope
 from llm_bus.wake.dispatch import dispatch_pending
 
@@ -29,8 +30,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from sqlite3 import Connection
 
+    from llm_bus.mailbox.models import Message
     from llm_bus.mailbox.store import Store
 
+    ActionResult = tuple[dict[str, object] | None, list[Message]]
+
+NARROW_ITEM = "ITEM"
 MAX_TEXT = 4096
 MAX_REFERENCES = 32
 CONTROL_BOUNDARY = 32
@@ -42,19 +47,26 @@ def add_parsers(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     _references(coordinate, required=False)
     coordinate.add_argument("--delegate", action="append", metavar="GATE:BRANCH")
     coordinate.add_argument(
+        "--auto-merge",
+        action="store_true",
+        help="Delegate auto-merge: a worker merges on a coordinator-accepted gate record",
+    )
+    coordinate.add_argument(
         "--setup",
         action="store_true",
         help="Print the setup profile, or run the confirmation wizard in a terminal",
     )
     join = add_parser("join", help="Owner consents and enrolls this main session")
     join.add_argument("project")
-    join.add_argument("--narrow", action="append", metavar="GATE:BRANCH")
+    join.add_argument("--narrow", action="append", metavar=NARROW_ITEM)
     actions = add_parser("coordination").add_subparsers(dest="action", required=True)
     amend = actions.add_parser("amend")
     amend.add_argument("project")
-    change = amend.add_mutually_exclusive_group(required=True)
+    change = amend.add_mutually_exclusive_group()
     change.add_argument("--delegate", action="append", metavar="GATE:BRANCH")
     change.add_argument("--no-delegation", action="store_true")
+    amend.add_argument("--auto-merge", action="store_true")
+    _gate_parsers(actions.add_parser)
     approve = actions.add_parser("approve")
     approve.add_argument("project")
     approve.add_argument("--recipient", required=True)
@@ -88,6 +100,23 @@ def add_parsers(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
             lifetime = action.add_mutually_exclusive_group(required=True)
             lifetime.add_argument("--expires-at")
             lifetime.add_argument("--until-revoked", action="store_true")
+
+
+def _gate_parsers(add_action: Callable[..., argparse.ArgumentParser]) -> None:
+    record = add_action("gate-record")
+    record.add_argument("project")
+    for name in ("ticket", "branch", "base", "head-sha"):
+        record.add_argument(f"--{name}", required=True)
+    record.add_argument("--pr", type=int, required=True)
+    record.add_argument("--review-evidence", action="append", default=[])
+    record.add_argument("--required-check", action="append", default=[])
+    for name in ("gate-accept", "gate-reject"):
+        decide = add_action(name)
+        decide.add_argument("project")
+        decide.add_argument("--record-id", required=True)
+        if name == "gate-accept":
+            decide.add_argument("--head-sha", required=True)
+            decide.add_argument("--admin", action="store_true")
 
 
 def _references(parser: argparse.ArgumentParser, *, required: bool) -> None:
@@ -157,23 +186,30 @@ def run(  # noqa: C901, PLR0912 - owner action dispatch
             return store.show(db, record)
         if action in {"coordinate", "join", "grant"} and record["revoked_at"] is not None:
             raise BusError("Project revoked; owner must replace coordinator binding")
-        if action == "coordinate" and args.get("delegate"):
-            _declare_delegation(
-                db, record, cast("list[str]", args["delegate"]), address, new=new_project
-            )
+        if action == "coordinate" and (args.get("delegate") or any(_flags(args).values())):
+            _declare_delegation(db, record, args, address, new=new_project)
         remote_notice = None
-        if action == "join" and "/" in str(record["coordinator"]):
+        outcome: ActionResult | None = None
+        if action in ACTIONS:
+            outcome = ACTIONS[action](db, record, args, address)
+            notice_id = None
+        elif action == "join" and "/" in str(record["coordinator"]):
             grant_id = store.join_session(db, record, address)
             delegation.bind(db, record, grant_id, cast("list[str] | None", args.get("narrow")))
             remote_notice = record_remote(db, mailbox, record, address, grant_id, cwd=cwd)
             notice_id = None
         else:
             notice_id = _transition(db, action, record, args, address)
-        result = store.show(db, store.project(db, scope, label))
-        if action == "amend":
-            result["rejoin_required"] = delegation.rejoin_required(db, record)
+        result = None if outcome is None else outcome[0]
+        messages = [] if outcome is None else outcome[1]
+        if result is None:
+            result = store.show(db, store.project(db, scope, label))
+            if action == "amend":
+                result["rejoin_required"] = delegation.rejoin_required(db, record)
         if remote_notice is not None:
             result["availability"] = remote_notice
+    if messages:
+        result["wakes"] = notices.deliver(mailbox, messages)
     if notice_id is not None:
         result["availability_wake"] = dispatch_pending(
             mailbox, str(record["coordinator"]), trigger_id=notice_id
@@ -226,9 +262,10 @@ def create_for(  # noqa: PLR0913 - explicit setup inputs
         _create(db, scope, label, args, coordinator)
         record = store.project(db, scope, label)
         specs = cast("list[str]", args.get("delegate") or [])
-        if specs:
+        flags = _flags(args)
+        if specs or any(flags.values()):
             delegation.set_project_delegation(
-                db, record, delegation.Delegation.from_specs(specs), coordinator
+                db, record, delegation.Delegation.from_specs(specs, **flags), coordinator
             )
         enrolled = current is not None and current == coordinator
         if enrolled:
@@ -240,11 +277,65 @@ def create_for(  # noqa: PLR0913 - explicit setup inputs
     return result
 
 
+def _flags(args: dict[str, object]) -> dict[str, bool]:
+    """Delegation flags given on the command line, as ``Delegation.from_specs`` keywords."""
+    return {"auto_merge": bool(args.get("auto_merge"))}
+
+
+def _gate_record(
+    db: Connection, record: dict[str, object], args: dict[str, object], address: str
+) -> ActionResult:
+    return gate_records.submit(
+        db,
+        record,
+        address,
+        ticket=str(args["ticket"]),
+        branch=str(args["branch"]),
+        base=str(args["base"]),
+        pr=cast("int", args["pr"]),
+        head_sha=str(args["head_sha"]),
+        evidence=cast("list[str]", args["review_evidence"]),
+        checks=cast("list[str]", args["required_check"]),
+        now=datetime.now(UTC),
+    )
+
+
+def _gate_accept(
+    db: Connection, record: dict[str, object], args: dict[str, object], address: str
+) -> ActionResult:
+    return gate_records.accept(
+        db,
+        record,
+        address,
+        record_id=str(args["record_id"]),
+        head_sha=str(args["head_sha"]),
+        admin=bool(args["admin"]),
+        now=datetime.now(UTC),
+    )
+
+
+def _gate_reject(
+    db: Connection, record: dict[str, object], args: dict[str, object], address: str
+) -> ActionResult:
+    return gate_records.reject(
+        db, record, address, record_id=str(args["record_id"]), now=datetime.now(UTC)
+    )
+
+
+ACTIONS: dict[str, Callable[..., ActionResult]] = {
+    "gate-record": _gate_record,
+    "gate-accept": _gate_accept,
+    "gate-reject": _gate_reject,
+}
+
+
 def _declare_delegation(
-    db: Connection, record: dict[str, object], specs: list[str], address: str, *, new: bool
+    db: Connection, record: dict[str, object], args: dict[str, object], address: str, *, new: bool
 ) -> None:
     """Set delegation on a new project; a resume may only repeat it, never change it."""
-    wanted = delegation.Delegation.from_specs(specs)
+    wanted = delegation.Delegation.from_specs(
+        cast("list[str]", args.get("delegate") or []), **_flags(args)
+    )
     if new:
         delegation.set_project_delegation(db, record, wanted, address)
     elif wanted != delegation.project_delegation(db, record):
@@ -304,21 +395,7 @@ def _transition(  # noqa: C901, PLR0912 - bounded CLI action dispatch
             )
             return record_local(db, record, address, grant_id)
     elif action == "amend":
-        enrolled = cast(
-            "tuple[int] | None",
-            db.execute(
-                "SELECT 1 FROM coordination_enrollments "
-                "WHERE scope=? AND project_id=? AND address=? AND role='coordinator'",
-                (*key, address),
-            ).fetchone(),
-        )
-        if record["coordinator"] != address or enrolled is None:
-            raise BusError("Only the enrolled coordinator may amend delegation")
-        specs = cast("list[str] | None", args.get("delegate"))
-        wanted = (
-            None if args.get("no_delegation") else delegation.Delegation.from_specs(specs or [])
-        )
-        delegation.set_project_delegation(db, record, wanted, address)
+        _amend(db, record, args, address)
     elif action == "claim":
         _claim(db, record, args, address)
     elif action == "grant":
@@ -389,6 +466,33 @@ def _transition(  # noqa: C901, PLR0912 - bounded CLI action dispatch
         if coordinator == address:
             store.enroll(db, {**record, "generation": generation}, address, "coordinator")
     return None
+
+
+def _amend(
+    db: Connection, record: dict[str, object], args: dict[str, object], address: str
+) -> None:
+    """Replace the whole delegation (gates and flags) or remove it; narrowing applies at once."""
+    enrolled = cast(
+        "tuple[int] | None",
+        db.execute(
+            "SELECT 1 FROM coordination_enrollments "
+            "WHERE scope=? AND project_id=? AND address=? AND role='coordinator'",
+            (record["scope"], record["project_id"], address),
+        ).fetchone(),
+    )
+    if record["coordinator"] != address or enrolled is None:
+        raise BusError("Only the enrolled coordinator may amend delegation")
+    specs = cast("list[str]", args.get("delegate") or [])
+    flags = _flags(args)
+    if args.get("no_delegation"):
+        if any(flags.values()):
+            raise BusError("--no-delegation takes no delegation flags")
+        wanted = None
+    elif specs or any(flags.values()):
+        wanted = delegation.Delegation.from_specs(specs, **flags)
+    else:
+        raise BusError("amend needs --delegate, --no-delegation or a delegation flag")
+    delegation.set_project_delegation(db, record, wanted, address)
 
 
 def _claim(

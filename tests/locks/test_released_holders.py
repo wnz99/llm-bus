@@ -201,6 +201,8 @@ def test_owner_terminal_must_not_run_under_an_agent_host(monkeypatch: pytest.Mon
     assert not under_agent_host()
     _ps(monkeypatch, None)
     assert under_agent_host()
+    _ps(monkeypatch, "")
+    assert under_agent_host()
 
 
 def test_real_process_table_matches_its_own_record() -> None:

@@ -63,6 +63,8 @@ def _ancestors() -> list[tuple[str, HostProcess]] | None:
         table[int(fields[0])] = (int(fields[1]), started, Path(fields[-1]).name)
     ancestors: list[tuple[str, HostProcess]] = []
     pid = os.getppid()
+    if pid not in table:
+        return None
     seen: set[int] = set()
     while pid in table and pid not in seen:
         seen.add(pid)

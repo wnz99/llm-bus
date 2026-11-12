@@ -13,8 +13,9 @@ from llm_bus.cli.references import resolve_reference
 from llm_bus.coordination.decisions import run_decision_timer
 from llm_bus.coordination.delivery import outgoing
 from llm_bus.errors import BusError
-from llm_bus.locks.models import Key, Request
-from llm_bus.locks.service import Locks
+from llm_bus.hosts.processes import under_agent_host
+from llm_bus.locks.models import FORCE_AUTHORITY, Key, Request
+from llm_bus.locks.service import Locks, force_release, lock_key
 from llm_bus.locks.timer import detach, run_timer
 from llm_bus.mailbox.models import address
 from llm_bus.policy.config import load_config, optional_config, require_config
@@ -58,7 +59,26 @@ def _lock(store: Store, args: dict[str, object], agent_address: str, project: st
         )
     if action == "cancel":
         return locks.cancel(key)
+    if args["force"]:
+        return locks.force_release(key, cast("str | None", args["reason"]))
+    if args["reason"] is not None:
+        raise BusError("--reason applies only to a forced release")
     return locks.release(key)
+
+
+def interactive_terminal() -> bool:
+    """A TTY outside any agent host; an agent with a pseudo-terminal still runs under one."""
+    return sys.stdin.isatty() and sys.stdout.isatty() and not under_agent_host()
+
+
+def owner_force_release(store: Store, args: dict[str, object]) -> object:
+    """Force from a terminal without a host session: only an interactive owner may."""
+    if not interactive_terminal() or args["format"] == "agent":
+        raise BusError(f"Only {FORCE_AUTHORITY} can run `llm-bus lock release --force`")
+    key = lock_key(
+        cast("str", args["resource"]), str(Path.cwd().resolve()), shared=bool(args["shared"])
+    )
+    return force_release(store, key, cast("str | None", args["reason"]), actor=None)
 
 
 def _hidden_timer(store: Store, command: object, args: dict[str, object]) -> bool:

@@ -90,14 +90,25 @@ def check_body(lock: Lock) -> str:
     )
 
 
-def grant_body(lock: Lock, previous: str) -> str:
+RELEASED_OR_LAPSED = "released it or its lease ended"
+
+
+def grant_body(lock: Lock, previous: str, how: str) -> str:
     return (
         f"llm-bus lock granted: you now hold resource {lock['resource']!r} after {previous} "
-        "released it or its lease ended. Set when you expect to release by running "
+        f"{how}. Set when you expect to release by running "
         f"`llm-bus lock acquire {lock['resource']}{flag(lock)} --check DURATION`, such as "
         "30m; you will be asked then. Run "
         f"`llm-bus lock release {lock['resource']}{flag(lock)}` when done. "
         f"Your lease ends at {lock['expires_at']}."
+    )
+
+
+def forced_body(lock: Lock, actor: str, reason: str) -> str:
+    return (
+        f"llm-bus lock force-released: {actor} took resource {lock['resource']!r} from you. "
+        f"Their reason: {reason}. Stop using it now. If you still need it, run "
+        f"`llm-bus lock acquire {lock['resource']}{flag(lock)} --check DURATION` to queue again."
     )
 
 

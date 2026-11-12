@@ -228,7 +228,17 @@ The flags work as follows:
 | `--ttl MINUTES` | Lease length, default 1440 (24 hours), at most 7 days. The lease ends at once when the holder's session ends. |
 | `--shared` | Uses a machine-wide name instead of one scoped to this repository or folder. Use it on `release` and `status` too. |
 
-On `release`, or when a lease lapses, the resource passes to the earliest live waiter, which receives a `lock granted` message. Only the holder can release. `lock status --all` and `lock list --all` cover every repository and folder.
+On `release`, or when a lease lapses, the resource passes to the earliest live waiter, which receives a `lock granted` message. `lock status --all` and `lock list --all` cover every repository and folder.
+
+A killed agent fires no close hook, so the bus also records each session's `claude` or `codex` host process. Every lock command checks the processes of holders and waiters. If one has exited, the bus ends that session and passes its locks on. Like a close hook, this also ends the session's labels and its coordination join, so a resumed worker needs a fresh `join`. A Codex thread inside a shared app-server process is not detected this way.
+
+Normally only the holder can release. For a holder that is stuck, the owner can force a release from an interactive terminal that is not running inside Claude Code or Codex:
+
+```sh
+llm-bus lock release db:orders --force --reason "holder session was killed"
+```
+
+The active coordinator of the lock's project, or of the holder's project, can run the same command from its session. The old holder is told the reason, the lock passes to the next waiter, and the release is recorded with who forced it and why.
 
 **Check:** `lock status` shows holders, check times, leases and queues. Locks do not cross machines. For copyable lock-name tables, see the [lock instruction examples](../examples/resource-locks.md).
 
@@ -760,7 +770,7 @@ For each collaborator, you choose on your private owner page what their messages
 | Identity, label, roster | `whoami [--label NAME]`, `list [--all]`, `agents`, `guidance` | [3](#3-messages-between-local-sessions) |
 | Messages | `send TO [--body TEXT] [--reply-to ID] [--cross-folder]`, `inbox [--limit N]`, `ack ID…` | [3](#3-messages-between-local-sessions) |
 | History and diagnostics | `history [--folder P \| --repository P \| --all] [--before ID \| --after ID] [--limit N] [--conversation ID] [--peer ADDR]`, `status ID` | [3](#3-messages-between-local-sessions) |
-| Locks | `lock list [--all]`, `lock status [--all] [--shared] [NAME]`, `lock acquire NAME --check D [--describe T] [--reason T] [--new] [--ttl M] [--notify] [--shared]`, `lock release NAME [--shared]`, `lock cancel NAME [--shared]` | [4](#4-shared-resource-locks) |
+| Locks | `lock list [--all]`, `lock status [--all] [--shared] [NAME]`, `lock acquire NAME --check D [--describe T] [--reason T] [--new] [--ttl M] [--notify] [--shared]`, `lock release NAME [--shared] [--force --reason T]`, `lock cancel NAME [--shared]` | [4](#4-shared-resource-locks) |
 | Start or join a project | `coordinate PROJECT [--setup] [--objective T] [--beads-workspace P] [--memory-ticket ID] [--reference P] [--delegate G:B] [--auto-merge] [--owner-decisions] [--decision-defaults M]`, `join PROJECT [--narrow ITEM]` | [5](#5-coordinate-a-project), [6](#6-delegate-approval-gates) |
 | Directions | `send TO --project PROJECT --direction assign\|reprioritize\|clarify\|pause\|cancel\|review` | [5](#5-coordinate-a-project) |
 | Project lifecycle | `coordination show\|leave PROJECT`, `coordination grant PROJECT --recipient A (--until-revoked \| --expires-at T)`, `coordination revoke PROJECT [--recipient A]`, `coordination replace PROJECT --coordinator A --generation UUID`, `coordination target PROJECT --recipient A --grant-id ID` | [5](#5-coordinate-a-project) |

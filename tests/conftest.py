@@ -16,3 +16,10 @@ def isolate_host_session(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep host identity and wake sockets out of tests; tests set the ones they need."""
     for name in HOST_ENVIRONMENT:
         monkeypatch.delenv(name, raising=False)
+    # The suite's own ancestors may include a live claude or codex process.
+    monkeypatch.setattr("llm_bus.cli.app.host_process", _no_host)
+    monkeypatch.setattr("llm_bus.cli.hooks.host_process", _no_host)
+
+
+def _no_host(_kind: str) -> None:
+    return None

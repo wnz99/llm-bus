@@ -20,6 +20,13 @@ HOOK_DESCRIPTION_CHARS = 60
 CATALOG_IDLE_DAYS = 30
 SIMILAR_RATIO = 0.8
 SHARED_SCOPE = "shared"
+HOLDER_EXITED = "holder_exited"
+FORCED = "forced"
+OWNER_TERMINAL = "owner terminal"
+FORCE_AUTHORITY = (
+    "the owner at an interactive terminal, or the active coordinator of the lock's project "
+    "or the holder's project"
+)
 CHECK_UNITS = {"": 1, "m": 1, "h": 60, "d": 24 * 60}
 CHECK_PATTERN = re.compile(r"^(\d{1,6})\s*([mhd]?)$")
 CHECK_HELP = "a duration such as 45m, 2h, or 1d"

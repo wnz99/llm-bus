@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from llm_bus.coordination.models import Approval, Direction
+    from llm_bus.hosts.processes import HostProcess
 
 
 class Store:  # pylint: disable=too-many-public-methods
@@ -41,7 +42,7 @@ class Store:  # pylint: disable=too-many-public-methods
     def transaction(self) -> AbstractContextManager[sqlite3.Connection]:
         return connection.transaction(self._connect)
 
-    def register(
+    def register(  # noqa: PLR0913 - explicit optional registration metadata
         self,
         kind: str,
         session_id: str,
@@ -49,12 +50,20 @@ class Store:  # pylint: disable=too-many-public-methods
         *,
         messaging_socket: str | None = None,
         label: str | None = None,
+        host: HostProcess | None = None,
     ) -> str:
         """Upsert session address without deleting its pending messages."""
+        # pylint: disable=too-many-arguments
         with self.transaction() as db:
             db.execute("BEGIN IMMEDIATE")
             return agents.register(
-                db, kind, session_id, project, messaging_socket=messaging_socket, label=label
+                db,
+                kind,
+                session_id,
+                project,
+                messaging_socket=messaging_socket,
+                label=label,
+                host=host,
             )
 
     def resolve_label(self, label: str, project: str) -> str:

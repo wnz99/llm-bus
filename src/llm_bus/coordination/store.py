@@ -123,6 +123,23 @@ def coordinator_enrolled(db: Connection, record: dict[str, object], address: str
     return record["coordinator"] == address and enrolled is not None
 
 
+def coordinates_lock(db: Connection, address: str, scope: str, holder: str) -> bool:
+    """True for the enrolled coordinator of a live project in the lock's scope or the holder's."""
+    row = cast(
+        "tuple[int] | None",
+        db.execute(
+            "SELECT 1 FROM coordination_projects p JOIN coordination_enrollments e "
+            "ON e.scope=p.scope AND e.project_id=p.project_id AND e.address=p.coordinator "
+            "AND e.role='coordinator' WHERE p.coordinator=? AND p.revoked_at IS NULL "
+            "AND (p.scope=? OR EXISTS (SELECT 1 FROM coordination_enrollments w "
+            "WHERE w.scope=p.scope AND w.project_id=p.project_id AND w.address=? "
+            "AND w.role='worker' AND w.generation=p.generation)) LIMIT 1",
+            (address, scope, holder),
+        ).fetchone(),
+    )
+    return row is not None
+
+
 def worker_of_generation(db: Connection, record: dict[str, object], address: str) -> bool:
     """True when the address is or was a worker of the project's current generation.
 

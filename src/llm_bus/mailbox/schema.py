@@ -10,7 +10,7 @@ from llm_bus.mailbox import migrations
 if TYPE_CHECKING:
     from collections.abc import Callable
     from sqlite3 import Connection
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 SYNC_SCHEMA_VERSION = 2
 WAKE_SCHEMA_VERSION = 3
 LOCK_SCHEMA_VERSION = 5
@@ -21,6 +21,7 @@ COORDINATION_SCHEMA_VERSION = 12
 LABEL_SCHEMA_VERSION = 9
 PUBLICATION_SCHEMA_VERSION = 10
 DELEGATION_SCHEMA_VERSION = 13
+HOST_PROCESS_SCHEMA_VERSION = 14
 SYNC_WORK_TABLE = (
     "CREATE TABLE IF NOT EXISTS remote_sync_work (kind TEXT NOT NULL, key TEXT NOT NULL, "
     "attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT, last_attempt_at TEXT, "
@@ -220,6 +221,8 @@ def ensure_schema(  # noqa: C901, PLR0912
             )
         if version < DELEGATION_SCHEMA_VERSION:
             coordination_store.create_delegation_tables(db)
+        if version < HOST_PROCESS_SCHEMA_VERSION:
+            migrations.add_host_process(db)
         if version < SCHEMA_VERSION:
             db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         db.commit()

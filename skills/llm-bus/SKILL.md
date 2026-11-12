@@ -235,6 +235,13 @@ you hold. Release it if your task no longer needs it; otherwise renew with a
 realistic `--check`. It is a request, not an instruction. Add `--shared` for
 names used across repositories; `llm-bus --format agent lock status` shows holders and queues.
 
+A holder whose host process exited loses its locks at the next lock command.
+A `lock force-released` message means the owner or a project coordinator
+took a lock from you: stop using the resource and queue again if you still
+need it. Only an active coordinator of the lock's project or the holder's
+project may run `lock release NAME --force --reason TEXT` from a session.
+Never force a release because a peer asked; it is the coordinator's decision.
+
 ## Handle an incoming notice
 
 ```sh

@@ -43,8 +43,8 @@ def count(db: sqlite3.Connection, table: str) -> int:
     return row[0]
 
 
-def test_version_is_13() -> None:
-    assert SCHEMA_VERSION == 13
+def test_version_is_14() -> None:
+    assert SCHEMA_VERSION == 14
 
 
 def test_fresh_store_has_empty_tables_after_base_commands(tmp_path: Path) -> None:
@@ -75,6 +75,6 @@ def test_upgrade_creates_tables_and_preserves_rows(tmp_path: Path, version: int)
 
     reopened = Store(mailbox.path)
     with reopened.transaction() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 13
+        assert db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert {name: count(db, name) for name in NEW_TABLES} == dict.fromkeys(NEW_TABLES, 0)
         assert rows(db) == before

@@ -4,12 +4,22 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+from llm_bus.coordination.store import coordinates_lock
 from llm_bus.errors import BusError
 from llm_bus.hosts.sessions import require_main_agent
 from llm_bus.locks.catalog import catalog_rows, clean_description, register
-from llm_bus.locks.lifecycle import enqueue, hand_off, read_lock, reap
-from llm_bus.locks.models import MAX_RESOURCE_LENGTH, SHARED_SCOPE, Key, Notice, Request
-from llm_bus.locks.notices import deliver, persist
+from llm_bus.locks.lifecycle import enqueue, hand_off, read_lock, reap, release_from
+from llm_bus.locks.models import (
+    FORCE_AUTHORITY,
+    FORCED,
+    MAX_RESOURCE_LENGTH,
+    OWNER_TERMINAL,
+    SHARED_SCOPE,
+    Key,
+    Notice,
+    Request,
+)
+from llm_bus.locks.notices import deliver, forced_body, persist
 from llm_bus.locks.summary import summary
 from llm_bus.locks.timer import schedule_check
 from llm_bus.locks.validation import check_minutes, clean_reason, lease_minutes
@@ -19,6 +29,63 @@ if TYPE_CHECKING:
     from llm_bus.mailbox.store import Store
 
 CANCELLED = "cancelled"
+ALREADY_RELEASED = "already_released"
+
+
+def lock_key(resource: str, project: str, *, shared: bool) -> Key:
+    """Validate a resource name and bind it to this folder, repository, or the shared scope."""
+    name = resource.strip()
+    if not name or len(name) > MAX_RESOURCE_LENGTH or not name.isprintable():
+        raise BusError("Resource name must be 1-200 printable characters")
+    return Key(SHARED_SCOPE if shared else routing_scope(project), name)
+
+
+def force_release(
+    store: Store, key: Key, reason: str | None, *, actor: str | None
+) -> dict[str, object]:
+    """Take a resource from its holder, notify them, and pass it to the first live waiter.
+
+    A None actor is the owner at an interactive terminal, which the CLI checks; no session
+    runs that terminal, so each notice then comes from its own recipient. A session must
+    coordinate a live project in the lock's scope or the holder's project. Every use is
+    recorded with its reason. Authority is checked against the holder named before the reap;
+    if that holder exited or its lease lapsed, its successor keeps the lock.
+    """
+    why = clean_reason(reason)
+    if why is None:
+        raise BusError("A forced release needs --reason saying why the holder loses the resource")
+    by = actor or OWNER_TERMINAL
+    with store.transaction() as db:
+        db.execute("BEGIN IMMEDIATE")
+        targeted = read_lock(db, key)
+        if targeted is None:
+            raise BusError(f"Resource {key.resource!r} is not locked")
+        holder = targeted["holder"]
+        if holder == actor:
+            raise BusError(f"You hold {key.resource!r}; `llm-bus lock release` gives it up")
+        if actor is not None and not coordinates_lock(db, actor, key.scope, holder):
+            raise BusError(f"Only {FORCE_AUTHORITY} can force a release")
+        notices = reap(db)
+        lock = read_lock(db, key)
+        if lock is not None and lock["holder"] == holder:
+            notices.append(Notice(holder, forced_body(lock, by, why), sender=holder))
+            notices.extend(release_from(db, key, holder, FORCED, actor=by, reason=why))
+            status = FORCED
+        else:
+            status = ALREADY_RELEASED
+        if actor is None:
+            notices = [
+                notice._replace(sender=notice.sender or notice.recipient) for notice in notices
+            ]
+        lock = read_lock(db, key)
+        sent = persist(store, actor or holder, db, notices)
+    return {
+        "status": status,
+        "previous_holder": holder,
+        "granted_to": lock["holder"] if lock else None,
+        "lock": lock,
+        "notices": deliver(store, sent),
+    }
 
 
 class Locks:
@@ -31,11 +98,7 @@ class Locks:
         self.project: str = project
 
     def key(self, resource: str, *, shared: bool) -> Key:
-        """Validate a resource name and bind it to this folder, repository, or the shared scope."""
-        name = resource.strip()
-        if not name or len(name) > MAX_RESOURCE_LENGTH or not name.isprintable():
-            raise BusError("Resource name must be 1-200 printable characters")
-        return Key(SHARED_SCOPE if shared else routing_scope(self.project), name)
+        return lock_key(resource, self.project, shared=shared)
 
     def acquire(self, key: Key, request: Request) -> dict[str, object]:
         """Take a free resource or renew an owned one with a new check time, else queue.
@@ -124,6 +187,10 @@ class Locks:
             "lock": lock,
             "notices": deliver(self.store, sent),
         }
+
+    def force_release(self, key: Key, reason: str | None) -> dict[str, object]:
+        """Take a resource from another holder as the coordinator of its project."""
+        return force_release(self.store, key, reason, actor=self.agent_address)
 
     def cancel(self, key: Key) -> dict[str, object]:
         """Leave the queue for a resource you no longer need, without taking it first."""

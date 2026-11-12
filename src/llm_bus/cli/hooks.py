@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, cast
 from llm_bus.cli.guidance import GUIDANCE_VERSION, HOOK_COUNT_LIMIT, guidance
 from llm_bus.coordination.decisions import record_turn
 from llm_bus.errors import BusError
+from llm_bus.hosts.processes import host_process
 from llm_bus.hosts.sessions import is_subagent
 from llm_bus.wake.adapters import parse_wake_notice
 
@@ -61,7 +62,9 @@ def hook(store: Store, kind: str) -> None:
     if not isinstance(project, str):
         project = str(Path.cwd())
     project = str(Path(project).resolve())
-    agent_address = store.register(kind, session_id, project, messaging_socket=claude_socket(kind))
+    agent_address = store.register(
+        kind, session_id, project, messaging_socket=claude_socket(kind), host=host_process(kind)
+    )
     if event == "UserPromptSubmit":
         # A recognized bus wake marks the turn as not owner-started; see decisions.record_turn.
         record_turn(

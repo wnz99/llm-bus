@@ -14,6 +14,8 @@ from llm_bus.routing import routing_scope
 if TYPE_CHECKING:
     import sqlite3
 
+    from llm_bus.hosts.processes import HostProcess
+
 SESSION_IDLE_HOURS = 24
 
 
@@ -47,8 +49,13 @@ def register(  # noqa: PLR0913 - explicit optional registration metadata
     *,
     messaging_socket: str | None = None,
     label: str | None = None,
+    host: HostProcess | None = None,
 ) -> str:
-    """Upsert session address without deleting its pending messages."""
+    """Upsert session address without deleting its pending messages.
+
+    A host process found by the caller replaces the recorded one, so a resumed session is
+    checked against its new process. Without one, the previous record stays.
+    """
     # pylint: disable=too-many-arguments
     scope = routing_scope(project)
     agent_address = upsert_agent(db, kind, session_id, project, scope)
@@ -58,6 +65,11 @@ def register(  # noqa: PLR0913 - explicit optional registration metadata
         "UPDATE agents SET messaging_socket = ? WHERE address = ?",
         (messaging_socket if kind == "claude" else None, agent_address),
     )
+    if host is not None:
+        db.execute(
+            "UPDATE agents SET host_pid = ?, host_started = ? WHERE address = ?",
+            (host.pid, host.started, agent_address),
+        )
     return agent_address
 
 
@@ -98,13 +110,17 @@ def upsert_agent(
 
 def end_session(db: sqlite3.Connection, kind: str, session_id: str) -> None:
     """Mark a registered session closed without consuming its pending messages."""
-    end_session_consents(db, address(kind, session_id))
-    db.execute("DELETE FROM agent_labels WHERE address=?", (address(kind, session_id),))
+    end_agent(db, address(kind, session_id))
+
+
+def end_agent(db: sqlite3.Connection, agent_address: str) -> None:
+    end_session_consents(db, agent_address)
+    db.execute("DELETE FROM agent_labels WHERE address=?", (agent_address,))
     db.execute(
         "UPDATE agents SET ended_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), "
         "messaging_socket = NULL "
         "WHERE address = ?",
-        (address(kind, session_id),),
+        (agent_address,),
     )
 
 

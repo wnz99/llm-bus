@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, cast
 
 import llm_bus.collab.cli
 import llm_bus.coordination.cli
-from llm_bus.cli.commands import human_command, registered_command, send
+from llm_bus.cli.commands import human_command, owner_force_release, registered_command, send
 from llm_bus.cli.hooks import claude_socket, hook
 from llm_bus.cli.installation import configure_host_hooks
 from llm_bus.cli.output import serialize
@@ -22,6 +22,7 @@ from llm_bus.collab.models import CollabError
 from llm_bus.coordination import approvals
 from llm_bus.coordination.setup import profile, run_wizard
 from llm_bus.errors import BusError
+from llm_bus.hosts.processes import host_process
 from llm_bus.hosts.sessions import require_main_agent
 from llm_bus.mailbox.connection import default_path
 from llm_bus.mailbox.models import SenderContext
@@ -67,6 +68,24 @@ def _optional_address() -> str | None:
     return agent_address
 
 
+def _owner_force(command: object, args: dict[str, object]) -> bool:
+    """A forced release outside any agent session is the owner's terminal path."""
+    return (
+        command == "lock"
+        and args.get("lock_command") == "release"
+        and bool(args.get("force"))
+        and _optional_address() is None
+    )
+
+
+def _sessionless(store: Store, command: object, args: dict[str, object]) -> object:
+    if command == "collab":
+        return llm_bus.collab.cli.run(args, _optional_address())
+    if command == "lock":
+        return owner_force_release(store, args)
+    return _setup(store, args)
+
+
 def _setup(store: Store, args: dict[str, object]) -> dict[str, object] | None:
     """Setup registers no session: terminal owners get the wizard, agents get the profile."""
     cwd = str(Path.cwd().resolve())
@@ -105,12 +124,12 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912 - com
             return 0
         if human_command(store, command, args):
             return 0
-        if command == "collab" or (command == "coordinate" and args.get("setup")):
-            result = (
-                llm_bus.collab.cli.run(args, _optional_address())
-                if command == "collab"
-                else _setup(store, args)
-            )
+        if (
+            command == "collab"
+            or (command == "coordinate" and args.get("setup"))
+            or _owner_force(command, args)
+        ):
+            result = _sessionless(store, command, args)
             if result is not None:
                 print(serialize(result, str(command), str(args["format"])))
             return 0
@@ -119,7 +138,13 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912 - com
         project = str(Path.cwd().resolve())
         if command in {"coordinate", "join", "coordination"}:
             if command in {"coordinate", "join"}:
-                store.register(kind, session_id, project, messaging_socket=claude_socket(kind))
+                store.register(
+                    kind,
+                    session_id,
+                    project,
+                    messaging_socket=claude_socket(kind),
+                    host=host_process(kind),
+                )
             if command == "coordination" and args["action"] == "approve":
                 result = approvals.approve(store, args, SenderContext(kind, session_id, project))
             else:
@@ -133,6 +158,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912 - com
                 project,
                 messaging_socket=claude_socket(kind),
                 label=cast("str | None", args.get("label")) if command == "whoami" else None,
+                host=host_process(kind),
             )
             result = registered_command(store, command, args, agent_address, project)
         print(serialize(result, str(command), str(args["format"])))

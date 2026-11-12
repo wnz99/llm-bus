@@ -11,6 +11,7 @@ import pytest
 
 from llm_bus.coordination import cli
 from llm_bus.mailbox.models import SenderContext
+from llm_bus.mailbox.schema import SCHEMA_VERSION
 from llm_bus.mailbox.store import Store
 from tests.coordination.test_enrollment import create, invoke
 
@@ -117,7 +118,7 @@ def test_additive_schema_upgrade(tmp_path: Path, version: int) -> None:
         db.execute(f"PRAGMA user_version={version}")
     mailbox = Store(mailbox.path)
     with mailbox.transaction() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 13
+        assert db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert (
             db.execute("SELECT count(*) FROM coordination_availability_events").fetchone()[0] == 0
         )

@@ -98,7 +98,7 @@ def work_report(
     db: Connection, tables: set[str], message_id: int, *, remote_id: str | None, imported: bool
 ) -> object:
     """Read-only work state; tolerates tables missing from older schemas."""
-    # pylint: disable=redefined-outer-name  # keyword name is the planned interface
+    # pylint: disable=redefined-outer-name  # `imported` parameter shadows the module function
     if remote_id is not None and not imported:
         row = (
             cast(
@@ -122,9 +122,10 @@ class _Row(NamedTuple):
     grant: str
     sender: str
     recipient: str
+    sent_at: str
     acked: str | None
-    remote_id: str | None
-    local: int | None
+    outbox_id: str | None
+    import_id: str | None
 
 
 def table_names(db: Connection) -> set[str]:
@@ -140,13 +141,13 @@ def table_names(db: Connection) -> set[str]:
 def _direction_rows(
     db: Connection, record: dict[str, object], viewer: str, *, coordinator: bool
 ) -> list[_Row]:
-    # pylint: disable=redefined-outer-name  # keyword name is the planned interface
+    # pylint: disable=redefined-outer-name  # `record` parameter shadows the module function
     found = cast(
-        "list[tuple[int, str, str, str, str, str | None, str | None, int | None]]",
+        "list[tuple[int, str, str, str, str, str, str | None, str | None, str | None]]",
         db.execute(
             "SELECT m.id,json_extract(c.metadata_json,'$.operation'),"
             "json_extract(c.metadata_json,'$.grant_id'),m.sender,m.recipient,"
-            "m.acknowledged_at,o.id,i.local_id "
+            "m.sent_at,m.acknowledged_at,o.id,i.id "
             "FROM coordination_messages c JOIN messages m ON m.id=c.message_id "
             "LEFT JOIN remote_outbox o ON o.local_id=m.id "
             "LEFT JOIN remote_imports i ON i.local_id=m.id "
@@ -171,18 +172,26 @@ def _is_open(
     )
 
 
+def _state_changed_at(row: _Row, report: dict[str, object] | None) -> str | None:
+    if report is None:
+        return row.acked
+    # An outgoing relay direction's report has no local report time.
+    return None if row.outbox_id is not None else cast("str | None", report["reported_at"])
+
+
 def _item(
     row: _Row,
     report: dict[str, object] | None,
 ) -> dict[str, object]:
     return {
         "message_id": row.message_id,
-        "operation": row.operation,
-        "sender": row.sender,
         "recipient": row.recipient,
+        "operation": row.operation,
+        "sent_at": row.sent_at,
         "acknowledged_at": row.acked,
+        "remote_id": row.outbox_id or row.import_id,
         "work_report": report,
-        "state_changed_at": row.acked if report is None else report.get("reported_at"),
+        "state_changed_at": _state_changed_at(row, report),
     }
 
 
@@ -195,7 +204,7 @@ def listing(
     only: str = "all",
 ) -> list[dict[str, object]]:
     """Directions the viewer sent (coordinator) or received, newest first, with work state."""
-    # pylint: disable=redefined-outer-name  # keyword name is the planned interface
+    # pylint: disable=redefined-outer-name  # `record` parameter shadows the module function
     if only not in FILTERS:
         raise ValueError(f"only must be one of {FILTERS}")
     tables = table_names(db)
@@ -210,21 +219,26 @@ def listing(
         report = cast(
             "dict[str, object] | None",
             work_report(
-                db, tables, row.message_id, remote_id=row.remote_id, imported=row.local is not None
+                db,
+                tables,
+                row.message_id,
+                remote_id=row.outbox_id,
+                imported=row.import_id is not None,
             ),
         )
         is_open = _is_open(
             row.acked,
             row.operation,
-            imported_here=row.local is not None,
+            imported_here=row.import_id is not None,
             cancelled=cancelled,
             status=None if report is None else report["status"],
         )
-        wanted = {
-            "all": True,
-            "open": is_open,
-            "attention": is_open or (row.acked is None and not cancelled),
-        }[only]
+        if only == "all":
+            wanted = True
+        elif only == "open":
+            wanted = is_open
+        else:
+            wanted = is_open or (row.acked is None and not cancelled)
         if wanted:
             items.append(_item(row, report))
     return items[:MAX_DIRECTIONS]

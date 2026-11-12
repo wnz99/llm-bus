@@ -250,6 +250,49 @@ def test_listing_visibility(enrolled: tuple[Store, Direction, SenderContext]) ->
     assert ids(listed(store, owner, address="claude:stranger")) == []
 
 
+def test_enrolled_session_without_directions_sees_none(
+    enrolled: tuple[Store, Direction, SenderContext],
+) -> None:
+    store, _direction, owner = enrolled
+    add_worker(store, owner.project)
+    send(store, owner, "assign")
+    assert listed(store, owner, address=OTHER) == []
+    assert shown_ids(store, owner, OTHER) == []
+
+
+def test_item_shape(enrolled: tuple[Store, Direction, SenderContext]) -> None:
+    store, _direction, owner = enrolled
+    message_id = send(store, owner, "assign")
+    (item,) = listed(store, owner)
+    assert set(item) == {
+        "message_id",
+        "recipient",
+        "operation",
+        "sent_at",
+        "acknowledged_at",
+        "remote_id",
+        "work_report",
+        "state_changed_at",
+    }
+    assert item["message_id"] == message_id
+    assert re.fullmatch(MILLISECOND_Z, cast("str", item["sent_at"]))
+    assert item["remote_id"] is None
+
+
+def test_earlier_generation_not_listed(enrolled: tuple[Store, Direction, SenderContext]) -> None:
+    store, _direction, owner = enrolled
+    old = send(store, owner, "assign")
+    current = send(store, owner, "assign")
+    with store.transaction() as db:
+        db.execute(
+            "UPDATE coordination_messages SET metadata_json="
+            "json_set(metadata_json,'$.generation',-1) WHERE message_id=?",
+            (old,),
+        )
+    for view in (OWNER, WORKER):
+        assert ids(listed(store, owner, address=view)) == [current]
+
+
 def test_open_and_show_filters(enrolled: tuple[Store, Direction, SenderContext]) -> None:
     store, _direction, owner = enrolled
     plain = send(store, owner, "assign")
@@ -386,6 +429,7 @@ def test_outgoing_remote_direction_uses_relay_snapshot(
         "reason": "started",
     }
     assert item["state_changed_at"] is None
+    assert item["remote_id"] == RELAY_ID
     assert ids(listed(store, owner, "--open")) == [message_id]
 
 

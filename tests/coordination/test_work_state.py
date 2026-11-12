@@ -1,9 +1,5 @@
 """Recipients record fixed-code work state for local directions without waking anyone."""
 
-# The shared enrolled fixture is imported, so pytest finds it by its registered name.
-# pylint: disable=unused-import,clean-code-commented-out-code
-# pyright: reportUnusedImport=false
-
 from __future__ import annotations
 
 import re
@@ -18,7 +14,6 @@ from llm_bus.errors import BusError
 from llm_bus.mailbox.schema import SCHEMA_VERSION
 from llm_bus.mailbox.store import Store
 from llm_bus.reports.lifecycle import TRANSITION_CONFLICT
-from tests.coordination.test_delivery import enrolled_setup  # noqa: F401
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -109,13 +104,13 @@ def test_report_refusals(enrolled: tuple[Store, Direction, SenderContext]) -> No
     assert cast("dict[str, object]", work_report(store, message_id))["revision"] == 2
 
 
-def counts(store: Store) -> tuple[object, ...]:
+def counts(store: Store, folder: str) -> tuple[object, ...]:
     with store.transaction() as db:
         tables = [
             cast("tuple[int]", db.execute(f"SELECT count(*) FROM {name}").fetchone())[0]  # noqa: S608
             for name in ("messages", "wake_dispatch")
         ]
-    return (*tables, store.pending_count(OWNER), guidance(store, OWNER, "/", full=False))
+    return (*tables, store.pending_count(OWNER), guidance(store, OWNER, folder, full=False))
 
 
 def test_report_never_wakes_or_prompts(
@@ -124,10 +119,27 @@ def test_report_never_wakes_or_prompts(
     store, direction, owner = enrolled
     message_id = direction_id(store, owner, direction)
     store.acknowledge(WORKER, [message_id])
-    before = counts(store)
+    before = counts(store, owner.project)
+    assert '"state": "active"' in cast("str", before[-1])
     report(store, message_id, "received")
     report(store, message_id, "failed", "execution_failed")
-    assert counts(store) == before
+    assert counts(store, owner.project) == before
+
+
+def test_outgoing_remote_direction_is_refused(
+    enrolled: tuple[Store, Direction, SenderContext],
+) -> None:
+    store, direction, owner = enrolled
+    message_id = direction_id(store, owner, direction)
+    store.acknowledge(WORKER, [message_id])
+    with store.transaction() as db:
+        db.execute(
+            "INSERT INTO remote_outbox (id, local_id, envelope, state) VALUES (?,?,?,?)",
+            ("remote-1", message_id, "{}", "pending"),
+        )
+    with pytest.raises(BusError, match="Report requires a received local"):
+        report(store, message_id, "received")
+    assert rows(store) == 0
 
 
 def test_upgrade_from_14(enrolled: tuple[Store, Direction, SenderContext], tmp_path: Path) -> None:

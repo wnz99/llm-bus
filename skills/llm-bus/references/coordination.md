@@ -539,8 +539,8 @@ Claude Code and `gpt-5.6-terra` in Codex), so the coordinator thread stays free.
 If no smaller model is available, use a subagent on the default model. Rewrite
 inline when no subagent is available, or when the auto-commit policy is not
 `on`, because the audit below needs Beads history. An inline rewrite first
-saves the current description and notes to a file and audits against it. Codex closes the subagent
-after collecting its result.
+saves the current description and notes to a file and audits against it.
+Codex closes the subagent after collecting its result.
 
 The brief contains the Beads workspace, the memory ticket ID, any new facts to
 fold in, and the snapshot rules above: the required fields, the limit on
@@ -577,8 +577,8 @@ receipt.
 During a rewrite the subagent may also compact closed linked tickets that
 `bd admin compact --analyze` lists as candidates (closed 30 days or more) and
 neither the previous description and notes nor the new snapshot references,
-with `bd admin compact --apply --id ID --summary SUMMARY_FILE`. Compaction discards the original
-content. Never pass `--force`. If compaction is unsupported, for example in
+with `bd admin compact --apply --id ID --summary SUMMARY_FILE`. Compaction
+discards the original content. Never pass `--force`. If compaction is unsupported, for example in
 embedded mode, skip it. Deleting closed tickets with `bd prune` or `bd gc` stays
 an owner decision. Do not store project memory with `bd remember`: it covers
 the whole Beads workspace and `bd prime` injects it into every session.

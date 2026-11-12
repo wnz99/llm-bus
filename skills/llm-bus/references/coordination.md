@@ -578,10 +578,11 @@ During a rewrite the subagent may also compact closed linked tickets that
 `bd admin compact --analyze` lists as candidates (closed 30 days or more) and
 neither the previous description and notes nor the new snapshot references,
 with `bd admin compact --apply --id ID --summary SUMMARY_FILE`. Compaction
-discards the original content. Never pass `--force`. If compaction is unsupported, for example in
-embedded mode, skip it. Deleting closed tickets with `bd prune` or `bd gc` stays
-an owner decision. Do not store project memory with `bd remember`: it covers
-the whole Beads workspace and `bd prime` injects it into every session.
+discards the original content. Never pass `--force`. If compaction is
+unsupported, for example in embedded mode, skip it. Deleting closed tickets
+with `bd prune` or `bd gc` stays an owner decision. Do not store project memory
+with `bd remember`: it covers the whole Beads workspace and `bd prime` injects
+it into every session.
 
 Workers own progress notes on assigned tasks. Read existing notes before updates,
 preserve others' work, and propose project-wide summary changes to coordinator.

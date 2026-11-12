@@ -66,8 +66,9 @@ Send a message only when one of these applies:
   overlapping writes, shared state or interfaces they depend on, a blocking
   dependency, or a change to an existing agreement.
 - You hold an active project-coordination role and its duties require the
-  message: a coordinator's directions, or a worker's progress, evidence and
-  blocker reports. The coordination rules file, or the llm-bus skill's
+  message: a coordinator's directions, or a worker's blockers and outcomes the
+  coordinator must act on or learn (a worker records state changes with
+  `llm-bus report`, which wakes nobody). The coordination rules file, or the llm-bus skill's
   coordination reference, defines these.
 
 PR creation, review, merge, branch changes, scope changes and task completion

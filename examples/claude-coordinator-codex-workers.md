@@ -45,7 +45,9 @@ This direct owner request records consent for that exact
 session under the current coordinator and objective. Grant, enrollment and
 target setup happen automatically. Worker guidance tells Codex to verify current
 authority, wait for verified assignments, use its own worktree, persist progress,
-and report evidence and blockers. No extra authorization paragraph or grant-ID
+start accepted unblocked work, record state changes with `llm-bus report`, and
+message the coordinator only for blockers and outcomes it must act on or learn.
+No extra authorization paragraph or grant-ID
 exchange is required.
 
 Each successful join notifies Claude of that worker's availability. Claude

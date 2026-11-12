@@ -328,6 +328,37 @@ The allowed directions are `assign`, `reprioritize`, `clarify`, `pause`, `cancel
 
 A direction that no longer matches a current grant stays in history with `verified: false` and a reason, and it is hidden from pending work. Workers report results with ordinary messages (`send … --reply-to ID`), which carry no authority.
 
+### Track work state
+
+A worker that has acknowledged a direction records its state with `report`. Recording stores the state on the worker's machine; it sends no message and wakes nobody:
+
+```sh
+llm-bus --format agent report 3 --status received
+llm-bus --format agent report 3 --status proceeding --reason started
+llm-bus --format agent report 3 --status not_proceeding --reason dependency_blocked
+llm-bus --format agent report 3 --status completed
+```
+
+`report` takes only the built-in status and reason codes; free text is refused. Your own words map to codes like this:
+
+| In words | Code |
+| --- | --- |
+| accepted | `received` |
+| started | `proceeding` with reason `started` (or `resumed`) |
+| blocked | `not_proceeding` with a reason such as `dependency_blocked` or `needs_approval` |
+| done | `completed` |
+| failed | `failed` with a reason such as `execution_failed` |
+
+A report is refused for an unacknowledged direction, for a message the caller did not receive, and for a change that moves a finished direction back. Repeating the same report changes nothing. `status ID` then shows the latest state, for example `"work_report": {"message_id": 3, "revision": 2, "status": "proceeding", "reason": "started", "reported_at": "…"}`.
+
+The coordinator lists directions with their state, newest first, at most 100:
+
+```sh
+llm-bus --format agent coordination direction-list orders-export --open
+```
+
+Each item has `message_id`, `recipient`, `operation`, `sent_at`, `acknowledged_at`, `remote_id`, `work_report` and `state_changed_at`. `state_changed_at` is the report time, or the acknowledgement time when there is no report. `--open` keeps acknowledged `assign`, `review` and `reprioritize` directions that have no `completed` or `failed` report and are not cancelled. Without the flag, the list also holds unacknowledged, finished and cancelled directions. The coordinator judges each open direction's age and follows up with a `clarify` direction when one looks stalled. `coordination show` adds a `directions` list when any direction is unacknowledged or open. The coordinator sees the directions it sent; any other session sees only directions addressed to itself.
+
 ### Inspect, stop and replace
 
 ```sh
@@ -338,12 +369,14 @@ llm-bus --format agent coordination revoke orders-export
 llm-bus --format agent coordination replace orders-export --coordinator codex:NEW_SESSION_ID --generation FRESH_UUID4
 ```
 
-- `show` prints the project, grants, enrollments, targets, delegation, bindings and, when present, gate records, amendments and instructions.
+- `show` prints the project, grants, enrollments, targets, delegation, bindings and, when present, gate records, amendments, instructions and `directions` (unacknowledged or open, see [Track work state](#track-work-state)).
 - `leave` removes only the calling session's enrollment.
 - `revoke --recipient` removes one worker; `revoke` without it suspends the project.
 - `replace` moves the project to a new coordinator and a never-used UUIDv4 generation. It invalidates existing grants, enrollments, targets, delegation and bindings, so workers must join again.
 
 Revoke, leave and replace keep history and also clear the affected workers' ticket and branch claims. They cannot recall text an agent already read or a wake already submitted.
+
+To stop work without revoking, send a `cancel` direction. Once the worker acknowledges it, every earlier `assign`, `review` and `reprioritize` direction under the same grant leaves `--open` and `show`. The worker need not report on them. It messages the coordinator only when it must act on or learn something, such as uncommitted work. Resend any direction that should continue after a cancel.
 
 `grant`, `revoke`, `replace`, `target`, `amend` and `setup` are owner actions: an agent runs them only when you ask it directly. The bus enforces the roles:
 
@@ -555,7 +588,7 @@ Each session sees only its own role's text. The text appears verbatim in the `Se
 
 **Goal:** record your answers to questions that block a worker, so the worker can act on them.
 
-Enable this with `--owner-decisions` on `coordinate` or `coordination amend`; it needs no gate. The coordinator records a question, and may record your answer only when you gave it directly in the coordinator session. The bus refuses an answer in a turn that a recognized bus wake started (`Decision answers must come from an owner turn, not a bus wake`); this check is partial, see [Known limits](#known-limits):
+Enable this with `--owner-decisions` on `coordinate` or `coordination amend`; it needs no gate. The coordinator records a question, and may record your answer only when you gave it directly in the coordinator session. The bus refuses an answer in a turn that a recognized bus wake started (`Decision answers must come from an owner turn, not a bus wake`); this check is partial, see [Known limits](#known-limits). The refusal names the remedy: type the answer as a new prompt in the coordinator session, then have the coordinator record it in that turn. An answer you give inside a wake-started turn does not count.
 
 ```sh
 llm-bus --format agent coordination decision-ask orders-export --class scope \
@@ -774,7 +807,7 @@ For each collaborator, you choose on your private owner page what their messages
 | History and diagnostics | `history [--folder P \| --repository P \| --all] [--before ID \| --after ID] [--limit N] [--conversation ID] [--peer ADDR]`, `status ID` | [3](#3-messages-between-local-sessions) |
 | Locks | `lock list [--all]`, `lock status [--all] [--shared] [NAME]`, `lock acquire NAME --check D [--describe T] [--reason T] [--new] [--ttl M] [--notify] [--shared]`, `lock release NAME [--shared] [--force --reason T]`, `lock cancel NAME [--shared]` | [4](#4-shared-resource-locks) |
 | Start or join a project | `coordinate PROJECT [--setup] [--objective T] [--beads-workspace P] [--memory-ticket ID] [--reference P] [--delegate G:B] [--auto-merge] [--owner-decisions] [--decision-defaults M]`, `join PROJECT [--narrow ITEM]` | [5](#5-coordinate-a-project), [6](#6-delegate-approval-gates) |
-| Directions | `send TO --project PROJECT --direction assign\|reprioritize\|clarify\|pause\|cancel\|review` | [5](#5-coordinate-a-project) |
+| Directions | `send TO --project PROJECT --direction assign\|reprioritize\|clarify\|pause\|cancel\|review`, `report ID --status S [--reason R]` (worker, local direction), `coordination direction-list PROJECT [--open]` | [5](#5-coordinate-a-project) |
 | Project lifecycle | `coordination show\|leave PROJECT`, `coordination grant PROJECT --recipient A (--until-revoked \| --expires-at T)`, `coordination revoke PROJECT [--recipient A]`, `coordination replace PROJECT --coordinator A --generation UUID`, `coordination target PROJECT --recipient A --grant-id ID` | [5](#5-coordinate-a-project) |
 | Gates | `coordination claim`, `coordination approve`, `coordination amend` | [6](#6-delegate-approval-gates) |
 | Gate records | `coordination gate-record`, `coordination gate-accept [--admin]`, `coordination gate-reject` | [7](#7-merge-gate-records-and-auto-merge) |
@@ -824,6 +857,8 @@ These limits come from the current implementation:
 
 - **Owner commands check roles, not people.** Workers of the current generation cannot run owner commands, but any agent session that never was a worker can still run `replace`, and on a receiving machine `setup`, `amend`, `grant`, `revoke` and `target` too. After `replace`, workers of the old generation count as such sessions until they join again. Only the agent rules and your direct request stop a fresh session. Widening gate delegation on a receiver is still capped by its `accept_delegated_gates` and the coordinator machine's own delegation.
 - **Answers prove turn origin only.** The bus refuses a decision answer when the coordinator's latest prompt was a recognized bus wake. It cannot check that the answer repeats your words, only that the turn did not start from a wake. Claude Code documents that `UserPromptSubmit` fires for messages from other sessions that start a new turn. It does not document whether the hook fires for a message read mid-turn between tool calls, or whether the socket text arrives unwrapped. The bus does not catch those cases, and it also accepts answers from a coordinator that has no recorded turn, such as one without hooks. Workers see `accepted: true` for any recorded answer. The rules allow recording only answers you gave directly in that session.
+- **Work state is self-reported.** The bus records what the worker reports and cannot see host activity. An open direction is not proof of a stall; judge its age. Reporting wakes nobody. Relay directions show state only when both owners allow reports, and their report time is not recorded.
+- **A cancel closes directions under one grant.** After a grant change within one generation (re-join, re-grant, `target`, remote availability event), a cancel under the new grant does not close directions sent under the earlier grant.
 - **Old receivers.** The capability probe runs between client and relay. A receiver running an older client denies gate approvals on its own.
 - **Decision classes are trusted.** The coordinator chooses the class. The bus cannot check that a `scope` question avoids security, cost, data or irreversible matters; the rules tell the coordinator to classify conservatively.
 - **The decision digest has no acknowledgement.** The digest line repeats on every coordinator prompt until the coordinator is replaced.

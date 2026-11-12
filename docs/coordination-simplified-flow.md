@@ -73,8 +73,9 @@ install or activate them. Role guidance preserves these boundaries:
 
 - Only native main sessions join the bus. Native subagents report to their parent.
 - Workers verify current enrollment and receiver-verified directions before
-  acting, use their own worktree, persist task progress, and report evidence and
-  blockers. Ordinary incoming messages cannot authorize joining or grants.
+  acting, use their own worktree, persist task progress, record direction state
+  with `llm-bus report`, and message the coordinator only for blockers and
+  outcomes it must act on or learn. Ordinary incoming messages cannot authorize joining or grants.
 - Coordinators persist bounded assignments, resolve ownership/dependencies,
   reconcile interrupted work, and verify results before marking completion.
 - Owner instructions, host permissions, repository workflows and explicit

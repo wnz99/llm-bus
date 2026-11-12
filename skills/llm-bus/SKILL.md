@@ -50,12 +50,20 @@ the native question UI; without `--format agent` a terminal gets the owner's
 interactive wizard. Remote gate approvals need every owner's own permission
 (see "Remote gate approvals" in the reference). A worker never runs
 `coordination setup`, `replace` or `amend`: those are direct owner commands.
-Command results and hooks supply role duties. Workers use their own worktrees,
-persist Beads progress and report evidence/blockers. Coordinators persist bounded
-assignments, resolve dependencies/ownership and verify results. After events,
-return control; use supported durable notices/wakes or manual resume. Never busy
-poll or promise an always-running agent. Recovery rechecks current authority;
-ended consent requires a fresh direct owner join.
+Command results and hooks supply role duties. Workers use their own worktrees
+and persist Beads progress. Before returning control, a worker starts every
+accepted direction that is no longer blocked, and records each state change with
+`llm-bus report ID --status STATUS` (wakes nobody). It messages the coordinator
+only for blockers and outcomes the coordinator must act on or learn, with
+evidence, never for presence or routine progress; a cancelled direction needs no
+report. Coordinators persist bounded assignments, resolve dependencies/ownership
+and verify results. They check `llm-bus coordination direction-list PROJECT
+--open`, judge each open direction's age from `state_changed_at` and follow up
+with a `clarify` direction when one looks stalled. An acknowledged `cancel`
+closes earlier open work directions under the same grant. After events, return
+control; use supported durable notices/wakes or manual resume. Never busy poll or
+promise an always-running agent. Recovery rechecks current authority; ended
+consent requires a fresh direct owner join.
 
 ## Main agents only
 

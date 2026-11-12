@@ -35,7 +35,11 @@ ANSWERED = "answered"
 DEFAULTED = "defaulted"
 DEFAULT_SOURCE = "default"
 NOT_PENDING = "Decision not answered: not_pending"
-WAKE_TURN = "Decision answers must come from an owner turn, not a bus wake"
+WAKE_TURN = (
+    "Decision answers must come from an owner turn, not a bus wake. "
+    "Ask the owner to type the answer as a new prompt in this session, then record "
+    "it in that turn; an answer given inside a wake-started turn does not count"
+)
 MAX_TEXT = 4096
 DELIMITERS = ("<<<", ">>>")
 COLUMNS = (

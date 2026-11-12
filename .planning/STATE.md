@@ -1,6 +1,6 @@
 # Project State
 
-Last activity: 2026-11-11 - 261110-wft PRs #67-#70 merged; #71 approved, merge pending; summary written.
+Last activity: 2026-11-13 - 261112-av6 PR #78 review passed (R2); summary written; merge pending.
 
 ## Registered Work
 
@@ -11,6 +11,7 @@ Last activity: 2026-11-11 - 261110-wft PRs #67-#70 merged; #71 approved, merge p
 
 | # | Description | Status | Directory |
 |---|-------------|--------|-----------|
+| 261112-av6 | Coordination worker stall visibility: guidance and per-direction work state — PR #78 | PR #78 review passed (R2); merge pending; owner rollout pending after merge (upgrade to schema 15) | [261112-av6-coordination-worker-stall-visibility](./quick/261112-av6-coordination-worker-stall-visibility/) |
 | 261110-wft | Coordinator-delegated approval gates and guided setup — PRs #67–#71 | PRs #67–#70 merged; #71 approved, merge pending; owner rollout pending after merge (relay migration 0007, Worker deploy, upgrade, install, skill and rule copies) | [261110-wft-coordinator-delegated-approval-gates-and](./quick/261110-wft-coordinator-delegated-approval-gates-and/) |
 | 261110-1lg | llm-bus upgrade command with old-binary pruning — PR #65 | Merged; post-merge acceptance passed 2026-11-10 (upgrade to 98afbb87 on Python 3.12, old package pruned, hooks reinstalled, bridge restarted with a stable new PID) | [261110-1lg-llm-bus-upgrade-command-with-old-binary](./quick/261110-1lg-llm-bus-upgrade-command-with-old-binary/) |
 | 261106-w7a | Agent labels and command-driven coordination — PR #62 | Merged; all four hosts installed at fabcb404 (guidance 8/schema 12), matching relay deployed; bounded independent rollout PASS and 28 installed-package smokes passed; frontend trust/context reload unobserved | [261106-w7a-agent-labels-and-command-driven-coordina](./quick/261106-w7a-agent-labels-and-command-driven-coordina/) |

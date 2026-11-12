@@ -35,8 +35,20 @@ REMOTE_GUIDANCE = (
 )
 
 
-GUIDANCE_VERSION = 8
+GUIDANCE_VERSION = 9
 COORDINATION_ACTIVE = "active"
+WORKER_DUTIES = (
+    "Before returning control, start every accepted direction that is no longer blocked. "
+    "When a direction's state changes, record it with `llm-bus report ID --status STATUS` "
+    "(wakes nobody). Message the coordinator only for blockers and outcomes it must act on "
+    "or learn, with evidence, never for presence or routine progress; "
+    "a cancelled direction needs no report. "
+)
+COORDINATOR_DUTIES = (
+    "Check `llm-bus coordination direction-list PROJECT --open`; judge each open "
+    "direction's age from state_changed_at and follow up with a clarify direction "
+    "when one looks stalled. "
+)
 STANDING_POINTER = (
     "Owner standing instructions active (digest {}); after compaction run "
     "llm-bus --format agent guidance to restore them verbatim. "
@@ -261,9 +273,10 @@ def _coordination(store: Store, address: str, folder: str, *, full: bool) -> str
         + (
             "Persist bounded assignments in Beads, resolve ownership and dependencies, "
             "receive dynamic worker arrivals and verify evidence before completion. "
+            + COORDINATOR_DUTIES
             if record["role"] == "coordinator"
             else "Use your own worktree, accept only current receiver-verified assignments, "
-            "persist task progress in Beads and report evidence and blockers to the coordinator. "
+            "persist task progress in Beads. " + WORKER_DUTIES
         )
         + "After handling events, return control. Never busy-poll or promise an always-running "
         "agent. Durable notices rely on supported host wakes; resume manually when unavailable. "

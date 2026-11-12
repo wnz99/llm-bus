@@ -70,8 +70,12 @@ def test_wake_turn_refuses_answers_until_the_next_owner_turn(project: Project) -
     pending = ask(project)["decision_id"]
     decisions.record_turn(project.store, OWNER, wake=True)
     assert turn(project) == -2
-    with pytest.raises(BusError, match=decisions.WAKE_TURN):
+    with pytest.raises(BusError, match=decisions.WAKE_TURN) as refused:
         answer(project, pending)
+    assert str(refused.value).startswith(
+        "Decision answers must come from an owner turn, not a bus wake"
+    )
+    assert "new prompt" in str(refused.value)
     with pytest.raises(BusError, match=decisions.WAKE_TURN):
         ask(project, "--answer", "Yes")
     decisions.record_turn(project.store, OWNER)

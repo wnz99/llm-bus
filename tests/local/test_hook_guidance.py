@@ -19,6 +19,14 @@ from tests.support import hook_input, prompt_input
 if TYPE_CHECKING:
     from pathlib import Path
 
+WORKER_DUTIES = (
+    "return control",
+    "start every accepted direction that is no longer blocked",
+    "llm-bus report ID --status",
+    "never for presence or routine progress",
+    "a cancelled direction needs no report",
+)
+
 
 def test_coordination_references_are_data_and_coordinator_state_is_current(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -54,6 +62,8 @@ def test_coordination_references_are_data_and_coordinator_state_is_current(
     assert str(record["project_id"]) in full
     assert "Persist bounded assignments" in full
     assert "return control" in full
+    assert "coordination direction-list PROJECT --open" in full
+    assert "clarify direction" in full
     assert '"state": "out_of_scope"' in guidance(
         store, "codex:owner", str(tmp_path / "other"), full=False
     )
@@ -124,6 +134,9 @@ def test_coordination_recovery_reads_current_records(
         assert "SECRET OBJECTIVE" not in text
         assert "own worktree" in text
         assert "Never busy-poll" in text
+        assert all(phrase in text for phrase in WORKER_DUTIES)
+        assert "each turn" not in text
+        assert "idle" not in text
         assert "fresh direct owner join" in text
     assert '"memory_ticket": "bus-1"' in full
     assert "bd prime" in full

@@ -140,8 +140,18 @@ establishes trust in an unknown remote coordinator.
   the gate requires). A worker must first run `llm-bus --format agent
   coordination claim PROJECT --ticket TICKET --branch BRANCH`; an approval for
   a ticket or branch the worker has not claimed is not verified.
-- Workers acknowledge each handled direction with `ack` like any other message,
-  and report progress, evidence and blockers to the coordinator.
+- Workers `ack` each direction when they accept it, before reporting its state
+  (a report requires a prior ack). Before returning control, a worker starts every accepted direction that is no
+  longer blocked and records each state change with `llm-bus --format agent
+  report ID --status STATUS` (wakes nobody). A worker messages the coordinator
+  only for blockers and outcomes the coordinator must act on or learn, with
+  evidence, never for presence or routine progress. A cancelled direction needs
+  no report.
+- Coordinators check `llm-bus --format agent coordination direction-list
+  PROJECT --open`, judge each open direction's age from `state_changed_at` and
+  follow up with a `clarify` direction when one looks stalled. An acknowledged
+  `cancel` closes earlier open work directions under the same grant; resend any
+  direction that should continue.
 - Every request for direct owner confirmation starts with the session banner
   (project, role, label, ticket, branch, folder) printed by the recovery
   notice. Refuse owner approvals naming a ticket or branch you do not own.

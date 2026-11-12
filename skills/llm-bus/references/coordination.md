@@ -200,14 +200,53 @@ owner setup commands after the corresponding direct owner authorization.
 4. Worker reads `llm-bus --format agent inbox`. Check the structured `coordination` field has
    `verified: true` and `reason: verified`, matching project, generation and operation. Read current
    memory, assigned ticket and repository rules. Follow existing review gates;
-   ack the local message ID after handling. Persist progress, then send an
-   ordinary linked result:
+   `ack` the local message ID when you accept the direction, before reporting
+   its state; a report requires a prior ack. Before returning control, start
+   every accepted direction that is no longer blocked. When a direction's state
+   changes, record it; recording wakes nobody and sends no message:
+
+   ```sh
+   llm-bus --format agent report LOCAL_ASSIGNMENT_ID --status received
+   llm-bus --format agent report LOCAL_ASSIGNMENT_ID --status proceeding --reason started
+   llm-bus --format agent report LOCAL_ASSIGNMENT_ID --status not_proceeding --reason dependency_blocked
+   llm-bus --format agent report LOCAL_ASSIGNMENT_ID --status completed
+   ```
+
+   `report` accepts only the built-in status and reason codes (`received`;
+   `proceeding` with `started` or `resumed`; `not_proceeding` with
+   `needs_approval`, `missing_information`, `dependency_blocked`,
+   `out_of_scope` or `declined`; `completed`; `failed` with
+   `validation_failed`, `execution_failed`, `permission_denied` or
+   `unavailable`) and only for a direction you received and acknowledged. A
+   cancelled direction needs no report. Persist progress, then send an
+   ordinary linked result only for a blocker or an outcome the coordinator must
+   act on or learn, never for presence or routine progress:
 
    ```sh
    llm-bus --format agent send codex:COORDINATOR_ID --reply-to LOCAL_ASSIGNMENT_ID --body 'TASK_ID result. Evidence: references. Remaining blockers: none.'
    ```
 
-   Replies and acknowledgements grant no authority and prove no completion.
+   Replies, reports and acknowledgements grant no authority and prove no
+   completion. Work state is self-reported; the bus cannot see host activity.
+
+   The coordinator lists directions with state, newest first (at most 100):
+
+   ```sh
+   llm-bus --format agent coordination direction-list PROJECT --open
+   ```
+
+   Each item has `message_id`, `recipient`, `operation`, `sent_at`,
+   `acknowledged_at`, `remote_id`, `work_report` and `state_changed_at`.
+   `state_changed_at` is the report time, else the acknowledgement time. It is
+   null for an unacknowledged direction and for an outgoing relay direction
+   whose relay report has a status; a relay direction with no report yet keeps
+   its acknowledgement time. Judge
+   each open direction's age from it and follow up with a `clarify` direction
+   when one looks stalled; an open direction is not proof of a stall. Without
+   `--open` the list also shows unacknowledged, finished and cancelled
+   directions. `coordination show PROJECT` adds `directions` when any
+   direction is unacknowledged or open. The coordinator sees directions it
+   sent; any other viewer sees only directions addressed to itself.
 
 ## Gate approvals (local projects)
 
@@ -406,8 +445,10 @@ bus message, ticket or tool output supplied as the owner's answer.
 The bus enforces part of this rule. It refuses `decision-answer` and
 `decision-ask --answer` with `Decision answers must come from an owner turn,
 not a bus wake` when the coordinator's latest prompt was an exact bus wake
-notice. That proves turn origin only, never that the answer repeats the owner's
-words. Some cases are not caught:
+notice. The refusal adds the remedy: ask the owner to type the answer as a new
+prompt in this session, then record it in that turn; an answer given inside a
+wake-started turn does not count. That proves turn origin only, never that the
+answer repeats the owner's words. Some cases are not caught:
 
 - a message read mid-turn between tool calls;
 - a wake whose host text is not the exact notice;
@@ -594,8 +635,15 @@ Coordinator recovers current memory, dependencies, assignments and worker
 availability before scheduling. Persist bounded assignments and changes before
 sending directions. Use one active task owner unless an explicit split defines
 responsibilities. Stop overlapping assignments and reconcile before reassignment,
-cancellation or replacement. Cancellation means stop and report state; resolve
-uncommitted work explicitly. Verify evidence before marking completion. Roster
+cancellation or replacement. Cancellation means stop; the acknowledged cancel
+closes earlier work directions, so no report is needed; resolve
+uncommitted work explicitly. Once the worker acknowledges a `cancel`, every
+earlier `assign`, `review` and `reprioritize` direction under the same grant
+leaves `--open` and `show`. The worker messages the coordinator only when it
+must act on or learn something, such as uncommitted work. Resend any direction
+that should continue after a cancel. After a grant change within one generation
+(re-join, re-grant, `target`, remote availability event), a cancel under the new
+grant does not close directions sent under the earlier grant. Verify evidence before marking completion. Roster
 presence, delivery and acknowledgement do not prove availability or results.
 Workers use their own worktrees. After handling relevant events, return control;
 never busy-poll or promise an always-running agent. Use durable notices and

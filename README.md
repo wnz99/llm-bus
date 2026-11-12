@@ -376,6 +376,8 @@ of every source, an outdated guidance state, `llm-bus guidance`) and in the
 it filtered by role. Other hooks carry a one-line pointer. Codex has no
 compaction hook, so a Codex session restores them with `llm-bus guidance`.
 
+The coordinator lists the directions it sent, with each one's work state and age, with `llm-bus coordination direction-list PROJECT [--open]`. A worker reports progress on a local direction with `llm-bus report ID --status STATUS`; the report stays on that machine and wakes nobody. See the [tutorial](docs/tutorial.md#5-coordinate-a-project).
+
 Current enrollment reminders survive normal prompt recovery: SessionStart gives
 full references; UserPromptSubmit rereads authority after compaction. Use
 `llm-bus guidance` and `llm-bus coordination show PROJECT` for explicit recovery.
@@ -421,7 +423,7 @@ Forked responders can repeat anything already in your session's context. Summary
 
 `llm-bus status MESSAGE_ID` reads body-free diagnostics for one retained local integer message ID. Replace `MESSAGE_ID` with an ID from `send`, `inbox`, or `history`. It needs no host identity, configuration, token, network, or running bridge, and remains readable after blocking a peer or removing configuration. It never registers a session, migrates the mailbox, acknowledges a message, or requests a wake. A missing mailbox or unknown/nonpositive ID fails without creating data.
 
-The result separates `transport`, the message's own `wake` result and coverage, `acknowledged_at`, the last synchronized strict `work_report`, and `synchronization`. Native storage is `stored_local`; an imported message proves local durable admission, not current sender-side relay state. Missing metadata is null. Synchronization is stale without a successful observation, after 30 seconds, or after an error. Separate operation metadata prevents a successful transport read from implying a fresh report. Wake errors use fixed safe categories; original history is retained. A queued report intent is not a synchronized report, and no state proves task completion or authorizes work.
+The result separates `transport`, the message's own `wake` result and coverage, `acknowledged_at`, `work_report`, and `synchronization`. For an outgoing relay message `work_report` is the last synchronized strict report; for a local coordination direction it is the recipient's local report (`llm-bus report ID --status STATUS`), which stays on that machine and wakes nobody. Native storage is `stored_local`; an imported message proves local durable admission, not current sender-side relay state. Missing metadata is null. Synchronization is stale without a successful observation, after 30 seconds, or after an error. Separate operation metadata prevents a successful transport read from implying a fresh report. Wake errors use fixed safe categories; original history is retained. A queued report intent is not a synchronized report, and no state proves task completion or authorizes work.
 
 `history` reads stored bus messages without acknowledging them. It does not need a Claude or Codex session ID, so a separate viewer can use it. It shows messages involving the current folder by default:
 

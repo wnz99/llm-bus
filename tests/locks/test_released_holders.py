@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -10,7 +12,7 @@ import pytest
 from llm_bus import main
 from llm_bus.errors import BusError
 from llm_bus.hosts import processes
-from llm_bus.hosts.processes import HostProcess, exited, host_process
+from llm_bus.hosts.processes import HostProcess, exited, host_process, under_agent_host
 from llm_bus.locks.models import Request
 from llm_bus.locks.service import Locks
 from llm_bus.mailbox.store import Store
@@ -187,6 +189,57 @@ def test_exited_compares_start_times_and_distrusts_a_partial_table(
     assert exited([gone]) is None
 
 
+def test_owner_terminal_must_not_run_under_an_agent_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("os.getppid", _pid(30))
+    _ps(
+        monkeypatch,
+        "   30    20 Thu Nov 12 01:00:03 2026     /usr/bin/script\n"
+        "   20     1 Thu Nov 12 01:00:02 2026     /Users/me/.local/bin/claude\n",
+    )
+    assert under_agent_host()
+    _ps(monkeypatch, "   30     1 Thu Nov 12 01:00:03 2026     /bin/zsh\n")
+    assert not under_agent_host()
+    _ps(monkeypatch, None)
+    assert under_agent_host()
+
+
+def test_real_process_table_matches_its_own_record() -> None:
+    """Runs the machine's ps, so a format the parser misreads fails here, not in production."""
+    own = os.getpid()
+    output = subprocess.run(
+        ["ps", "-o", "lstart=", "-p", str(own)],  # noqa: S607 - PATH fixed by PS_ENVIRONMENT
+        capture_output=True,
+        text=True,
+        check=True,
+        env=processes.PS_ENVIRONMENT,
+    ).stdout
+    assert exited([HostProcess(own, " ".join(output.split()))]) == set()
+
+
+def test_force_never_takes_the_lock_from_a_just_promoted_waiter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    record_wakes(monkeypatch)
+    monkeypatch.setenv("LLM_BUS_DB", str(tmp_path / "bus.sqlite3"))
+    monkeypatch.chdir(tmp_path)
+    store = Store(tmp_path / "bus.sqlite3")
+    holder = store.register("codex", "holder", str(tmp_path), host=HOLDER_PROCESS)
+    waiter = store.register("claude", "waiter", str(tmp_path))
+    key = Locks(store, holder, str(tmp_path)).key("db", shared=False)
+    Locks(store, holder, str(tmp_path)).acquire(key, TAKE)
+    Locks(store, waiter, str(tmp_path)).acquire(key, TAKE)
+    _exited(monkeypatch, {HOLDER_PROCESS})
+    monkeypatch.setattr("llm_bus.cli.commands.interactive_terminal", lambda: True)
+
+    assert main(["lock", "release", "db", "--force", "--reason", "holder killed"]) == 0
+
+    result = cast("dict[str, object]", json.loads(capsys.readouterr().out))
+    assert result["status"] == "already_released"
+    assert result["granted_to"] == waiter
+    assert _releases(store) == [("db", holder, "holder_exited", None, None, waiter)]
+    assert not any("force-released" in body for body in bodies(store, waiter))
+
+
 def _project_lock(tmp_path: Path, *, shared: bool = False) -> tuple[Store, str]:
     store = Store(tmp_path / "bus.sqlite3")
     create(store, tmp_path)
@@ -256,24 +309,30 @@ def test_coordinator_cannot_force_a_shared_lock_of_a_non_worker(tmp_path: Path) 
         Locks(store, "codex:owner", str(tmp_path)).force_release(key, "stuck")
 
 
-def _cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Store:
+def _cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, shared: bool = False) -> Store:
     record_wakes(monkeypatch)
     monkeypatch.setenv("LLM_BUS_DB", str(tmp_path / "bus.sqlite3"))
     monkeypatch.chdir(tmp_path)
     store = Store(tmp_path / "bus.sqlite3")
     holder = store.register("codex", "holder", str(tmp_path))
     locks = Locks(store, holder, str(tmp_path))
-    locks.acquire(locks.key("db", shared=False), TAKE)
+    locks.acquire(locks.key("db", shared=shared), TAKE)
     return store
 
 
+@pytest.mark.parametrize("shared", [False, True])
 def test_owner_terminal_forces_without_a_session(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    shared: bool,
 ) -> None:
-    store = _cli(tmp_path, monkeypatch)
+    store = _cli(tmp_path, monkeypatch, shared=shared)
     monkeypatch.setattr("llm_bus.cli.commands.interactive_terminal", lambda: True)
+    scope = ["--shared"] if shared else []
 
-    assert main(["lock", "release", "db", "--force", "--reason", "session killed"]) == 0
+    assert main(["lock", "release", "db", "--force", "--reason", "session killed", *scope]) == 0
 
     result = cast("dict[str, object]", json.loads(capsys.readouterr().out))
     assert result["status"] == "forced"

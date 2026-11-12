@@ -17,7 +17,7 @@ from llm_bus.locks.models import (
     Request,
     Waiter,
 )
-from llm_bus.locks.notices import check_body, grant_body, request_body
+from llm_bus.locks.notices import RELEASED_OR_LAPSED, check_body, grant_body, request_body
 from llm_bus.mailbox.agents import end_agent, expire_idle_agents
 
 if TYPE_CHECKING:
@@ -184,7 +184,7 @@ def release_from(  # noqa: PLR0913 - audit fields
 
 
 def hand_off(
-    db: sqlite3.Connection, key: Key, previous: str, how: str | None = None
+    db: sqlite3.Connection, key: Key, previous: str, how: str = RELEASED_OR_LAPSED
 ) -> list[Notice]:
     """Grant the resource to the earliest live waiter, which must then set its own estimate."""
     first = cast(
@@ -216,8 +216,7 @@ def hand_off(
     lock = read_lock(db, key)
     if lock is None:
         raise RuntimeError("Handed-off lock could not be read")
-    body = grant_body(lock, previous) if how is None else grant_body(lock, previous, how)
-    return [Notice(first[0], body)]
+    return [Notice(first[0], grant_body(lock, previous, how))]
 
 
 def enqueue(

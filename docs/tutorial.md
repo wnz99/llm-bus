@@ -230,9 +230,9 @@ The flags work as follows:
 
 On `release`, or when a lease lapses, the resource passes to the earliest live waiter, which receives a `lock granted` message. `lock status --all` and `lock list --all` cover every repository and folder.
 
-A killed agent fires no close hook, so the bus also records each session's `claude` or `codex` host process. Every lock command checks the processes of holders and waiters. If one has exited, the bus ends that session and passes its locks on. A Codex thread inside a shared app-server process is not detected this way.
+A killed agent fires no close hook, so the bus also records each session's `claude` or `codex` host process. Every lock command checks the processes of holders and waiters. If one has exited, the bus ends that session and passes its locks on. Like a close hook, this also ends the session's labels and its coordination join, so a resumed worker needs a fresh `join`. A Codex thread inside a shared app-server process is not detected this way.
 
-Normally only the holder can release. For a holder that is stuck, the owner can force a release from an interactive terminal outside any agent session:
+Normally only the holder can release. For a holder that is stuck, the owner can force a release from an interactive terminal that is not running inside Claude Code or Codex:
 
 ```sh
 llm-bus lock release db:orders --force --reason "holder session was killed"

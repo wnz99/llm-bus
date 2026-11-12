@@ -13,6 +13,7 @@ from llm_bus.cli.references import resolve_reference
 from llm_bus.coordination.decisions import run_decision_timer
 from llm_bus.coordination.delivery import outgoing
 from llm_bus.errors import BusError
+from llm_bus.hosts.processes import under_agent_host
 from llm_bus.locks.models import FORCE_AUTHORITY, Key, Request
 from llm_bus.locks.service import Locks, force_release, lock_key
 from llm_bus.locks.timer import detach, run_timer
@@ -66,7 +67,8 @@ def _lock(store: Store, args: dict[str, object], agent_address: str, project: st
 
 
 def interactive_terminal() -> bool:
-    return sys.stdin.isatty() and sys.stdout.isatty()
+    """A TTY outside any agent host; an agent with a pseudo-terminal still runs under one."""
+    return sys.stdin.isatty() and sys.stdout.isatty() and not under_agent_host()
 
 
 def owner_force_release(store: Store, args: dict[str, object]) -> object:

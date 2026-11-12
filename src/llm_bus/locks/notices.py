@@ -90,7 +90,10 @@ def check_body(lock: Lock) -> str:
     )
 
 
-def grant_body(lock: Lock, previous: str, how: str = "released it or its lease ended") -> str:
+RELEASED_OR_LAPSED = "released it or its lease ended"
+
+
+def grant_body(lock: Lock, previous: str, how: str) -> str:
     return (
         f"llm-bus lock granted: you now hold resource {lock['resource']!r} after {previous} "
         f"{how}. Set when you expect to release by running "

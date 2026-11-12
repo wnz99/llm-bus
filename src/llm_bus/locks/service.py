@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from llm_bus.mailbox.store import Store
 
 CANCELLED = "cancelled"
+ALREADY_RELEASED = "already_released"
 
 
 def lock_key(resource: str, project: str, *, shared: bool) -> Key:
@@ -47,7 +48,8 @@ def force_release(
     A None actor is the owner at an interactive terminal, which the CLI checks; no session
     runs that terminal, so each notice then comes from its own recipient. A session must
     coordinate a live project in the lock's scope or the holder's project. Every use is
-    recorded with its reason.
+    recorded with its reason. Authority is checked against the holder named before the reap;
+    if that holder exited or its lease lapsed, its successor keeps the lock.
     """
     why = clean_reason(reason)
     if why is None:
@@ -55,17 +57,22 @@ def force_release(
     by = actor or OWNER_TERMINAL
     with store.transaction() as db:
         db.execute("BEGIN IMMEDIATE")
-        notices = reap(db)
-        lock = read_lock(db, key)
-        if lock is None:
+        targeted = read_lock(db, key)
+        if targeted is None:
             raise BusError(f"Resource {key.resource!r} is not locked")
-        holder = lock["holder"]
+        holder = targeted["holder"]
         if holder == actor:
             raise BusError(f"You hold {key.resource!r}; `llm-bus lock release` gives it up")
         if actor is not None and not coordinates_lock(db, actor, key.scope, holder):
             raise BusError(f"Only {FORCE_AUTHORITY} can force a release")
-        notices.append(Notice(holder, forced_body(lock, by, why), sender=holder))
-        notices.extend(release_from(db, key, holder, FORCED, actor=by, reason=why))
+        notices = reap(db)
+        lock = read_lock(db, key)
+        if lock is not None and lock["holder"] == holder:
+            notices.append(Notice(holder, forced_body(lock, by, why), sender=holder))
+            notices.extend(release_from(db, key, holder, FORCED, actor=by, reason=why))
+            status = FORCED
+        else:
+            status = ALREADY_RELEASED
         if actor is None:
             notices = [
                 notice._replace(sender=notice.sender or notice.recipient) for notice in notices
@@ -73,7 +80,7 @@ def force_release(
         lock = read_lock(db, key)
         sent = persist(store, actor or holder, db, notices)
     return {
-        "status": FORCED,
+        "status": status,
         "previous_holder": holder,
         "granted_to": lock["holder"] if lock else None,
         "lock": lock,

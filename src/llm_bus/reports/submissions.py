@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, cast
 from llm_bus.errors import BusError
 from llm_bus.hosts.sessions import is_subagent
 from llm_bus.policy.config import load_config
-from llm_bus.reports.lifecycle import TERMINAL, TRANSITION_CONFLICT
+from llm_bus.reports.lifecycle import TRANSITION_CONFLICT, transition_conflicts
 from llm_bus.reports.protocol import MAX_REVISION, parse_report, validate_status
 
 if TYPE_CHECKING:
@@ -99,7 +99,7 @@ def enqueue(
         prior = cast("dict[str, object]", json.loads(row[0])) if row else None
         if prior and prior["status"] == selected and prior["reason"] == why:
             return prior
-        if prior and (prior["status"] in TERMINAL or selected == "received"):
+        if transition_conflicts(cast("str | None", prior["status"]) if prior else None, selected):
             raise BusError(TRANSITION_CONFLICT)
         expected = cast("int", prior["expected_revision"]) + 1 if prior else 0
         if expected >= MAX_REVISION:

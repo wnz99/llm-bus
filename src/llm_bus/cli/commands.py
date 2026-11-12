@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 from llm_bus.cli.guidance import guidance
 from llm_bus.cli.output import serialize
 from llm_bus.cli.references import resolve_reference
+from llm_bus.coordination import work_state
 from llm_bus.coordination.decisions import run_decision_timer
 from llm_bus.coordination.delivery import outgoing
 from llm_bus.errors import BusError
@@ -243,6 +244,18 @@ def send(
     return {**sent, "wake": wake_result}
 
 
+def _report(store: Store, args: dict[str, object], agent_address: str) -> object:
+    message_id = cast("int", args["message_id"])
+    with store.transaction() as db:
+        db.execute("BEGIN IMMEDIATE")
+        if not work_state.imported(db, message_id):
+            return work_state.record(db, message_id, agent_address, args["status"], args["reason"])
+    config = require_config()
+    return Reports(store, config.connection).enqueue(
+        message_id, agent_address, args["status"], args["reason"]
+    )
+
+
 def registered_command(
     store: Store, command: object, args: dict[str, object], agent_address: str, project: str
 ) -> object:
@@ -261,10 +274,7 @@ def registered_command(
     elif command == "inbox":
         result = store.inbox(agent_address, cast("int", args["limit"]))
     elif command == "report":
-        config = require_config()
-        result = Reports(store, config.connection).enqueue(
-            cast("int", args["message_id"]), agent_address, args["status"], args["reason"]
-        )
+        result = _report(store, args, agent_address)
     elif command == "ack":
         result = {"acknowledged": store.acknowledge(agent_address, cast("list[int]", args["ids"]))}
     elif command == "lock":

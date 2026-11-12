@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from contextlib import closing
 from typing import TYPE_CHECKING, cast
 
-import llm_bus.reports.protocol
+from llm_bus.coordination import work_state
 from llm_bus.diagnostics.synchronization import SYNC_KINDS, synchronization_snapshot
 from llm_bus.errors import BusError
 
@@ -184,7 +183,13 @@ def _message_status(db: sqlite3.Connection, message: dict[str, object]) -> dict[
         },
         "wake": _wake_status(message, coverage, retry),
         "acknowledged_at": message["acknowledged_at"],
-        "work_report": _work_report(db, tables, remote_id) if outgoing else None,
+        "work_report": work_state.work_report(
+            db,
+            tables,
+            cast("int", key),
+            remote_id=outgoing[0] if outgoing else None,
+            imported=incoming is not None,
+        ),
         "synchronization": synchronization,
     }
 
@@ -204,19 +209,3 @@ def _wake_status(
         "coverage_status": coverage[0] if coverage and coverage[0] in WAKE_STATUSES else None,
         "retry_at": retry[0] if retry and message["acknowledged_at"] is None else None,  # pylint: disable=clean-code-business-policy-literal
     }
-
-
-def _work_report(db: sqlite3.Connection, tables: set[str], remote_id: str | None) -> object:
-    row = (
-        cast(
-            "tuple[str] | None",
-            db.execute("SELECT payload FROM remote_reports WHERE id=?", (remote_id,)).fetchone(),
-        )
-        if "remote_reports" in tables
-        else None
-    )
-    return (
-        llm_bus.reports.protocol.parse_report(cast("object", json.loads(row[0])), remote_id or "")
-        if row
-        else None
-    )

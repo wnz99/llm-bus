@@ -96,7 +96,10 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - explicit CLI d
             "lock", help="Coordinate exclusive use of a named resource with other sessions"
         )
     )
-    report = commands.add_parser("report", help="Queue a typed work report for an imported message")
+    report = commands.add_parser(
+        "report",
+        help="Record a typed work report for a received coordination direction or imported message",
+    )
     report.add_argument("message_id", type=int)
     report.add_argument("--status", required=True, choices=tuple(REPORT_REASONS))
     report.add_argument("--reason")

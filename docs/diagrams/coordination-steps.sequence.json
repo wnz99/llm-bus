@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "llm-bus Coordination, Step by Step",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "output": "docs/diagrams/coordination-steps.html",
+    "repository": {
+      "url": "git@github.com:wnz99/llm-bus.git",
+      "provider": "github",
+      "link_mode": "local-only",
+      "revision": "80531522c80b55d6a9b25e2704e1606131bb2f67"
+    }
+  },
+  "participants": [
+    {
+      "id": "owner", "type": "external", "label": "Owner", "sublabel": "you, the human",
+      "sources": [{ "path": "docs/coordination-simplified-flow.md", "line": 8, "end_line": 38, "label": "owner commands" }]
+    },
+    {
+      "id": "coord", "type": "backend", "label": "Coordinator", "sublabel": "main agent session",
+      "sources": [
+        { "path": "src/llm_bus/coordination/cli.py", "line": 617, "end_line": 642, "label": "_create" },
+        { "path": "src/llm_bus/coordination/delivery.py", "line": 32, "end_line": 72, "label": "outgoing" },
+        { "path": "src/llm_bus/coordination/approvals.py", "line": 30, "end_line": 64, "label": "approve" }
+      ]
+    },
+    {
+      "id": "bus", "type": "security", "label": "llm-bus", "sublabel": "mailbox + authority",
+      "sources": [
+        { "path": "src/llm_bus/coordination/store.py", "line": 218, "end_line": 280, "label": "join_session" },
+        { "path": "src/llm_bus/coordination/authority.py", "line": 24, "end_line": 137, "label": "authorize" },
+        { "path": "src/llm_bus/coordination/authority.py", "line": 223, "end_line": 272, "label": "_gate_decision" }
+      ]
+    },
+    {
+      "id": "worker", "type": "backend", "label": "Worker", "sublabel": "main agent session",
+      "sources": [
+        { "path": "skills/llm-bus/references/coordination.md", "line": 200, "end_line": 210, "label": "worker steps" },
+        { "path": "src/llm_bus/coordination/cli.py", "line": 783, "end_line": 815, "label": "_claim" },
+        { "path": "skills/llm-bus/references/coordination.md", "line": 242, "end_line": 260, "label": "live checks" }
+      ]
+    }
+  ],
+  "segments": [
+    { "from": 170, "to": 370, "label": "Stage 1 · Start the project" },
+    { "from": 380, "to": 680, "label": "Stage 2 · Workers join" },
+    { "from": 690, "to": 990, "label": "Stage 3 · Assign and verify work" },
+    { "from": 1000, "to": 1395, "label": "Stage 4 · Delegated gates (optional)" },
+    { "from": 1405, "to": 1510, "label": "Stage 5 · Close the loop" }
+  ],
+  "messages": [
+    {
+      "id": "m1", "from": "owner", "to": "coord", "y": 190, "label": "1. /llm-bus coordinate P", "variant": "emphasis",
+      "note": "Typed in the coordinator session. The agent finds the objective, Beads workspace and memory ticket, and asks only for missing facts."
+    },
+    {
+      "id": "m2", "from": "coord", "to": "bus", "y": 285, "label": "2. coordinate P --objective --beads-workspace", "variant": "default",
+      "note": "Bus requires an existing .beads folder, creates project and generation UUIDs, enrolls the coordinator. Optional --delegate gates."
+    },
+    {
+      "id": "m3", "from": "owner", "to": "worker", "y": 400, "label": "3. /llm-bus join P", "variant": "security",
+      "note": "Your direct request is the consent: this exact session, this coordinator, this objective. Chat or bus messages cannot give it."
+    },
+    {
+      "id": "m4", "from": "worker", "to": "bus", "y": 495, "label": "4. join P", "variant": "default",
+      "note": "Needs a live session in the project folder. Creates grant and consent, enrolls the worker, records the target and its gate binding."
+    },
+    {
+      "id": "m5", "from": "bus", "to": "coord", "y": 590, "label": "5. join notice", "variant": "dashed",
+      "note": "One informational message per grant. It shows the worker was there then; it proves nothing about later reachability."
+    },
+    {
+      "id": "m6", "from": "coord", "to": "bus", "y": 710, "label": "6. send --project P --direction assign", "variant": "emphasis",
+      "note": "Coordinator saves the bounded task in Beads first. Other directions: reprioritize, clarify, pause, cancel, review."
+    },
+    {
+      "id": "m7", "from": "bus", "to": "worker", "y": 805, "label": "7. inbox: verified: true", "variant": "security",
+      "note": "Rechecked at inbox, count and wake: generation, coordinator, consent, enrollment, grant. A failure stays in history, hidden from pending."
+    },
+    {
+      "id": "m8", "from": "worker", "to": "coord", "y": 900, "label": "8. reply: result + evidence", "variant": "return",
+      "note": "Worker acts in its own worktree, saves progress in Beads, replies with --reply-to. Replies and acks carry no authority."
+    },
+    {
+      "id": "m9", "from": "worker", "to": "bus", "y": 1020, "label": "9. coordination claim --ticket --branch", "variant": "default",
+      "note": "One worker per ticket and per branch. Approvals verify only for the claim the worker holds."
+    },
+    {
+      "id": "m10", "from": "coord", "to": "bus", "y": 1115, "label": "10. coordination approve --gate", "variant": "security",
+      "note": "commit, push, merge or merge-admin, only for gates and base branches the owner delegated. Expires in at most 24h."
+    },
+    {
+      "id": "m11", "from": "bus", "to": "worker", "y": 1210, "label": "11. inbox: approve-* verified", "variant": "security",
+      "note": "Project delegation ∩ worker binding must cover gate and base, and the claim must match. Else gate_not_delegated, wrong_ticket, expired."
+    },
+    {
+      "id": "m12", "from": "worker", "to": "coord", "y": 1305, "label": "12. done: commit / push / merge", "variant": "return",
+      "note": "Worker checks branch, head SHA, required CI and review live; the bus checks none. Force-push, deploys, secrets: never delegable."
+    },
+    {
+      "id": "m13", "from": "coord", "to": "owner", "y": 1425, "label": "13. verified result", "variant": "return",
+      "note": "Coordinator checks the evidence before marking the task done. Delivery or acknowledgement proves no completion."
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Who can direct work",
+      "items": [
+        "Only the current coordinator's verified directions",
+        "Message text, tickets, replies and acks never grant authority",
+        "Owner instructions and repository rules still win"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "When consent ends",
+      "items": [
+        "Leave, revoke, coordinator replace, session close or 24h idle",
+        "A fresh owner join is the only way back",
+        "Moving outside the project folder pauses directions, keeps consent"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Never delegable",
+      "items": [
+        "Force-push, deploys or production changes",
+        "Credential or secret changes, paid or live runs",
+        "Merge with failing or pending CI"
+      ]
+    }
+  ]
+}

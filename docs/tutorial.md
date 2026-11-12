@@ -246,6 +246,8 @@ The active coordinator of the lock's project, or of the holder's project, can ru
 
 **Goal:** one coordinator session directs work in worker sessions, within limits you set.
 
+For an overview first, open the [step-by-step coordination diagram](diagrams/coordination-steps.html) in a browser from a local checkout.
+
 Coordination is opt-in and uses Beads for durable project memory. Before you start, make sure that:
 
 - the repository already has a Beads workspace (a `.beads` folder), and you know the ID of the project memory ticket;

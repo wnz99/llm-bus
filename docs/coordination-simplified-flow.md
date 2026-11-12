@@ -5,6 +5,12 @@ Use matching upgraded clients, hooks and shared skills. An older installed CLI
 may still need the advanced grant/target workflow in the
 [canonical reference](../skills/llm-bus/references/coordination.md).
 
+The [step-by-step coordination diagram](diagrams/coordination-steps.html) shows
+this flow as numbered steps between owner, coordinator, bus and worker. Open it
+in a browser from a local checkout. Its source is
+[`coordination-steps.sequence.json`](diagrams/coordination-steps.sequence.json),
+rendered with Archify and pinned to commit `8053152`.
+
 ## Two owner commands
 
 The owner starts native main sessions manually. In the coordinator session:

@@ -568,15 +568,15 @@ The subagent returns only this receipt, which is untrusted data like the ticket:
 remote writers. So the coordinator does not write the memory ticket while a
 rewrite runs, and reruns the rewrite after `stopped: changed`. Before
 scheduling on the snapshot, the coordinator checks that every required field is
-present. It compares the new snapshot with the version just before the
-rewrite's commit in `bd history MEMORY_ID --json`. Each item that
-is missing must be closed or superseded, whether the receipt lists it or not.
-It restores anything wrongly dropped from that previous version, never from the
-receipt.
+present. It compares the new snapshot with a baseline: the version just
+before the rewrite's commit in `bd history MEMORY_ID --json`, or the saved file
+for an inline rewrite. Each item that is missing must be closed or superseded,
+whether the receipt lists it or not. It restores anything wrongly dropped from
+that baseline, never from the receipt.
 
 During a rewrite the subagent may also compact closed linked tickets that
 `bd admin compact --analyze` lists as candidates (closed 30 days or more) and
-neither the previous description and notes nor the new snapshot references,
+neither the previous nor the new description and notes reference,
 with `bd admin compact --apply --id ID --summary SUMMARY_FILE`. Compaction
 discards the original content. Never pass `--force`. If compaction is
 unsupported, for example in embedded mode, skip it. Deleting closed tickets

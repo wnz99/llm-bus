@@ -1,11 +1,12 @@
 # Project State
 
-Last activity: 2026-11-11 - 261110-wft PRs #67-#70 merged; #71 approved, merge pending; summary written.
+Last activity: 2026-11-12 - 261112-av6 registered; execution of plan revision 3 started.
 
 ## Registered Work
 
 | # | Description | Status | Directory |
 |---|-------------|--------|-----------|
+| 261112-av6 | Coordination worker stall visibility: guidance and per-direction work state | Registered; Task 1 in progress | [261112-av6-coordination-worker-stall-visibility](./quick/261112-av6-coordination-worker-stall-visibility/) |
 
 ## Quick Tasks Completed
 

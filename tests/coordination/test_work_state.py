@@ -18,6 +18,8 @@ from llm_bus.diagnostics.messages import message_status
 from llm_bus.errors import BusError
 from llm_bus.mailbox.schema import SCHEMA_VERSION
 from llm_bus.mailbox.store import Store
+from llm_bus.policy.config import Config, PeerPolicy, Repository
+from llm_bus.remote.outgoing import enqueue_remote
 from llm_bus.reports.lifecycle import TRANSITION_CONFLICT
 from llm_bus.routing import routing_scope
 
@@ -396,23 +398,37 @@ def test_cancel_outside_cap_still_closes(
     assert listed(store, owner, "--open") == []
 
 
+def relay_config(tmp_path: Path) -> Config:
+    token = tmp_path / "a.token"
+    token.write_text("a" * 43)
+    token.chmod(0o600)
+    peer = PeerPolicy("b", send_messages=True, receive_messages="inbox")
+    return Config(
+        "https://bus.test",
+        "a",
+        token,
+        (Repository(routing_scope(str(tmp_path)), "xyz", (peer,)),),
+    )
+
+
 def test_outgoing_remote_direction_uses_relay_snapshot(
-    enrolled: tuple[Store, Direction, SenderContext],
+    enrolled: tuple[Store, Direction, SenderContext], tmp_path: Path
 ) -> None:
-    store, _direction, owner = enrolled
-    message_id = send(store, owner, "assign")
+    store, direction, owner = enrolled
+    sent = enqueue_remote(
+        store, relay_config(tmp_path), owner, "b/xyz/claude:worker", "assign", direction=direction
+    )
+    relay_id = cast("str", sent["remote_id"])
+    message_id = cast("int", sent["id"])
     with store.transaction() as db:
-        db.execute(
-            "INSERT INTO remote_outbox (id, local_id, envelope, state) VALUES (?,?,?,?)",
-            (RELAY_ID, message_id, "{}", "acknowledged"),
-        )
+        db.execute("UPDATE remote_outbox SET state='acknowledged' WHERE id=?", (relay_id,))
         db.execute(
             "INSERT INTO remote_reports VALUES (?,?)",
             (
-                RELAY_ID,
+                relay_id,
                 json.dumps(
                     {
-                        "message_id": RELAY_ID,
+                        "message_id": relay_id,
                         "revision": 1,
                         "status": "proceeding",
                         "reason": "started",
@@ -423,14 +439,29 @@ def test_outgoing_remote_direction_uses_relay_snapshot(
     (item,) = listed(store, owner)
     assert item["work_report"] == message_status(store.path, message_id)["work_report"]
     assert item["work_report"] == {
-        "message_id": RELAY_ID,
+        "message_id": relay_id,
         "revision": 1,
         "status": "proceeding",
         "reason": "started",
     }
     assert item["state_changed_at"] is None
+    assert item["remote_id"] == relay_id
+
+
+def test_imported_direction_is_never_open(
+    enrolled: tuple[Store, Direction, SenderContext],
+) -> None:
+    store, _direction, owner = enrolled
+    message_id = send(store, owner, "assign")
+    with store.transaction() as db:
+        db.execute(
+            "INSERT INTO remote_imports (id, local_id, envelope) VALUES (?,?,?)",
+            (RELAY_ID, message_id, "{}"),
+        )
+    (item,) = listed(store, owner)
     assert item["remote_id"] == RELAY_ID
-    assert ids(listed(store, owner, "--open")) == [message_id]
+    assert item["work_report"] is None
+    assert listed(store, owner, "--open") == []
 
 
 def test_listing_rejects_unknown_filter(enrolled: tuple[Store, Direction, SenderContext]) -> None:

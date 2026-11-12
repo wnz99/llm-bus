@@ -349,7 +349,7 @@ llm-bus --format agent report 3 --status completed
 | done | `completed` |
 | failed | `failed` with a reason such as `execution_failed` |
 
-A report is refused for an unacknowledged direction, for a message the caller did not receive, and for a change that moves a finished direction back. Repeating the same report changes nothing. `status ID` then shows the latest state, for example `"work_report": {"message_id": 3, "revision": 2, "status": "proceeding", "reason": "started", "reported_at": "…"}`.
+A report is refused for an unacknowledged direction, for a message the caller did not receive, for a change that moves a finished direction back, and for a change back to `received`. Repeating the same report changes nothing. `status ID` then shows the latest state, for example `"work_report": {"message_id": 3, "revision": 2, "status": "proceeding", "reason": "started", "reported_at": "…"}`.
 
 The coordinator lists directions with their state, newest first, at most 100:
 
@@ -357,7 +357,7 @@ The coordinator lists directions with their state, newest first, at most 100:
 llm-bus --format agent coordination direction-list orders-export --open
 ```
 
-Each item has `message_id`, `recipient`, `operation`, `sent_at`, `acknowledged_at`, `remote_id`, `work_report` and `state_changed_at`. `state_changed_at` is the report time, or the acknowledgement time when there is no report. `--open` keeps acknowledged `assign`, `review` and `reprioritize` directions that have no `completed` or `failed` report and are not cancelled. Without the flag, the list also holds unacknowledged, finished and cancelled directions. The coordinator judges each open direction's age and follows up with a `clarify` direction when one looks stalled. `coordination show` adds a `directions` list when any direction is unacknowledged or open. The coordinator sees the directions it sent; any other session sees only directions addressed to itself.
+Each item has `message_id`, `recipient`, `operation`, `sent_at`, `acknowledged_at`, `remote_id`, `work_report` and `state_changed_at`. `state_changed_at` is the report time, or the acknowledgement time when there is no report. It is null for an unacknowledged direction and for an outgoing relay direction that has a relay report. `--open` keeps acknowledged `assign`, `review` and `reprioritize` directions that have no `completed` or `failed` report and are not cancelled. Without the flag, the list also holds unacknowledged, finished and cancelled directions. The coordinator judges each open direction's age and follows up with a `clarify` direction when one looks stalled. `coordination show` adds a `directions` list when any direction is unacknowledged or open. The coordinator sees the directions it sent; any other session sees only directions addressed to itself.
 
 ### Inspect, stop and replace
 

@@ -140,8 +140,8 @@ establishes trust in an unknown remote coordinator.
   the gate requires). A worker must first run `llm-bus --format agent
   coordination claim PROJECT --ticket TICKET --branch BRANCH`; an approval for
   a ticket or branch the worker has not claimed is not verified.
-- Workers acknowledge each handled direction with `ack` like any other message.
-  Before returning control, a worker starts every accepted direction that is no
+- Workers `ack` each direction when they accept it, before reporting its state
+  (a report requires a prior ack). Before returning control, a worker starts every accepted direction that is no
   longer blocked and records each state change with `llm-bus --format agent
   report ID --status STATUS` (wakes nobody). A worker messages the coordinator
   only for blockers and outcomes the coordinator must act on or learn, with

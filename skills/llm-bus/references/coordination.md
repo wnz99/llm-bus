@@ -200,7 +200,8 @@ owner setup commands after the corresponding direct owner authorization.
 4. Worker reads `llm-bus --format agent inbox`. Check the structured `coordination` field has
    `verified: true` and `reason: verified`, matching project, generation and operation. Read current
    memory, assigned ticket and repository rules. Follow existing review gates;
-   ack the local message ID after handling. Before returning control, start
+   `ack` the local message ID when you accept the direction, before reporting
+   its state; a report requires a prior ack. Before returning control, start
    every accepted direction that is no longer blocked. When a direction's state
    changes, record it; recording wakes nobody and sends no message:
 
@@ -236,7 +237,9 @@ owner setup commands after the corresponding direct owner authorization.
 
    Each item has `message_id`, `recipient`, `operation`, `sent_at`,
    `acknowledged_at`, `remote_id`, `work_report` and `state_changed_at`.
-   `state_changed_at` is the report time, else the acknowledgement time. Judge
+   `state_changed_at` is the report time, else the acknowledgement time. It is
+   null for an unacknowledged direction and for an outgoing relay direction
+   that has a relay report. Judge
    each open direction's age from it and follow up with a `clarify` direction
    when one looks stalled; an open direction is not proof of a stall. Without
    `--open` the list also shows unacknowledged, finished and cancelled

@@ -337,8 +337,11 @@ session uses it. See the
 
 The [simplified coordination defaults](docs/coordination-simplified-flow.md) and
 [Claude coordinator with three Codex workers example](examples/claude-coordinator-codex-workers.md)
-describe the coordination flow. Upgrade the executable, hooks, skill and rule
-files together; mixed versions can disagree.
+describe the coordination flow. The
+[step-by-step coordination diagram](docs/diagrams/coordination-steps.html)
+shows the local flow as numbered steps; open it in a browser from a local
+checkout. Upgrade the executable, hooks, skill and rule files together; mixed
+versions can disagree.
 
 Read the [canonical coordination workflow](skills/llm-bus/references/coordination.md)
 for all CLI equivalents, local Codex/Claude and remote examples, grants,

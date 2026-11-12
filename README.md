@@ -376,6 +376,8 @@ of every source, an outdated guidance state, `llm-bus guidance`) and in the
 it filtered by role. Other hooks carry a one-line pointer. Codex has no
 compaction hook, so a Codex session restores them with `llm-bus guidance`.
 
+The coordinator lists the directions it sent, with each one's work state and age, with `llm-bus coordination direction-list PROJECT [--open]`. A worker reports progress on a local direction with `llm-bus report ID --status STATUS`; the report stays on that machine and wakes nobody. See the [tutorial](docs/tutorial.md#5-coordinate-a-project).
+
 Current enrollment reminders survive normal prompt recovery: SessionStart gives
 full references; UserPromptSubmit rereads authority after compaction. Use
 `llm-bus guidance` and `llm-bus coordination show PROJECT` for explicit recovery.

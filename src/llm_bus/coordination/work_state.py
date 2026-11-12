@@ -175,8 +175,10 @@ def _is_open(
 def _state_changed_at(row: _Row, report: dict[str, object] | None) -> str | None:
     if report is None:
         return row.acked
-    # An outgoing relay direction's report has no local report time.
-    return None if row.outbox_id is not None else cast("str | None", report["reported_at"])
+    if row.outbox_id is None:
+        return cast("str | None", report["reported_at"])
+    # A relay report has no local report time; a revision-0 snapshot is no report yet.
+    return row.acked if report["status"] is None else None
 
 
 def _item(

@@ -239,7 +239,8 @@ owner setup commands after the corresponding direct owner authorization.
    `acknowledged_at`, `remote_id`, `work_report` and `state_changed_at`.
    `state_changed_at` is the report time, else the acknowledgement time. It is
    null for an unacknowledged direction and for an outgoing relay direction
-   that has a relay report. Judge
+   whose relay report has a status; a relay direction with no report yet keeps
+   its acknowledgement time. Judge
    each open direction's age from it and follow up with a `clarify` direction
    when one looks stalled; an open direction is not proof of a stall. Without
    `--open` the list also shows unacknowledged, finished and cancelled

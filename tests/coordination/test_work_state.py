@@ -448,6 +448,33 @@ def test_outgoing_remote_direction_uses_relay_snapshot(
     assert item["remote_id"] == relay_id
 
 
+def test_outgoing_remote_direction_without_report_keeps_ack_time(
+    enrolled: tuple[Store, Direction, SenderContext], tmp_path: Path
+) -> None:
+    store, direction, owner = enrolled
+    sent = enqueue_remote(
+        store, relay_config(tmp_path), owner, "b/xyz/claude:worker", "assign", direction=direction
+    )
+    relay_id = cast("str", sent["remote_id"])
+    with store.transaction() as db:
+        db.execute("UPDATE remote_outbox SET state='acknowledged' WHERE id=?", (relay_id,))
+        db.execute(
+            "UPDATE messages SET acknowledged_at='2026-01-01T00:00:00+00:00' WHERE id=?",
+            (sent["id"],),
+        )
+        db.execute(
+            "INSERT INTO remote_reports VALUES (?,?)",
+            (
+                relay_id,
+                json.dumps({"message_id": relay_id, "revision": 0, "status": None, "reason": None}),
+            ),
+        )
+    (item,) = listed(store, owner)
+    assert cast("dict[str, object]", item["work_report"])["status"] is None
+    assert item["acknowledged_at"] is not None
+    assert item["state_changed_at"] == item["acknowledged_at"]
+
+
 def test_imported_direction_is_never_open(
     enrolled: tuple[Store, Direction, SenderContext],
 ) -> None:

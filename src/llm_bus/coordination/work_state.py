@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, NamedTuple, cast
 
 from llm_bus.errors import BusError
-from llm_bus.reports.lifecycle import TRANSITION_CONFLICT, transition_conflicts
+from llm_bus.reports.lifecycle import TERMINAL, TRANSITION_CONFLICT, transition_conflicts
 from llm_bus.reports.protocol import MAX_REVISION, parse_report, validate_status
 
 if TYPE_CHECKING:
     from sqlite3 import Connection
 
 WORK_OPERATIONS = ("assign", "review", "reprioritize")
+MAX_DIRECTIONS = 100
+FILTERS = ("all", "attention", "open")
 NOT_RECIPIENT = "Report requires a received local coordination direction or an imported message"
 UNACKNOWLEDGED = "Acknowledge the direction before reporting its state"
 TABLE = "coordination_work_reports"
@@ -112,3 +114,117 @@ def work_report(
     if imported or TABLE not in tables:
         return None
     return snapshot(db, message_id)
+
+
+class _Row(NamedTuple):
+    message_id: int
+    operation: str
+    grant: str
+    sender: str
+    recipient: str
+    acked: str | None
+    remote_id: str | None
+    local: int | None
+
+
+def table_names(db: Connection) -> set[str]:
+    return {
+        row[0]
+        for row in cast(
+            "list[tuple[str]]",
+            db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall(),
+        )
+    }
+
+
+def _direction_rows(
+    db: Connection, record: dict[str, object], viewer: str, *, coordinator: bool
+) -> list[_Row]:
+    # pylint: disable=redefined-outer-name  # keyword name is the planned interface
+    found = cast(
+        "list[tuple[int, str, str, str, str, str | None, str | None, int | None]]",
+        db.execute(
+            "SELECT m.id,json_extract(c.metadata_json,'$.operation'),"
+            "json_extract(c.metadata_json,'$.grant_id'),m.sender,m.recipient,"
+            "m.acknowledged_at,o.id,i.local_id "
+            "FROM coordination_messages c JOIN messages m ON m.id=c.message_id "
+            "LEFT JOIN remote_outbox o ON o.local_id=m.id "
+            "LEFT JOIN remote_imports i ON i.local_id=m.id "
+            "WHERE json_extract(c.metadata_json,'$.project_id')=? "
+            "AND json_extract(c.metadata_json,'$.generation')=? "
+            "AND ((? AND m.sender=?) OR m.recipient=?) ORDER BY m.id DESC",
+            (record["project_id"], record["generation"], coordinator, viewer, viewer),
+        ).fetchall(),
+    )
+    return [_Row(*row) for row in found]
+
+
+def _is_open(
+    acked: str | None, operation: str, *, imported_here: bool, cancelled: bool, status: object
+) -> bool:
+    return (
+        acked is not None
+        and operation in WORK_OPERATIONS
+        and not imported_here
+        and not cancelled
+        and status not in TERMINAL
+    )
+
+
+def _item(
+    row: _Row,
+    report: dict[str, object] | None,
+) -> dict[str, object]:
+    return {
+        "message_id": row.message_id,
+        "operation": row.operation,
+        "sender": row.sender,
+        "recipient": row.recipient,
+        "acknowledged_at": row.acked,
+        "work_report": report,
+        "state_changed_at": row.acked if report is None else report.get("reported_at"),
+    }
+
+
+def listing(
+    db: Connection,
+    record: dict[str, object],
+    viewer: str,
+    *,
+    coordinator: bool,
+    only: str = "all",
+) -> list[dict[str, object]]:
+    """Directions the viewer sent (coordinator) or received, newest first, with work state."""
+    # pylint: disable=redefined-outer-name  # keyword name is the planned interface
+    if only not in FILTERS:
+        raise ValueError(f"only must be one of {FILTERS}")
+    tables = table_names(db)
+    cancels: set[tuple[str, str, str]] = set()
+    items: list[dict[str, object]] = []
+    for row in _direction_rows(db, record, viewer, coordinator=coordinator):
+        key = (row.grant, row.sender, row.recipient)
+        if row.operation == "cancel" and row.acked is not None:
+            cancels.add(key)
+        # Descending IDs: every cancel collected so far has a greater ID than this row.
+        cancelled = row.operation in WORK_OPERATIONS and key in cancels
+        report = cast(
+            "dict[str, object] | None",
+            work_report(
+                db, tables, row.message_id, remote_id=row.remote_id, imported=row.local is not None
+            ),
+        )
+        is_open = _is_open(
+            row.acked,
+            row.operation,
+            imported_here=row.local is not None,
+            cancelled=cancelled,
+            status=None if report is None else report["status"],
+        )
+        wanted = {
+            "all": True,
+            "open": is_open,
+            "attention": is_open or (row.acked is None and not cancelled),
+        }[only]
+        if wanted:
+            items.append(_item(row, report))
+    return items[:MAX_DIRECTIONS]

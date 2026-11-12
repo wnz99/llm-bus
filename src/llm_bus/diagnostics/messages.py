@@ -73,13 +73,7 @@ def message_status(path: Path, message_id: int) -> dict[str, object]:
 
 
 def _message_status(db: sqlite3.Connection, message: dict[str, object]) -> dict[str, object]:
-    tables = {
-        row[0]
-        for row in cast(
-            "list[tuple[str]]",
-            db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall(),
-        )
-    }
+    tables = work_state.table_names(db)
     key = message["id"]
     outgoing = (
         cast(

@@ -12,7 +12,14 @@ from uuid import uuid4
 
 from llm_bus.cli.guidance import guidance
 from llm_bus.cli.references import resolve_reference
-from llm_bus.coordination import amendments, decisions, delegation, gate_records, store
+from llm_bus.coordination import (
+    amendments,
+    decisions,
+    delegation,
+    gate_records,
+    store,
+    work_state,
+)
 from llm_bus.coordination import instructions as instructions_store
 from llm_bus.coordination.availability import record_local, record_remote
 from llm_bus.coordination.models import (
@@ -37,6 +44,10 @@ if TYPE_CHECKING:
     ActionResult = tuple[dict[str, object] | None, list[Message]]
 
 NARROW_ITEM = "ITEM"
+OPEN_HELP = (
+    "Only acknowledged assign, review and reprioritize directions without a completed "
+    "or failed report or a later acknowledged cancel"
+)
 MINUTES_ITEM = "MINUTES"
 MAX_TEXT = 4096
 MAX_REFERENCES = 32
@@ -155,6 +166,12 @@ def _decision_parsers(add_action: Callable[..., argparse.ArgumentParser]) -> Non
     listed = add_action("decision-list", help="List the project's decisions")
     listed.add_argument("project")
     listed.add_argument("--defaulted", action="store_true", help="Only decisions taken by default")
+    directions = add_action(
+        "direction-list",
+        help="List your directions with work state; --open keeps unfinished work",
+    )
+    directions.add_argument("project")
+    directions.add_argument("--open", action="store_true", help=OPEN_HELP)
     timer = add_action("decision-timer", help=argparse.SUPPRESS)
     timer.add_argument("project")
     timer.add_argument("--decision-id", required=True)
@@ -465,7 +482,30 @@ def _decision_list(
 def _show(
     db: Connection, record: dict[str, object], _args: dict[str, object], address: str
 ) -> ActionResult:
-    return store.show(db, record, address), []
+    result = store.show(db, record, address)
+    items = work_state.listing(
+        db,
+        record,
+        address,
+        coordinator=store.coordinator_enrolled(db, record, address),
+        only="attention",
+    )
+    if items:
+        result["directions"] = items
+    return result, []
+
+
+def _direction_list(
+    db: Connection, record: dict[str, object], args: dict[str, object], address: str
+) -> ActionResult:
+    items = work_state.listing(
+        db,
+        record,
+        address,
+        coordinator=store.coordinator_enrolled(db, record, address),
+        only="open" if args.get("open") else "all",
+    )
+    return {"directions": items}, []
 
 
 def _instruction_text(args: dict[str, object]) -> str:
@@ -503,6 +543,7 @@ ACTIONS: dict[str, Callable[..., ActionResult]] = {
     "decision-answer": _decision_answer,
     "decision-show": _decision_show,
     "decision-list": _decision_list,
+    "direction-list": _direction_list,
 }
 # Actions that run inside ``run`` and apply due decision defaults first (SC4). ``approve`` and
 # the join/coordinate paths are not lazy callers.

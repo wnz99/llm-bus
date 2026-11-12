@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import TYPE_CHECKING, cast
 
@@ -9,11 +10,16 @@ import pytest
 
 from llm_bus.cli.commands import registered_command
 from llm_bus.cli.guidance import guidance
+from llm_bus.cli.parser import build_parser
+from llm_bus.coordination import work_state
+from llm_bus.coordination.cli import run
+from llm_bus.coordination.delivery import outgoing
 from llm_bus.diagnostics.messages import message_status
 from llm_bus.errors import BusError
 from llm_bus.mailbox.schema import SCHEMA_VERSION
 from llm_bus.mailbox.store import Store
 from llm_bus.reports.lifecycle import TRANSITION_CONFLICT
+from llm_bus.routing import routing_scope
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -168,3 +174,222 @@ def test_reupgrade_after_rollback(
     with upgraded.transaction() as db:
         assert db.execute("PRAGMA user_version").fetchone()[0] == 15
     assert rows(upgraded) == 1
+
+
+OTHER = "claude:other"
+RELAY_ID = "11111111-2222-4333-8444-555555555555"
+
+
+def cli(store: Store, cwd: str, *argv: str, address: str = OWNER) -> dict[str, object]:
+    return run(store, vars(build_parser().parse_args(argv)), address, cwd)
+
+
+def add_worker(store: Store, cwd: str) -> None:
+    store.register("claude", "other", cwd)
+    cli(store, cwd, "coordination", "grant", "demo", "--recipient", OTHER, "--until-revoked")
+    cli(store, cwd, "join", "demo", address=OTHER)
+    with store.transaction() as db:
+        grant = cast(
+            "tuple[str]",
+            db.execute(
+                "SELECT grant_id FROM coordination_grants WHERE recipient=?", (OTHER,)
+            ).fetchone(),
+        )[0]
+    cli(store, cwd, "coordination", "target", "demo", "--recipient", OTHER, "--grant-id", grant)
+
+
+def send(
+    store: Store, owner: SenderContext, operation: str, recipient: str = WORKER, *, ack: bool = True
+) -> int:
+    with store.transaction() as db:
+        direction = outgoing(
+            db,
+            sender=OWNER,
+            scope=routing_scope(owner.project),
+            label="demo",
+            recipient=recipient,
+            operation=operation,
+        )
+    message_id = store.send(owner, recipient, f"{operation} task", direction=direction)["id"]
+    if ack:
+        store.acknowledge(recipient, [message_id])
+    return message_id
+
+
+def listed(
+    store: Store, owner: SenderContext, *flags: str, address: str = OWNER
+) -> list[dict[str, object]]:
+    result = cli(
+        store, owner.project, "coordination", "direction-list", "demo", *flags, address=address
+    )
+    return cast("list[dict[str, object]]", result["directions"])
+
+
+def shown_ids(store: Store, owner: SenderContext, address: str = OWNER) -> list[int]:
+    result = cli(store, owner.project, "coordination", "show", "demo", address=address)
+    return [
+        cast("int", d["message_id"])
+        for d in cast("list[dict[str, object]]", result.get("directions", []))
+    ]
+
+
+def ids(items: list[dict[str, object]]) -> list[int]:
+    return [cast("int", item["message_id"]) for item in items]
+
+
+def test_listing_visibility(enrolled: tuple[Store, Direction, SenderContext]) -> None:
+    store, _direction, owner = enrolled
+    add_worker(store, owner.project)
+    mine = send(store, owner, "assign")
+    theirs = send(store, owner, "assign", OTHER)
+    assert ids(listed(store, owner)) == [theirs, mine]
+    assert ids(listed(store, owner, address=WORKER)) == [mine]
+    assert ids(listed(store, owner, address=OTHER)) == [theirs]
+    assert shown_ids(store, owner, WORKER) == [mine]
+    # An unenrolled address learns nothing about the project's directions.
+    assert ids(listed(store, owner, address="claude:stranger")) == []
+
+
+def test_open_and_show_filters(enrolled: tuple[Store, Direction, SenderContext]) -> None:
+    store, _direction, owner = enrolled
+    plain = send(store, owner, "assign")
+    started = send(store, owner, "assign")
+    report(store, started, "proceeding", "started")
+    done = send(store, owner, "assign")
+    report(store, done, "completed")
+    reprioritized = send(store, owner, "reprioritize")
+    clarify = send(store, owner, "clarify")
+    pending = send(store, owner, "assign", ack=False)
+    everything = {item["message_id"]: item for item in listed(store, owner)}
+    assert set(everything) == {plain, started, done, reprioritized, clarify, pending}
+    assert ids(listed(store, owner, "--open")) == [reprioritized, started, plain]
+    assert shown_ids(store, owner) == [pending, reprioritized, started, plain]
+    with store.transaction() as db:
+        acked = cast(
+            "tuple[str]",
+            db.execute("SELECT acknowledged_at FROM messages WHERE id=?", (plain,)).fetchone(),
+        )[0]
+    assert everything[plain]["state_changed_at"] == acked
+    assert everything[plain]["work_report"] is None
+    reported = cast("dict[str, object]", everything[started]["work_report"])
+    assert everything[started]["state_changed_at"] == reported["reported_at"]
+    assert everything[pending]["state_changed_at"] is None
+    mutation = cli(
+        store,
+        owner.project,
+        "coordination",
+        "instructions",
+        "demo",
+        "--audience",
+        "worker",
+        "--text",
+        "x",
+    )
+    assert "directions" not in mutation
+
+
+def test_cancel_closes_earlier_work_directions(
+    enrolled: tuple[Store, Direction, SenderContext],
+) -> None:
+    store, _direction, owner = enrolled
+    add_worker(store, owner.project)
+    first = send(store, owner, "assign")
+    report(store, first, "proceeding", "started")
+    second = send(store, owner, "review")
+    third = send(store, owner, "reprioritize")
+    cancel = send(store, owner, "cancel", ack=False)
+    for view in (OWNER, WORKER):
+        assert ids(listed(store, owner, "--open", address=view)) == [third, second, first]
+        assert cancel in shown_ids(store, owner, view)
+    store.acknowledge(WORKER, [cancel])
+    before = listed(store, owner)
+    for view in (OWNER, WORKER):
+        assert listed(store, owner, "--open", address=view) == []
+        assert shown_ids(store, owner, view) == []
+        assert ids(listed(store, owner, address=view)) == [cancel, third, second, first]
+    assert before[0].keys() == before[-1].keys()
+    after = send(store, owner, "assign")
+    other = send(store, owner, "assign", OTHER)
+    assert after in ids(listed(store, owner, "--open", address=WORKER))
+    assert ids(listed(store, owner, "--open", address=OTHER)) == [other]
+    assert rows(store) == 1
+
+
+def test_cancel_ignores_other_grant_and_earlier_cancel(
+    enrolled: tuple[Store, Direction, SenderContext],
+) -> None:
+    store, _direction, owner = enrolled
+    add_worker(store, owner.project)
+    other = send(store, owner, "assign", OTHER)
+    cancelled = send(store, owner, "assign")
+    send(store, owner, "cancel")
+    later = send(store, owner, "assign")
+    assert ids(listed(store, owner, "--open")) == [later, other]
+    assert cancelled not in ids(listed(store, owner, "--open"))
+
+
+def test_cap_applies_after_filter(
+    enrolled: tuple[Store, Direction, SenderContext], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, _direction, owner = enrolled
+    monkeypatch.setattr(work_state, "MAX_DIRECTIONS", 2)
+    opened = [send(store, owner, "assign") for _ in range(2)]
+    for _ in range(3):
+        settled = send(store, owner, "assign")
+        report(store, settled, "completed")
+    assert ids(listed(store, owner, "--open")) == opened[::-1]
+    assert len(listed(store, owner)) == 2
+
+
+def test_cancel_outside_cap_still_closes(
+    enrolled: tuple[Store, Direction, SenderContext], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, _direction, owner = enrolled
+    monkeypatch.setattr(work_state, "MAX_DIRECTIONS", 1)
+    send(store, owner, "assign")
+    send(store, owner, "cancel")
+    for _ in range(2):
+        report(store, send(store, owner, "assign"), "completed")
+    assert listed(store, owner, "--open") == []
+
+
+def test_outgoing_remote_direction_uses_relay_snapshot(
+    enrolled: tuple[Store, Direction, SenderContext],
+) -> None:
+    store, _direction, owner = enrolled
+    message_id = send(store, owner, "assign")
+    with store.transaction() as db:
+        db.execute(
+            "INSERT INTO remote_outbox (id, local_id, envelope, state) VALUES (?,?,?,?)",
+            (RELAY_ID, message_id, "{}", "acknowledged"),
+        )
+        db.execute(
+            "INSERT INTO remote_reports VALUES (?,?)",
+            (
+                RELAY_ID,
+                json.dumps(
+                    {
+                        "message_id": RELAY_ID,
+                        "revision": 1,
+                        "status": "proceeding",
+                        "reason": "started",
+                    }
+                ),
+            ),
+        )
+    (item,) = listed(store, owner)
+    assert item["work_report"] == message_status(store.path, message_id)["work_report"]
+    assert item["work_report"] == {
+        "message_id": RELAY_ID,
+        "revision": 1,
+        "status": "proceeding",
+        "reason": "started",
+    }
+    assert item["state_changed_at"] is None
+    assert ids(listed(store, owner, "--open")) == [message_id]
+
+
+def test_listing_rejects_unknown_filter(enrolled: tuple[Store, Direction, SenderContext]) -> None:
+    store, _direction, _owner = enrolled
+    with store.transaction() as db, pytest.raises(ValueError, match="only"):
+        work_state.listing(db, {}, OWNER, coordinator=True, only="bogus")

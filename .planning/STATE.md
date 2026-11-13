@@ -1,17 +1,17 @@
 # Project State
 
-Last activity: 2026-11-13 - 261113-ymx re-planned as skill-driven guidance; plan revision 11 approved.
+Last activity: 2026-11-13 - 261113-ymx PR #86 review passed (R1); summary written; merge pending.
 
 ## Registered Work
 
 | # | Description | Status | Directory |
 |---|-------------|--------|-----------|
-| 261113-ymx | CLI-driven coordination guidance | Registered | [261113-ymx-cli-driven-coordination-guidance](./quick/261113-ymx-cli-driven-coordination-guidance/) |
 
 ## Quick Tasks Completed
 
 | # | Description | Status | Directory |
 |---|-------------|--------|-----------|
+| 261113-ymx | Skill-driven coordination guidance — PR #86 | PR #86 review passed (R1); merge pending; owner reinstalls the skill copy and CLI together after merge | [261113-ymx-cli-driven-coordination-guidance](./quick/261113-ymx-cli-driven-coordination-guidance/) |
 | 261113-f5u | Host hook fixes and host-behaviour docs — PR #85 | PR #85 review passed (R2); merge pending; owner reinstall and manual Codex `/hooks` check pending after merge | [261113-f5u-host-hook-fixes-and-host-behaviour-docs](./quick/261113-f5u-host-hook-fixes-and-host-behaviour-docs/) |
 | 261112-av6 | Coordination worker stall visibility: guidance and per-direction work state — PR #78 | PR #78 review passed (R2); merge pending; owner rollout pending after merge (upgrade to schema 15) | [261112-av6-coordination-worker-stall-visibility](./quick/261112-av6-coordination-worker-stall-visibility/) |
 | 261110-wft | Coordinator-delegated approval gates and guided setup — PRs #67–#71 | PRs #67–#70 merged; #71 approved, merge pending; owner rollout pending after merge (relay migration 0007, Worker deploy, upgrade, install, skill and rule copies) | [261110-wft-coordinator-delegated-approval-gates-and](./quick/261110-wft-coordinator-delegated-approval-gates-and/) |

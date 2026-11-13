@@ -98,4 +98,4 @@ Remote workers require receiver-owner approval of the project binding and
 existing relay/peer policy first. Simplified join must not establish trust in
 an unknown remote coordinator. See the
 [defaults and trust boundaries](../docs/coordination-simplified-flow.md) and
-[current recovery and replacement procedure](../skills/llm-bus/references/coordination.md#revocation-replacement-and-recovery).
+[current recovery and replacement procedure](../skills/llm-bus/references/coordination/recovery.md#revocation-and-replacement).

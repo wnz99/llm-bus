@@ -31,8 +31,8 @@ repository membership and relay admission imply no local inbox permission.
 New or omitted peer capabilities default deny.
 
 Optional project directions also require receiver-local setup, exact grants and
-native enrollment. For explicit activation or valid enrollment recovery, load
-[coordination.md](coordination.md). Each owner controls their own grants;
+native enrollment. For explicit activation or valid enrollment recovery, follow
+the coordination dispatch in `SKILL.md`. Each owner controls their own grants;
 sender permission has no reciprocal effect. Monitor/report channels never
 carry assignment authority.
 
@@ -165,10 +165,9 @@ before the Worker, the `/v2/coordination/approvals/capabilities` probe (an old
 relay leaves them queued with `unsupported_approvals`), the coordinator owner's
 own delegation, and on the receiver the owner's project delegation, the worker's
 binding and the peer key `accept_delegated_gates` (default deny); see
-[coordination.md](coordination.md#remote-gate-approvals). Held approvals stay in
-the outbox. Workers never run `setup`, `replace` or `amend`. On the receiver,
-the bus refuses `setup`, `replace`, `amend`, `grant`, `revoke` and `target` to
-any session that is or was a worker of the project's current generation.
+[coordination/remote-coordination.md](coordination/remote-coordination.md#remote-gate-approvals). Held approvals stay in
+the outbox. The roles the receiver enforces are in
+[coordination/core.md](coordination/core.md).
 Receiver-owner project setup and peer policy remain prerequisites; availability
 cannot create trust or authorization. Unsupported relays leave it queued with
 `unsupported_coordination`. Install/deploy separately; repository changes do not

@@ -9,7 +9,13 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from llm_bus import main
-from llm_bus.coordination.setup import detect_integration_branch, profile, run_wizard
+from llm_bus.coordination.setup import (
+    DISCOVERY_STEP,
+    INSTRUCTIONS_STEP,
+    detect_integration_branch,
+    profile,
+    run_wizard,
+)
 from llm_bus.errors import BusError
 from llm_bus.mailbox.store import Store
 
@@ -104,7 +110,11 @@ def test_noninteractive_setup_prints_profile_and_stores_nothing(
     out = cast("dict[str, object]", json.loads(capsys.readouterr().out))
     assert out["delegate"] == [f"{gate}:develop" for gate in GATES]
     assert out["floor"]
-    assert out["steps"]
+    steps = cast("list[str]", out["steps"])
+    assert steps[0] == DISCOVERY_STEP
+    assert "never runs llm-bus" in steps[0]
+    assert "Confirm the integration branch with the owner" in steps[0]
+    assert steps[-1] == INSTRUCTIONS_STEP
     assert "llm-bus" in str(out["command"])
     assert profile(str(repo)) == out
     assert counts(Store(db)) == (0, 0, 0)

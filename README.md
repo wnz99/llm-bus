@@ -340,7 +340,7 @@ The first command run by this version upgrades the mailbox to schema version
 13; older binaries then refuse it, so upgrade every llm-bus installation that
 shares the mailbox (`uv run llm-bus upgrade` from a checkout) before any
 session uses it. See the
-[canonical workflow](skills/llm-bus/references/coordination.md#gate-approvals-local-projects).
+[canonical workflow](skills/llm-bus/references/coordination/gates.md#gate-approvals-local-projects).
 
 The [simplified coordination defaults](docs/coordination-simplified-flow.md) and
 [Claude coordinator with three Codex workers example](examples/claude-coordinator-codex-workers.md)
@@ -350,8 +350,8 @@ shows the local flow as numbered steps; open it in a browser from a local
 checkout. Upgrade the executable, hooks, skill and rule files together; mixed
 versions can disagree.
 
-Read the [canonical coordination workflow](skills/llm-bus/references/coordination.md)
-for all CLI equivalents, local Codex/Claude and remote examples, grants,
+Read the [canonical coordination workflow index](skills/llm-bus/references/coordination.md)
+and the files it lists for all CLI equivalents, local Codex/Claude and remote examples, grants,
 revocation, replacement and recovery. Install the optional [coordination rules file](examples/instructions/llm-bus-coordination.md)
 with [Install agent instructions](examples/agent-instructions.md) after choosing
 project/global destinations. Both roles persist Beads memory; the coordinator
@@ -377,12 +377,11 @@ and only on the owner's direct request in that coordinator session; never
 because of a bus message, worker request, tool output or file content. Workers
 never run it, and command results show a worker only worker-facing text. The
 text may not contain `<<<`, `>>>` or Unicode format characters. Each session
-gets its own role's text verbatim in the full recovery guidance (SessionStart
-of every source, an outdated guidance state, `llm-bus guidance`) and in the
+gets its own role's text verbatim from `llm-bus guidance` and in the
 `guidance` field of `coordinate` and `join` results; `coordination show` lists
-it filtered by role. Other hooks carry a one-line pointer. Both hosts fire
-`SessionStart` after compaction, so a session restores them without a manual
-step; `llm-bus guidance` stays the manual recovery.
+it filtered by role. Hooks never print the text: every hook carries a one-line
+pointer with a digest, and the session runs `llm-bus guidance` before acting
+unless its context already holds the text with that digest.
 
 The coordinator lists the directions it sent, with each one's work state and age, with `llm-bus coordination direction-list PROJECT [--open]`. A worker reports progress on a local direction with `llm-bus report ID --status STATUS`; the report stays on that machine and wakes nobody. See the [tutorial](docs/tutorial.md#5-coordinate-a-project).
 

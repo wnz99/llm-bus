@@ -494,7 +494,7 @@ The flags depend on the gate:
 
 An approval verifies only when the gate and base are in both the project delegation and the worker's binding, the work branch is neither the base nor a delegated target, it has not expired, and the worker's claim matches the ticket and branch. In the scratch run, approving `merge` for the worker narrowed to `commit` and `push` failed at once with `Direction denied: gate_not_delegated`. Other reasons you may see are `target_denied`, `expired`, `wrong_ticket`, `invalid_direction`, `revoked`, `wrong_scope` and `stale_generation`.
 
-Before acting, the worker checks live evidence itself: the current branch and head SHA for commit and push, and for a merge the PR's base, head and state, every required check passing, and review evidence without unresolved high or medium findings. The exact checks are in [Gate approvals](../skills/llm-bus/references/coordination.md#gate-approvals-local-projects).
+Before acting, the worker checks live evidence itself: the current branch and head SHA for commit and push, and for a merge the PR's base, head and state, every required check passing, and review evidence without unresolved high or medium findings. The exact checks are in [Gate approvals](../skills/llm-bus/references/coordination/gates.md#gate-approvals-local-projects).
 
 ### Change the delegation later
 
@@ -582,7 +582,7 @@ llm-bus --format agent coordination instructions orders-export --audience worker
 
 Without `--amend` the text replaces that audience's instructions; `--amend` appends a dated entry. The text has 1 to 8192 characters and may not contain control characters other than newline and tab, Unicode format characters, `<<<` or `>>>`.
 
-Each session sees only its own role's text. The text appears verbatim in the `SessionStart` hook, in the full guidance after the guidance state is missing or outdated, in `llm-bus guidance`, and in the `guidance` field of `coordinate` and `join` results. Other hooks carry a one-line pointer. `coordination show` lists the entries under `instructions`; workers see only the worker entries.
+Each session sees only its own role's text. The text appears verbatim in `llm-bus guidance` and in the `guidance` field of `coordinate` and `join` results. Hooks never print it: every hook carries a one-line pointer with a digest, and the session runs `llm-bus guidance` before acting unless its context already holds the text with that digest. `coordination show` lists the entries under `instructions`; workers see only the worker entries.
 
 ## 9. Owner decisions and timed defaults
 

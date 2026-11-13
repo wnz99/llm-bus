@@ -22,6 +22,14 @@ BRANCH_HINT = (
 ORIGIN_HEAD_TIMEOUT = 10
 YES = "yes"
 DEFAULT_MINUTES = 30
+DISCOVERY_STEP = (
+    "Give read-only discovery to one native subagent as the llm-bus skill's "
+    "`references/coordination/coordinator.md` describes: Beads workspace, memory ticket "
+    "readability via `bd show`, reference files, any repository-instruction override of the "
+    "detected integration branch, and missing facts. It returns the setup brief and never "
+    "runs llm-bus. Confirm the integration branch with the owner in the next step; you ask "
+    "the owner and run every command."
+)
 INSTRUCTIONS_STEP = (
     "Optional: set owner standing instructions with llm-bus coordination instructions "
     "PROJECT --audience coordinator|worker --file PATH"
@@ -69,10 +77,7 @@ def profile(cwd: str) -> dict[str, object]:
         "integration_branch": {"name": branch, "source": source},
         "floor": list(delegation.FLOOR),
         "steps": [
-            (
-                "Check the repository instructions for an integration branch that overrides "
-                "the detected one."
-            ),
+            DISCOVERY_STEP,
             (
                 "Ask the owner through the native question UI: objective, Beads workspace, "
                 "memory ticket, integration branch, each delegated gate, and each flag "

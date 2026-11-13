@@ -62,7 +62,7 @@ Simplified remote join requires an owner-approved project binding on the
 receiver first, plus existing relay admission and sender/receiver peer policy.
 Each owner controls their own endpoint. Join must not trust an unknown remote
 coordinator, create remote admission, or modify another machine's permissions.
-The [current remote setup](../skills/llm-bus/references/coordination.md#remote-coordinator-local-worker)
+The [current remote setup](../skills/llm-bus/references/coordination/remote-coordination.md#remote-coordinator-local-worker)
 includes the advanced grant/target alternative. Matching clients and relay exchange structured availability; apply relay migration 0006 before deploying the matching Worker.
 
 ## Role guidance and existing gates
@@ -113,5 +113,5 @@ join; recovery notices say so. Session banners (project, role, label, ticket,
 branch, folder) appear in recovery notices, and workers prefix owner
 confirmation requests with them. Remote gate approvals count only when every
 owner allows them (see [remote gate approvals](remote-bus.md#remote-gate-approvals)).
-The [canonical reference](../skills/llm-bus/references/coordination.md#gate-approvals-local-projects)
+The [canonical reference](../skills/llm-bus/references/coordination/gates.md#gate-approvals-local-projects)
 has commands and live checks.

@@ -41,6 +41,17 @@ def parse_wake_notice(prompt: object) -> tuple[int, str] | None:
     return message_id, match[2]
 
 
+def contains_wake_notice(prompt: object) -> bool:
+    """A complete bus wake anywhere in the prompt, such as inside a host wrapper.
+
+    Use only to mark a turn as not owner-started: a false match can refuse an
+    answer, never permit an action.
+    """
+    return isinstance(prompt, str) and any(
+        int(match[1]) <= SQLITE_MAX_MESSAGE_ID for match in WAKE_NOTICE.finditer(prompt)
+    )
+
+
 class WakeResult(TypedDict):
     status: str
     via: str

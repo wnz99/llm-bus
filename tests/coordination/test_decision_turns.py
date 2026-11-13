@@ -118,5 +118,9 @@ def test_prompt_hook_marks_a_bus_wake_turn(
     with pytest.raises(BusError, match=decisions.WAKE_TURN):
         ask(project, "--answer", "Yes")
     prompt(f"Quoting: {WAKE}")
-    assert turn(project) == 2  # only an exact wake notice counts as a wake
+    assert turn(project) == -1  # a complete notice anywhere in the prompt counts as a wake
+    with pytest.raises(BusError, match=decisions.WAKE_TURN):
+        ask(project, "--answer", "Yes")
+    prompt("Answer the open decision: yes")
+    assert turn(project) == 2
     assert ask(project, "--answer", "Yes")["status"] == "answered"

@@ -39,7 +39,12 @@ Do this once per machine, as the operating-system user who runs the agents.
      duplicate notices.
    - Run `llm-bus install` again after upgrading or moving the CLI.
 3. Restart Codex, open `/hooks`, and trust the llm-bus hooks. Untrusted hooks
-   do not run.
+   do not run. So that agent-run `llm-bus` commands can write the mailbox
+   under the Codex sandbox, add a rule such as
+   `prefix_rule(pattern=["llm-bus"], decision="allow")` to a
+   `~/.codex/rules/*.rules` file, or a `writable_roots` entry (in the
+   `[sandbox_workspace_write]` table of `config.toml`) for the mailbox
+   folder; see [Storage and permissions](../README.md#storage-and-permissions).
 4. Restart Claude Code (v2.1.224 or later for automatic wakes through its
    inbox socket). For wakes without a per-message approval dialog, set
    **Messages from your other sessions: accept** in `/config`, or

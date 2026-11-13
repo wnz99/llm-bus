@@ -146,20 +146,36 @@ def test_remote_child_admission_denied_and_advertisement_withdrawn(
 
 
 @pytest.mark.parametrize("event", ["SessionStart", "UserPromptSubmit", "SessionEnd"])
-def test_claude_child_hook_cannot_change_parent_lifecycle(
-    event: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize("kind", ["claude", "codex"])
+def test_child_hook_cannot_change_parent_lifecycle(
+    kind: str,
+    event: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     path = tmp_path / "bus.sqlite3"
     monkeypatch.setenv("LLM_BUS_DB", str(path))
     store = Store(path)
-    parent = store.register("claude", "parent", str(tmp_path))
+    parent = store.register(kind, "parent", str(tmp_path))
+    turns: list[str] = []
+
+    def record_turn(_store: Store, address: str, **_options: bool) -> None:
+        turns.append(address)
+
+    def not_subagent(_address: str) -> bool:
+        return False
+
+    monkeypatch.setattr("llm_bus.cli.hooks.record_turn", record_turn)
+    monkeypatch.setattr("llm_bus.cli.hooks.is_subagent", not_subagent)
     monkeypatch.setattr(
         "sys.stdin",
         io.StringIO(
             json.dumps({"session_id": "parent", "agent_id": "child", "hook_event_name": event})
         ),
     )
-    assert main(["hook", "claude"]) == 0
+    assert main(["hook", kind]) == 0
+    assert turns == []
     output = capsys.readouterr().out
     if event == "SessionEnd":
         assert output == ""

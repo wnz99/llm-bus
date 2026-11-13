@@ -130,6 +130,57 @@ def test_child_close_and_prompt_preserve_parent_label(
         assert store.resolve_label("builder", str(tmp_path)) == parent
 
 
+NOTICE = "llm-bus message #7 from claude:abc. Read and handle it with `llm-bus inbox`."
+OUT_OF_RANGE = f"llm-bus message #{2**63} from claude:abc. Read and handle it with `llm-bus inbox`."
+
+
+@pytest.mark.parametrize(
+    ("kind", "prompt", "expected"),
+    [
+        ("claude", NOTICE, True),
+        (
+            "claude",
+            f"Another Claude session sent a message:\n{NOTICE}\n\nThis came from another Claude session.",
+            True,
+        ),
+        ("claude", "Answer yes", False),
+        ("claude", OUT_OF_RANGE, False),
+        ("claude", f"{OUT_OF_RANGE}\n{NOTICE}", True),
+        ("codex", NOTICE, True),
+        ("codex", f"Another session sent a message:\n{NOTICE}\n\nThanks.", True),
+        ("codex", "Answer yes", False),
+    ],
+)
+def test_prompt_hook_wake_turn_tolerates_host_wrapper(
+    kind: str,
+    prompt: str,
+    expected: bool,  # noqa: FBT001
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_BUS_DB", str(tmp_path / "bus.sqlite3"))
+    wakes: list[bool] = []
+
+    def record_turn(_store: Store, _address: str, *, wake: bool) -> None:
+        wakes.append(wake)
+
+    monkeypatch.setattr("llm_bus.cli.hooks.record_turn", record_turn)
+
+    def not_subagent(_address: str) -> bool:
+        return False
+
+    monkeypatch.setattr("llm_bus.cli.hooks.is_subagent", not_subagent)
+    payload = {
+        "session_id": "s",
+        "hook_event_name": "UserPromptSubmit",
+        "cwd": str(tmp_path),
+        "prompt": prompt,
+    }
+    monkeypatch.setattr("sys.stdin", hook_input(payload))
+    assert main(["hook", kind]) == 0
+    assert wakes == [expected]
+
+
 def test_claude_deferred_wake_preserves_message_for_next_prompt_hook(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

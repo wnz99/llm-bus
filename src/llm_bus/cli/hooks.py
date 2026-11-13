@@ -13,7 +13,7 @@ from llm_bus.coordination.decisions import record_turn
 from llm_bus.errors import BusError
 from llm_bus.hosts.processes import host_process
 from llm_bus.hosts.sessions import is_subagent
-from llm_bus.wake.adapters import parse_wake_notice
+from llm_bus.wake.adapters import contains_wake_notice, parse_wake_notice
 
 if TYPE_CHECKING:
     from llm_bus.mailbox.store import Store
@@ -40,12 +40,13 @@ def hook(store: Store, kind: str) -> None:
     }:
         raise BusError("Hook input lacks a valid session_id or event")
     agent_id = hook_data.get("agent_id")
-    claude_child = kind == "claude" and isinstance(agent_id, str) and bool(agent_id)
+    # Sub-agent hooks on both hosts carry the root session_id plus the child's agent_id.
+    child = isinstance(agent_id, str) and bool(agent_id)
     if event == "SessionEnd":
-        if not claude_child:
+        if not child:
             store.end_session(kind, session_id)
         return
-    if claude_child or is_subagent(f"{kind}:{session_id}"):
+    if child or is_subagent(f"{kind}:{session_id}"):
         notice = (
             "Sub-agent: do not use llm-bus. "
             "Report only to your parent through native agent communication."
@@ -66,10 +67,9 @@ def hook(store: Store, kind: str) -> None:
         kind, session_id, project, messaging_socket=claude_socket(kind), host=host_process(kind)
     )
     if event == "UserPromptSubmit":
-        # A recognized bus wake marks the turn as not owner-started; see decisions.record_turn.
-        record_turn(
-            store, agent_address, wake=parse_wake_notice(hook_data.get("prompt")) is not None
-        )
+        # A prompt containing a complete bus wake notice (hosts may wrap it) marks the turn as
+        # not owner-started; see decisions.record_turn.
+        record_turn(store, agent_address, wake=contains_wake_notice(hook_data.get("prompt")))
     count = store.pending_count(agent_address, limit=HOOK_COUNT_LIMIT)
     if (
         kind == "codex"

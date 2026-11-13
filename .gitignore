@@ -17,6 +17,7 @@ dist/
 .codex/
 .agent/
 .agents/
+.archify/
 .serena/
 .claude/
 .clean-code-tools/

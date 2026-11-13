@@ -165,6 +165,11 @@ def test_prompt_hook_wake_turn_tolerates_host_wrapper(
         wakes.append(wake)
 
     monkeypatch.setattr("llm_bus.cli.hooks.record_turn", record_turn)
+
+    def not_subagent(_address: str) -> bool:
+        return False
+
+    monkeypatch.setattr("llm_bus.cli.hooks.is_subagent", not_subagent)
     payload = {
         "session_id": "s",
         "hook_event_name": "UserPromptSubmit",

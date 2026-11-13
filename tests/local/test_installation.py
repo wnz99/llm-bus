@@ -243,6 +243,30 @@ def test_reinstall_keeps_hook_positions(tmp_path: Path) -> None:
     assert codex.read_text() == once
 
 
+def test_reinstall_merges_duplicate_bus_groups(tmp_path: Path) -> None:
+    codex, _ = settings_paths(tmp_path)
+    bus = _command("llm-bus hook codex")
+    codex.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {"hooks": [bus]},
+                        {"hooks": [_command("other")]},
+                        {"hooks": [bus]},
+                    ]
+                }
+            }
+        )
+    )
+    configure_hosts(tmp_path, install=True)
+    groups = cast("list[object]", json.loads(codex.read_text())["hooks"]["SessionStart"])
+    assert groups == [hook_group("codex"), {"hooks": [_command("other")]}]
+    once = codex.read_text()
+    configure_hosts(tmp_path, install=True)
+    assert codex.read_text() == once
+
+
 def test_reinstall_moves_bus_handler_out_of_matcher_group(tmp_path: Path) -> None:
     codex, _ = settings_paths(tmp_path)
     codex.write_text(

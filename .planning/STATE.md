@@ -1,11 +1,12 @@
 # Project State
 
-Last activity: 2026-11-13 - 261112-av6 PR #78 review passed (R2); summary written; merge pending.
+Last activity: 2026-11-13 - 261113-f5u host hook fixes registered; plan r3 approved.
 
 ## Registered Work
 
 | # | Description | Status | Directory |
 |---|-------------|--------|-----------|
+| 261113-f5u | Host hook fixes and host-behaviour docs | Registered | [261113-f5u-host-hook-fixes-and-host-behaviour-docs](./quick/261113-f5u-host-hook-fixes-and-host-behaviour-docs/) |
 
 ## Quick Tasks Completed
 

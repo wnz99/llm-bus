@@ -76,6 +76,8 @@ class Project:
 
     path: Path
     store: Store
+    coordinated: dict[str, object]
+    joined: dict[str, object]
 
     def __init__(self, tmp_path: Path, *delegate: str, claim: bool = True) -> None:
         self.path = tmp_path
@@ -83,7 +85,7 @@ class Project:
         self.store.register("codex", "owner", str(tmp_path))
         self.store.register("claude", "worker", str(tmp_path))
         (tmp_path / ".beads").mkdir(exist_ok=True)
-        invoke(
+        self.coordinated = invoke(
             self.store,
             tmp_path,
             "coordinate",
@@ -96,7 +98,7 @@ class Project:
             "bus-1",
             *delegate,
         )
-        invoke(self.store, tmp_path, "join", "demo", address="claude:worker")
+        self.joined = invoke(self.store, tmp_path, "join", "demo", address="claude:worker")
         if claim:
             self.claim("claude:worker", "roam-22m", "roam-22m-login")
 

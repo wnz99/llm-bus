@@ -139,7 +139,8 @@ def test_coordination_recovery_reads_current_records(
         assert "idle" not in text
         assert "fresh direct owner join" in text
     assert '"memory_ticket": "bus-1"' in full
-    assert "bd prime" in full
+    assert '"recovery.md"' in full
+    assert '"recovery.md"' not in compact
     if automatic:
         store.end_session(kind, "worker")
         assert "Coordination recovery" not in invoke("SessionStart")

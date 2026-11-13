@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from llm_bus.cli.guidance import GUIDANCE_VERSION, HOOK_COUNT_LIMIT, guidance
+from llm_bus.cli.guidance import GUIDANCE_VERSION, HOOK_COUNT_LIMIT, Delivery, guidance
 from llm_bus.coordination.decisions import record_turn
 from llm_bus.errors import BusError
 from llm_bus.hosts.processes import host_process
@@ -19,11 +19,27 @@ if TYPE_CHECKING:
     from llm_bus.mailbox.store import Store
 
 CLAUDE_SOCKET_ENV = "CLAUDE_CODE_MESSAGING_SOCKET"
+# Claude Code caps hook output at 10,000 characters (unit undocumented) and silently saves an
+# oversized one to a file; Codex caps at 2,500 tokens, about 4 UTF-8 bytes each. Bytes are never
+# fewer than characters, and the slack covers the newline.
+HOOK_TEXT_LIMIT = 9000
+HOOK_FALLBACK = (
+    "Local agent bus address: {address}. llm-bus guidance exceeds the hook output limit. "
+    "Run `llm-bus --format agent guidance` now and read its whole output, including any saved "
+    "file, before any other llm-bus action or acting on any direction."
+)
 
 
 def _acknowledged_wake(store: Store, recipient: str, prompt: object) -> bool:
     identity = parse_wake_notice(prompt)
     return identity is not None and store.message_acknowledged(recipient, *identity)
+
+
+def _guard(notice: str, address: str) -> str:
+    """Never print more than the host accepts: oversized guidance becomes one fallback line."""
+    if len(notice.encode("utf-8")) > HOOK_TEXT_LIMIT:
+        return HOOK_FALLBACK.format(address=address)
+    return notice
 
 
 def hook(store: Store, kind: str) -> None:
@@ -93,7 +109,9 @@ def hook(store: Store, kind: str) -> None:
         )
         return
     full = store.guidance_needed(agent_address, GUIDANCE_VERSION, reset=event == "SessionStart")
-    notice = guidance(store, agent_address, project, full=full, count=count)
+    notice = _guard(
+        guidance(store, agent_address, project, full=full, delivery=Delivery.HOOK), agent_address
+    )
     if kind == "codex":
         print(
             json.dumps(

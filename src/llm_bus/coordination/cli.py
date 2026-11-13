@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, cast
 from uuid import uuid4
 
-from llm_bus.cli.guidance import guidance
+from llm_bus.cli.guidance import Delivery, guidance
 from llm_bus.cli.references import resolve_reference
 from llm_bus.coordination import (
     amendments,
@@ -299,10 +299,17 @@ def run(  # noqa: C901, PLR0912 - owner action dispatch
         result["availability_wake"] = dispatch_pending(
             mailbox, str(record["coordinator"]), trigger_id=notice_id
         )
-    if action in {"coordinate", "join"}:
-        # Reuse hook recovery text; command success must teach the same role duties.
-        result["guidance"] = guidance(mailbox, address, cwd, full=True)
+    if _teaches_role(action, args, address):
+        # Reuse hook guidance text; command success must teach the current role rules.
+        result["guidance"] = guidance(mailbox, address, cwd, full=True, delivery=Delivery.RESULT)
     return result
+
+
+def _teaches_role(action: str, args: dict[str, object], address: str) -> bool:
+    """Whether the caller's role or capabilities just changed: it is the new coordinator."""
+    if action == "replace":
+        return _address(args["coordinator"]) == address
+    return action in {"coordinate", "join", "amend"}
 
 
 def _schedule_default(action: str, label: str, result: dict[str, object]) -> None:

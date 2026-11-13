@@ -7,6 +7,7 @@ import subprocess
 from typing import TYPE_CHECKING, cast
 
 from llm_bus.cli.app import main
+from llm_bus.hosts.hooks import hook_group
 from llm_bus.hosts.settings import configure_hosts
 
 from .support import settings_paths
@@ -201,3 +202,69 @@ def test_optional_bus_hook_fields_are_normalized_and_removed(tmp_path: Path) -> 
     assert json.loads(claude.read_text()) == {
         "hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "other"}]}]}
     }
+
+
+def _command(name: str) -> dict[str, str]:
+    return {"type": "command", "command": name}
+
+
+def test_reinstall_keeps_hook_positions(tmp_path: Path) -> None:
+    codex, _ = settings_paths(tmp_path)
+    bus = _command("llm-bus hook codex")
+    codex.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {"matcher": "startup", "hooks": [{**bus, "timeout": 30}]},
+                        {"hooks": [_command("other")]},
+                    ],
+                    "UserPromptSubmit": [
+                        {"hooks": [_command("first"), bus, _command("after")]},
+                        {"hooks": [_command("other")]},
+                    ],
+                }
+            }
+        )
+    )
+    configure_hosts(tmp_path, install=True)
+    canonical = hook_group("codex")
+    hooks = cast("dict[str, list[dict[str, object]]]", json.loads(codex.read_text())["hooks"])
+    assert hooks["SessionStart"] == [canonical, {"hooks": [_command("other")]}]
+    assert hooks["UserPromptSubmit"][0]["hooks"] == [
+        _command("first"),
+        cast("list[dict[str, str]]", canonical["hooks"])[0],
+        _command("after"),
+    ]
+    assert hooks["UserPromptSubmit"][1] == {"hooks": [_command("other")]}
+    assert hooks["SessionEnd"] == [canonical]
+    once = codex.read_text()
+    configure_hosts(tmp_path, install=True)
+    assert codex.read_text() == once
+
+
+def test_reinstall_moves_bus_handler_out_of_matcher_group(tmp_path: Path) -> None:
+    codex, _ = settings_paths(tmp_path)
+    codex.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "matcher": "startup",
+                            "hooks": [_command("other"), _command("llm-bus hook codex")],
+                        }
+                    ]
+                }
+            }
+        )
+    )
+    configure_hosts(tmp_path, install=True)
+    groups = cast("list[object]", json.loads(codex.read_text())["hooks"]["SessionStart"])
+    assert groups == [
+        {"matcher": "startup", "hooks": [_command("other")]},
+        hook_group("codex"),
+    ]
+    once = codex.read_text()
+    configure_hosts(tmp_path, install=True)
+    assert codex.read_text() == once

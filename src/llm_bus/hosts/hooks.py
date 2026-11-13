@@ -64,6 +64,49 @@ def without_bus_handler(group: object, kind: str) -> object | None:
     return {**configured, "hooks": retained}
 
 
+def replace_bus_handler(
+    groups: list[object], kind: str, canonical: dict[str, object]
+) -> list[object]:
+    """Install the bus handler where it already sits so other groups keep their indexes."""
+    handler = cast("list[object]", canonical["hooks"])[0]
+    result: list[object] = []
+    placed = False
+    for group in groups:
+        configured: dict[str, object] = (
+            cast("dict[str, object]", group) if isinstance(group, dict) else {}
+        )
+        group = cast("object", group)
+        handlers = configured.get("hooks")
+        if not isinstance(handlers, list):
+            result.append(group)
+            continue
+        handlers = cast("list[object]", handlers)
+        if not any(is_bus_handler(item, kind) for item in handlers):
+            result.append(group)
+            continue
+        pure = all(is_bus_handler(item, kind) for item in handlers)
+        if not placed and pure:
+            result.append(canonical)
+            placed = True
+        elif not placed and set(configured) == {"hooks"}:
+            first = next(i for i, item in enumerate(handlers) if is_bus_handler(item, kind))
+            result.append(
+                {
+                    "hooks": [
+                        handler if i == first else item
+                        for i, item in enumerate(handlers)
+                        if i == first or not is_bus_handler(item, kind)
+                    ]
+                }
+            )
+            placed = True
+        elif (cleaned := without_bus_handler(group, kind)) is not None:
+            result.append(cleaned)
+    if not placed:
+        result.append(canonical)
+    return result
+
+
 def object_at(settings: dict[str, object], key: str, path: Path) -> dict[str, object]:
     value = settings.get(key, {})
     if not isinstance(value, dict):
@@ -76,17 +119,21 @@ def update_hooks(
 ) -> dict[str, object]:
     updated = dict(settings)
     hooks = object_at(settings, "hooks", path)
+    canonical = hook_group(kind) if install else {}
     for event in EVENTS:
         groups = hooks.get(event, [])
         if not isinstance(groups, list):
             raise BusError(f"hooks.{event} must be a JSON array in {path}")
-        retained = [
-            cleaned
-            for group in cast("list[object]", groups)
-            if (cleaned := without_bus_handler(group, kind)) is not None
-        ]
-        if install:
-            retained.append(hook_group(kind))
+        group_list = cast("list[object]", groups)
+        retained = (
+            replace_bus_handler(group_list, kind, canonical)
+            if install
+            else [
+                cleaned
+                for group in group_list
+                if (cleaned := without_bus_handler(group, kind)) is not None
+            ]
+        )
         if retained:
             hooks[event] = retained
         else:

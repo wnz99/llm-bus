@@ -576,7 +576,7 @@ or Dolt compaction squashes them.
 
 The coordinator keeps ownership of the snapshot but delegates each rewrite to
 one fresh native subagent on the host's smaller model (currently Sonnet in
-Claude Code and `gpt-5.6-terra` in Codex), so the coordinator thread stays free.
+Claude Code and `gpt-6.1-terra` in Codex), so the coordinator thread stays free.
 If no smaller model is available, use a subagent on the default model. Rewrite
 inline when no subagent is available, or when the auto-commit policy is not
 `on`, because the audit below needs Beads history. An inline rewrite first

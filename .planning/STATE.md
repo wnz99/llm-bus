@@ -1,11 +1,12 @@
 # Project State
 
-Last activity: 2026-11-13 - 261113-f5u PR #85 review passed (R2); summary written; merge pending.
+Last activity: 2026-11-13 - 261113-ymx CLI-driven coordination guidance registered; plan r7 approved.
 
 ## Registered Work
 
 | # | Description | Status | Directory |
 |---|-------------|--------|-----------|
+| 261113-ymx | CLI-driven coordination guidance | Registered | [261113-ymx-cli-driven-coordination-guidance](./quick/261113-ymx-cli-driven-coordination-guidance/) |
 
 ## Quick Tasks Completed
 

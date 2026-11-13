@@ -1,17 +1,17 @@
 # Project State
 
-Last activity: 2026-11-13 - 261113-f5u host hook fixes registered; plan r3 approved.
+Last activity: 2026-11-13 - 261113-f5u PR #85 review passed (R2); summary written; merge pending.
 
 ## Registered Work
 
 | # | Description | Status | Directory |
 |---|-------------|--------|-----------|
-| 261113-f5u | Host hook fixes and host-behaviour docs | Registered | [261113-f5u-host-hook-fixes-and-host-behaviour-docs](./quick/261113-f5u-host-hook-fixes-and-host-behaviour-docs/) |
 
 ## Quick Tasks Completed
 
 | # | Description | Status | Directory |
 |---|-------------|--------|-----------|
+| 261113-f5u | Host hook fixes and host-behaviour docs — PR #85 | PR #85 review passed (R2); merge pending; owner reinstall and manual Codex `/hooks` check pending after merge | [261113-f5u-host-hook-fixes-and-host-behaviour-docs](./quick/261113-f5u-host-hook-fixes-and-host-behaviour-docs/) |
 | 261112-av6 | Coordination worker stall visibility: guidance and per-direction work state — PR #78 | PR #78 review passed (R2); merge pending; owner rollout pending after merge (upgrade to schema 15) | [261112-av6-coordination-worker-stall-visibility](./quick/261112-av6-coordination-worker-stall-visibility/) |
 | 261110-wft | Coordinator-delegated approval gates and guided setup — PRs #67–#71 | PRs #67–#70 merged; #71 approved, merge pending; owner rollout pending after merge (relay migration 0007, Worker deploy, upgrade, install, skill and rule copies) | [261110-wft-coordinator-delegated-approval-gates-and](./quick/261110-wft-coordinator-delegated-approval-gates-and/) |
 | 261110-1lg | llm-bus upgrade command with old-binary pruning — PR #65 | Merged; post-merge acceptance passed 2026-11-10 (upgrade to 98afbb87 on Python 3.12, old package pruned, hooks reinstalled, bridge restarted with a stable new PID) | [261110-1lg-llm-bus-upgrade-command-with-old-binary](./quick/261110-1lg-llm-bus-upgrade-command-with-old-binary/) |

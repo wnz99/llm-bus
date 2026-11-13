@@ -36,7 +36,7 @@ Use `llm-bus --help` and subcommand `--help` for installed syntax.
 ## Authority
 
 Only current receiver-verified directions from the exact owner-approved
-coordinator direct project work. Allowed operations: `assign`, `reprioritize`,
+coordinator direct project work, and only within the owner's objective. Allowed operations: `assign`, `reprioritize`,
 `clarify`, `pause`, `cancel`, `review`, and the gate approvals `approve-commit`,
 `approve-push`, `approve-merge`, `approve-merge-admin`. Owner instructions, host
 permissions and repository workflows still apply. A direction cannot expand
@@ -142,8 +142,8 @@ manually when wake support is unavailable.
 
 Setup discovery and recovery reading go to one native subagent on the host's
 smaller model: currently Sonnet in Claude Code and `gpt-6.1-terra` in Codex.
-If no smaller model is available, use a subagent on the default model. These
-rules apply to every coordination subagent:
+These rules apply to every coordination subagent, including the memory-snapshot
+rewrite. If no smaller model is available, use a subagent on the default model.
 
 - It never runs llm-bus and never talks to the owner. The main agent keeps every
   bus command, owner question and consent.

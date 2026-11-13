@@ -32,7 +32,8 @@ nothing and prints a profile (detected integration branch from the local
 `origin/HEAD`, default `--delegate` items, the floor, steps and the command
 to run). Ask the owner through the host's native question UI for the
 objective, Beads workspace, memory ticket, integration branch and each
-delegated gate; the owner may disable items or change branches, never add
+delegated gate (read `gates.md` first for what each gate covers and cannot
+bypass); the owner may disable items or change branches, never add
 floor items; then run only the confirmed flags. Always pass `--format agent`
 (or run without a terminal): an agent shell attached to a terminal without
 it gets the interactive wizard, which belongs to the owner. In the owner's

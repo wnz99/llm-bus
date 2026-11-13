@@ -163,7 +163,27 @@ def _effective_binding(
     return None
 
 
-def _delegation_text(db: Connection, record: dict[str, object], address: str, state: str) -> str:
+def _held_delegation(
+    db: Connection, record: dict[str, object], address: str, state: str
+) -> delegation.Delegation | None:
+    """What the session holds: project delegation (coordinator) or binding (worker).
+
+    Read once per notice so the gate lines and the selected files share one clock read.
+    """
+    if state != COORDINATION_ACTIVE:
+        return None
+    if record["role"] == "coordinator":
+        return delegation.project_delegation(db, record)
+    return _effective_binding(db, record, address, datetime.now(UTC))
+
+
+def _delegation_text(
+    db: Connection,
+    record: dict[str, object],
+    address: str,
+    state: str,
+    held: delegation.Delegation | None,
+) -> str:
     """Delegation rules; the project/binding comparison is owned by ``rejoin_required``.
 
     Gate lines appear only while the session's coordination state is active.
@@ -186,7 +206,7 @@ def _delegation_text(db: Connection, record: dict[str, object], address: str, st
             f"`llm-bus coordination approve`; workers whose binding is narrower: {len(behind)}. "
         )
     text = ""
-    granted = _effective_binding(db, record, address, datetime.now(UTC)) if active else None
+    granted = held
     if granted is not None and granted.gates:
         text += (
             f"Delegated gates bound by your owner's join: {_gate_list(granted.gates)}. "
@@ -258,17 +278,13 @@ def _standing_instructions(
 
 
 def _rule_context(
-    db: Connection, record: dict[str, object], address: str, state: str, *, remote_peers: bool
+    record: dict[str, object],
+    state: str,
+    held: delegation.Delegation | None,
+    *,
+    remote_peers: bool,
 ) -> RuleContext:
     """Capabilities this session actually holds, from rows already loaded."""
-    if record["role"] == "coordinator":
-        held = delegation.project_delegation(db, record) if state == COORDINATION_ACTIVE else None
-    else:
-        held = (
-            _effective_binding(db, record, address, datetime.now(UTC))
-            if state == COORDINATION_ACTIVE
-            else None
-        )
     return RuleContext(
         role=str(record["role"]),
         state=state,
@@ -315,7 +331,8 @@ def _coordination(store: Store, address: str, folder: str, view: _View) -> str:
         if enrolled is None:
             return ""
         record, state = enrolled
-        context = _rule_context(db, record, address, state, remote_peers=view.remote_peers)
+        held = _held_delegation(db, record, address, state)
+        context = _rule_context(record, state, held, remote_peers=view.remote_peers)
         data = {
             key: record[key] for key in ("project_id", "label", "role", "coordinator", "generation")
         }
@@ -327,7 +344,7 @@ def _coordination(store: Store, address: str, folder: str, view: _View) -> str:
             data["references"] = json.loads(str(record["references_json"]))
         banner = _banner(db, record, address, folder)
         rules = (
-            _delegation_text(db, record, address, state)
+            _delegation_text(db, record, address, state, held)
             + _worker_rules(record)
             + _digest(db, record, state)
         )

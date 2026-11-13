@@ -243,6 +243,61 @@ def test_skills_dir_refuses_non_directory_destination_and_prunes_nothing(
     assert sorted(p.name for p in skills.iterdir()) == ["llm-bus"]
 
 
+def _installed_skill(bus: FakeBus) -> tuple[Path, Path]:
+    skills = bus.home / ".agents/skills"
+    installed = skills / "llm-bus"
+    installed.mkdir(parents=True)
+    (installed / "SKILL.md").write_text("old skill\n")
+    return skills, installed
+
+
+@pytest.mark.parametrize("restore_fails", [False, True])
+def test_skill_swap_failure_keeps_previous_copy_and_prunes_nothing(
+    bus: FakeBus,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    restore_fails: bool,
+) -> None:
+    skills, installed = _installed_skill(bus)
+    real_rename = Path.rename
+
+    def rename(self: Path, target: Path) -> Path:
+        if self.name == "llm-bus" and self.parent.name == "skills" and Path(target) == installed:
+            raise OSError("swap boom")
+        if restore_fails and self.name == "previous":
+            raise OSError("restore boom")
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", rename)
+    code, _out, err = _run(capsys, "--skills-dir", str(skills))
+    assert code != 0
+    assert "is installed but the skill was not updated and nothing was pruned" in err
+    assert (bus.packages / "old1").is_dir()
+    if restore_fails:
+        kept = [p / "previous" for p in skills.glob(".llm-bus-upgrade-*")]
+        assert len(kept) == 1
+        assert f"the previous copy is kept in {kept[0]}" in err
+        assert (kept[0] / "SKILL.md").read_text() == "old skill\n"
+    else:
+        assert (installed / "SKILL.md").read_text() == "old skill\n"
+        assert sorted(p.name for p in skills.iterdir()) == ["llm-bus"]
+
+
+def test_head_without_skill_prunes_nothing(
+    bus: FakeBus, capsys: pytest.CaptureFixture[str]
+) -> None:
+    skills, installed = _installed_skill(bus)
+    _git(bus.repo, "rm", "-q", "-r", "skills")
+    _git(bus.repo, "commit", "-q", "-m", "drop skill")
+    code, _out, err = _run(capsys, "--skills-dir", str(skills))
+    assert code != 0
+    assert "is installed but the skill was not updated and nothing was pruned" in err
+    assert (installed / "SKILL.md").read_text() == "old skill\n"
+    assert sorted(p.name for p in skills.iterdir()) == ["llm-bus"]
+    assert (bus.packages / "old1").is_dir()
+
+
 def test_skills_dir_must_exist(bus: FakeBus, capsys: pytest.CaptureFixture[str]) -> None:
     missing = bus.home / "no-such-skills"
     code, _out, err = _run(capsys, "--skills-dir", str(missing))

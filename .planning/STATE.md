@@ -1,6 +1,6 @@
 # Project State
 
-Last activity: 2026-11-13 - 261113-ymx CLI-driven coordination guidance registered; plan r7 approved.
+Last activity: 2026-11-13 - 261113-ymx re-planned as skill-driven guidance; plan revision 11 approved.
 
 ## Registered Work
 

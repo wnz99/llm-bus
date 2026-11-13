@@ -182,7 +182,7 @@ llm-bus status 1
 
 ### Recover guidance after compaction
 
-`llm-bus guidance` prints the full identity, trust and usage guidance that the `SessionStart` hook normally injects, without changing any message state. Codex has no compaction hook, so a Codex agent runs it after compaction.
+`llm-bus guidance` prints the full identity, trust and usage guidance that the `SessionStart` hook normally injects, without changing any message state. Both hosts fire `SessionStart` after compaction, so guidance returns without a manual step; run `llm-bus guidance` to recover it by hand. A Codex `fork` gets a new thread ID and a Claude `/clear` a new session ID, so each is a new bus address.
 
 ## 4. Shared-resource locks
 
@@ -783,7 +783,7 @@ For each collaborator, you choose on your private owner page what their messages
 | `LLM_BUS_CONFIG` | `~/.config/llm-bus/config.toml` | Remote policy file. If set, the file must exist and be valid for remote commands. | [10](#10-connect-other-machines) |
 | `CODEX_HOME` | Codex default | Codex configuration folder. Set it before `llm-bus install` and before starting Codex; run `install` for each Codex home you use. | [2](#2-install-upgrade-and-verify) |
 | `CLAUDE_CONFIG_DIR` | Claude Code default | Claude Code configuration folder. Set it before `llm-bus install` and before starting Claude Code. | [2](#2-install-upgrade-and-verify) |
-| `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, `CODEX_SESSION_ID` | Set by the host | Identify the calling session. Never set them by hand next to real sessions. | [1](#1-concepts) |
+| `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, `CODEX_SESSION_ID` | Set by the host | Identify the calling session. `CODEX_THREAD_ID` is per thread and is the bus identity; `CODEX_SESSION_ID` is the root session, shared by sub-agents. Never set them by hand next to real sessions. | [1](#1-concepts) |
 | `CLAUDE_CODE_MESSAGING_SOCKET` | Set by Claude Code v2.1.224+ | Claude's inbox socket used for wakes. | [3](#3-messages-between-local-sessions) |
 | `LLM_BUS_COLLAB_HOME` | `~/.config/llm-bus/collab` | Separate collaboration identity, daemon and owner page. | [11](#11-collaborate-with-another-person-experimental) |
 | `LLM_BUS_COLLAB_CLAUDE`, `LLM_BUS_COLLAB_MODEL` | `claude` on `PATH`, Claude's default model | Claude binary and model used by collaboration responders. | [11](#11-collaborate-with-another-person-experimental) |
@@ -856,7 +856,7 @@ These limits come from the current implementation:
 - **The role and turn checks stop mistakes, not a deliberate agent.** Session identity comes from the host's environment and hook input, which any process running as your user can set. An agent that ignores the rules can claim a fresh session ID (and then run `replace`) or replay hook input to make a wake turn look like an owner turn. The checks below block an agent that follows its rules but is misled; they are not a security boundary against one that does not.
 
 - **Owner commands check roles, not people.** Workers of the current generation cannot run owner commands, but any agent session that never was a worker can still run `replace`, and on a receiving machine `setup`, `amend`, `grant`, `revoke` and `target` too. After `replace`, workers of the old generation count as such sessions until they join again. Only the agent rules and your direct request stop a fresh session. Widening gate delegation on a receiver is still capped by its `accept_delegated_gates` and the coordinator machine's own delegation.
-- **Answers prove turn origin only.** The bus refuses a decision answer when the coordinator's latest prompt was a recognized bus wake. It cannot check that the answer repeats your words, only that the turn did not start from a wake. Claude Code documents that `UserPromptSubmit` fires for messages from other sessions that start a new turn. It does not document whether the hook fires for a message read mid-turn between tool calls, or whether the socket text arrives unwrapped. The bus does not catch those cases, and it also accepts answers from a coordinator that has no recorded turn, such as one without hooks. Workers see `accepted: true` for any recorded answer. The rules allow recording only answers you gave directly in that session.
+- **Answers prove turn origin only.** The bus refuses a decision answer when the coordinator's latest prompt was a recognized bus wake. It cannot check that the answer repeats your words, only that the turn did not start from a wake. On both hosts a prompt that contains a bus notice counts as a wake. In Claude Code 2.1.316, idle and mid-turn wakes reached `UserPromptSubmit` as the bare notice; a mid-turn wake's hook fired only after the running tool call returned, inside the same turn, so that turn is recorded as a wake and an answer in it is refused. The hook payload carries no origin, so `/loop` and scheduled prompts, background-sub-agent reports and non-bus peer messages count as owner turns. The bus also accepts answers from a coordinator that has no recorded turn, such as one without hooks. Workers see `accepted: true` for any recorded answer. The rules allow recording only answers you gave directly in that session.
 - **Work state is self-reported.** The bus records what the worker reports and cannot see host activity. An open direction is not proof of a stall; judge its age. Reporting wakes nobody. Relay directions show state only when both owners allow reports, and their report time is not recorded.
 - **A cancel closes directions under one grant.** After a grant change within one generation (re-join, re-grant, `target`, remote availability event), a cancel under the new grant does not close directions sent under the earlier grant.
 - **Old receivers.** The capability probe runs between client and relay. A receiver running an older client denies gate approvals on its own.
@@ -864,7 +864,7 @@ These limits come from the current implementation:
 - **The decision digest has no acknowledgement.** The digest line repeats on every coordinator prompt until the coordinator is replaced.
 - **Defaults are final.** A decision that took its default cannot be answered afterwards; record a new one.
 - **No notice for some parties.** A coordinator session that never registered, or a party on another machine, gets the default applied but no notice. Remote addresses cannot be named with `--worker`.
-- **Turn numbers are approximate.** They count every prompt that is not an exact bus wake notice.
+- **Turn numbers are approximate.** They count every prompt that is not a recognized bus wake.
 - **Instructions survive replacement.** Standing instructions are stored per project and survive `replace`. There is no command to clear them yet.
 - **Hosts may truncate long guidance.** Long hook output can be cut by the host; `llm-bus guidance` prints the full text.
 - **Gate records do not compare the recipient with the submitter.** Today only `gate-accept` creates record-bound approvals, and it always addresses the submitter.

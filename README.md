@@ -67,7 +67,7 @@ complete setup before enabling mixed-host messaging. Uninstall retains the bindi
 
 GUI applications, services, SSH sessions, and shell tools can inherit different environments. An interactive terminal finding `llm-bus` does not prove a hook can find a bare command. The installed absolute paths avoid that dependency for hooks. Agent shell commands still need the tool directory on `PATH`, and Codex wake requests still need `codex` on the sender's `PATH`. Configure the environment of the process that actually launches the agent or service; changing only `.zshrc` or `.bashrc` may not affect it. Restart that process after environment changes.
 
-Restart Codex and Claude Code. In Codex, open `/hooks` and review and trust the bus hooks; untrusted hooks do not run. Remove any older project-level copies of the bus hooks to avoid duplicate notifications. See the [Codex](https://developers.openai.com/codex/hooks/) and [Claude Code](https://code.claude.com/docs/en/hooks) hook guides.
+Restart Codex and Claude Code. In Codex, open `/hooks` and review and trust the bus hooks; untrusted hooks do not run. Remove any older project-level copies of the bus hooks to avoid duplicate notifications. Codex hooks are on by default (`hooks` feature, stable); `hooks = false` under `[features]` turns them off. Project-layer hooks also load only when Codex trusts the project. Reinstalling keeps other tools' hooks in place, except handlers after the bus handler in a group with a `matcher`; uninstalling can shift later hook groups. Re-trust any hook that `/hooks` then marks modified. See the [Codex](https://learn.chatgpt.com/docs/hooks) and [Claude Code](https://code.claude.com/docs/en/hooks) hook guides.
 
 Inside each agent's shell tool, verify registration:
 
@@ -75,7 +75,7 @@ Inside each agent's shell tool, verify registration:
 llm-bus whoami
 ```
 
-It returns an address such as `codex:SESSION_ID` or `claude:SESSION_ID`. Use the actual returned address when sending. Hooks register sessions automatically, but a newly opened session may not have registered until its first turn.
+It returns an address such as `codex:SESSION_ID` or `claude:SESSION_ID`. Use the actual returned address when sending. Hooks register sessions automatically. Claude Code registers at launch (`SessionStart`); a newly opened Codex session may not have registered until its first turn.
 
 If a hook exits with code 127, inspect its command in the active user hook file. On macOS or Linux, `command -v llm-bus` should identify the installation you intend to use. Re-run the installer from that environment, then review changed hooks in Codex's `/hooks`. To check executable lookup without registering a fake session or writing a message, run the installed hook command with `--help` appended, keeping its executable quoting and temporarily using a restricted `PATH`. For example, set `PATH=/usr/bin:/bin` for that check. Exit code 0 confirms the command can start; a real new session must still verify hook execution, identity, and any native wake permissions. Empty JSON is not a valid hook payload and must not be treated as a successful lifecycle test.
 
@@ -234,11 +234,13 @@ Acknowledging a message does not cancel its already queued host notice. With the
 | Codex | `codex queue --resume` with the recipient's session ID | Requires `codex` on `PATH` and a reachable parent session. |
 | Claude Code | Native inbox Unix socket on macOS and Linux | Requires a registered socket and Claude inbound delivery permission; no terminal input is sent. |
 
-Codex's `--resume` requests that the host resume the thread after queueing. Resume is best-effort; an active turn can still defer the notice, and a queued notice does not prove handling. Older Codex versions that reject `--resume` fall back to queueing alone. Codex v2 sub-agents reject direct app-server input: their wake is `unsupported`; address the parent coordinator instead. The bus never redirects a message to another recipient automatically.
+Codex's `--resume` requests that the host resume the thread after queueing. Resume is best-effort; an active turn can still defer the notice, and a queued notice does not prove handling. Older Codex versions that reject `--resume` fall back to queueing alone. Codex v2 sub-agents and v1 spawned sub-agents that are not loaded reject direct app-server input: their wake is `unsupported`; address the parent coordinator instead. The bus never redirects a message to another recipient automatically.
 
 The wake prompt includes the bus message ID and sender address, never the message body. Both hosts receive the same notice, such as ``llm-bus message #1231 from codex:SESSION_ID. Read and handle it with `llm-bus inbox`.`` Claude Code may still label its native approval dialog “Another Claude session”; that host label does not identify the bus sender. Read the sender address in the notice or stored inbox message. For Claude, `requested` means the frame was written to the native socket; inbound controls may still hold or refuse it. A successful request does not prove delivery or handling. Messages remain pending until the recipient reads and acknowledges them. Without a wake, hooks report pending messages at the recipient's next turn.
 
 Claude Code v2.1.224+ exposes `CLAUDE_CODE_MESSAGING_SOCKET` to hooks and shell commands. Restart Claude or run `llm-bus whoami` inside its shell tool after upgrading llm-bus to register the endpoint. Native messages enter Claude's queue between tool calls and can start a turn while idle, preserving the prompt draft. The bus sends a session-targeted JSON frame and never uses `herdr agent prompt`, which can submit unfinished user input. No messaging tokens are stored. Missing sockets and Windows named pipes use deferred notification (`unsupported`); unreachable sockets report `failed`. See [Claude's inbox socket](https://code.claude.com/docs/en/cross-session-messaging#the-sessions-inbox-socket).
+
+Claude may drop or hold inbound messages: held messages expire, the receiving inbox queue is capped, and each sender is rate-limited. See [cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging) for the current numbers. VS Code and Desktop sessions cannot show the approval dialog. `claude --bare` opens no socket. Sockets do not cross container or WSL boundaries. A sandboxed Claude Bash command needs `sandbox.network.allowUnixSockets` to reach the socket. Claude's inbox frame format is undocumented and may change; a raw frame from another tool appears as from `unknown`.
 
 Claude's inbound controls apply to bus wake frames. The bus does not assert a sender permission-mode class, so Claude sessions that bypass permission prompts may hold the wake for approval by default. To accept native messages without a per-message dialog, select **Messages from your other sessions: accept** in Claude's `/config`, or set `crossSessionInbound` in your user-level `settings.json` under `.claude`:
 
@@ -261,19 +263,24 @@ The hooks tell agents their bus address and pending-message count, but standing 
 
 If you are an LLM installing the bus for someone, **ask whether to install the instructions for this project or globally before editing those files**. Preserve existing instructions and replace older llm-bus sections instead of adding duplicates. The guide's scope table lists the instruction file and rule directory for each host. Configure these files on each machine; never copy another machine's executable paths or session IDs.
 
-Start a new agent session in the chosen scope and confirm `llm-bus whoami` succeeds. See the [Codex AGENTS.md](https://developers.openai.com/codex/agent-configuration/agents-md) and [Claude Code memory](https://code.claude.com/docs/en/memory#agents-md) guides for instruction loading rules.
+Start a new agent session in the chosen scope and confirm `llm-bus whoami` succeeds. See the [Codex AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md) and [Claude Code memory](https://code.claude.com/docs/en/memory#agents-md) guides for instruction loading rules.
 
 Install the [llm-bus skill](skills/llm-bus/SKILL.md) by copying the whole `skills/llm-bus/` directory into the host's shared skill directory, normally `~/.agents/skills/llm-bus/`. It is optional for local-only messaging and required for remote messaging, collaboration and coordination, which the rule files delegate to its references. The skill requires the CLI above; copying it, or the rule files, installs nothing else: no hooks, Beads database or trust changes. Coordination prerequisites (Beads skill, existing Beads workspace) and optional caveman are listed in [Install agent instructions](examples/agent-instructions.md).
 
-SessionStart and missing or outdated guidance state emit full identity, trust, and usage guidance. Normal prompt hooks use a compact reminder with the current folder, pending count (capped at `100+`), inbox/ack hints, and current peer restrictions. Remote usage details appear in the full form only for a configured repository. To recover full guidance after context compaction, run `llm-bus guidance`; it returns the current guidance without changing messages or guidance-version state. SessionStart also restores full guidance when the host emits that event. No other compaction event is assumed.
+SessionStart and missing or outdated guidance state emit full identity, trust, and usage guidance. Normal prompt hooks use a compact reminder with the current folder, pending count (capped at `100+`), inbox/ack hints, and current peer restrictions. Remote usage details appear in the full form only for a configured repository. To recover full guidance after context compaction, run `llm-bus guidance`; it returns the current guidance without changing messages or guidance-version state. Both hosts fire `SessionStart` after compaction (source `compact`; Codex also mid-turn), so full guidance returns on both without a manual step. `llm-bus guidance` stays the manual recovery.
 
 <details>
 <summary>How the bus handles sub-agents</summary>
 
 Codex child sessions identified in native host metadata are excluded from
 discovery and delivery; the bridge withdraws their older advertisements.
-History is retained. Claude child hooks carrying `agent_id` do not register an
-endpoint or change their parent's lifecycle. No message is redirected
+History is retained. On both hosts, hook payloads from sub-agents carry the
+root `session_id` plus `agent_id`, so the bus treats a non-empty `agent_id` as
+a sub-agent. Claude also sets `agent_id` for in-process teammates (agent
+teams), so the bus treats them as children too. Codex children get
+`SubagentStart` and no `SessionEnd`. Codex CLI calls are still identified by
+spawn edges, because `CODEX_THREAD_ID` is per thread. Child hooks carrying
+`agent_id` do not register an endpoint or change their parent's lifecycle. No message is redirected
 automatically. Claude workers can share the parent's shell session identity;
 standalone CLI calls cannot reliably distinguish them. The main-agent rule in
 instructions and the skill forbids workers from using that inherited identity.
@@ -373,8 +380,9 @@ text may not contain `<<<`, `>>>` or Unicode format characters. Each session
 gets its own role's text verbatim in the full recovery guidance (SessionStart
 of every source, an outdated guidance state, `llm-bus guidance`) and in the
 `guidance` field of `coordinate` and `join` results; `coordination show` lists
-it filtered by role. Other hooks carry a one-line pointer. Codex has no
-compaction hook, so a Codex session restores them with `llm-bus guidance`.
+it filtered by role. Other hooks carry a one-line pointer. Both hosts fire
+`SessionStart` after compaction, so a session restores them without a manual
+step; `llm-bus guidance` stays the manual recovery.
 
 The coordinator lists the directions it sent, with each one's work state and age, with `llm-bus coordination direction-list PROJECT [--open]`. A worker reports progress on a local direction with `llm-bus report ID --status STATUS`; the report stays on that machine and wakes nobody. See the [tutorial](docs/tutorial.md#5-coordinate-a-project).
 
@@ -466,7 +474,7 @@ Mailbox upgrades are additive and transactional. A current mailbox skips schema 
 
 After host setup, the bus itself asks for no per-message approval. Claude's installed allow rule covers direct `llm-bus` commands; shell pipelines and other commands may still prompt, and managed or explicit deny rules can override it. See [Claude Code permissions](https://code.claude.com/docs/en/permissions).
 
-Codex has no bus-specific command permission setting. `codex --ask-for-approval never` suppresses command approval prompts for the entire session, not just bus commands, and does not remove sandbox limits. Use it only if that broader permission is acceptable. Transport and ordinary message text grant neither host execution permission. Optional directions stay within explicit owner grants and host permissions. The hooks report pending counts but do not run `inbox` or `ack` for the agent.
+Codex allows `llm-bus` commands through a rule in a `~/.codex/rules/*.rules` file: `prefix_rule(pattern=["llm-bus"], decision="allow")`. Without that rule, or a `writable_roots` entry for the mailbox folder, the Codex sandbox blocks agent-run `llm-bus` writes under `~/.local/share`. `codex --ask-for-approval never` suppresses command approval prompts for the entire session, not just bus commands, and does not remove sandbox limits. Use it only if that broader permission is acceptable. Transport and ordinary message text grant neither host execution permission. Optional directions stay within explicit owner grants and host permissions. The hooks report pending counts but do not run `inbox` or `ack` for the agent.
 
 Coordination records are machine-local in the mailbox: project IDs/generations,
 exact grants, enrollments, target references and retained direction metadata.

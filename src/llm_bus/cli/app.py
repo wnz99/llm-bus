@@ -94,6 +94,11 @@ def _setup(store: Store, args: dict[str, object]) -> dict[str, object] | None:
     return profile(cwd)
 
 
+def _skills_dir(args: dict[str, object]) -> Path | None:
+    value = args.get("skills_dir")
+    return value.expanduser() if isinstance(value, Path) else None
+
+
 def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912 - command dispatch
     """Run command, returning nonzero for input and storage errors."""
     # pylint: disable=too-many-branches
@@ -103,7 +108,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912 - com
         if command in {"install", "uninstall", "upgrade"}:
             print(
                 serialize(
-                    upgrade(Path.cwd(), Path.home())
+                    upgrade(Path.cwd(), Path.home(), _skills_dir(args))
                     if command == "upgrade"
                     else configure_host_hooks(install=command == "install"),
                     str(command),

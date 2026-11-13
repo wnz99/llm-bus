@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 import llm_bus.collab.cli
 import llm_bus.coordination.cli
@@ -75,6 +76,11 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - explicit CLI d
     commands.add_parser(
         "upgrade",
         help="Build this checkout's HEAD, reinstall the uv tool, then delete older packages",
+    ).add_argument(
+        "--skills-dir",
+        type=Path,
+        help="Also replace DIR/llm-bus with this checkout's skills/llm-bus from HEAD, "
+        "for example ~/.agents/skills",
     )
     bridge = commands.add_parser(
         "bridge", help="Synchronize remote messages without a host session"

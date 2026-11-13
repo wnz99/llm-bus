@@ -27,6 +27,10 @@ NEXT_STEP = (
 STDERR_TAIL_LINES = 20
 HEAD_REF = "HEAD"
 PATH_VARIABLE = "PATH"
+SKILL_NAME = "llm-bus"
+SKILL_SOURCE = f"skills/{SKILL_NAME}"
+PACKAGES_DIR = ".local/share/llm-bus/packages"
+RELEASES_DIR = ".local/state/llm-bus/releases"
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,14 +288,71 @@ def _prune_old(
     return {"removed_packages": removed_packages, "removed_releases": removed_releases}
 
 
-def upgrade(start: Path, home: Path) -> dict[str, object]:
-    """Install the checkout's HEAD, verify it, then prune older packages and releases."""
+def _sync_skill(checkout: Path, skills_dir: Path) -> dict[str, object]:
+    """Replace skills_dir/llm-bus with the skill from HEAD; never write through a link."""
+    if not skills_dir.is_dir():
+        raise BusError(f"Skills directory {skills_dir} does not exist")
+    if not shutil.rmtree.avoids_symlink_attacks:
+        raise BusError("Refusing to replace the skill: platform rmtree follows symlinks")
+    destination = skills_dir / SKILL_NAME
+    if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
+        raise BusError(
+            f"Refusing to replace {destination}: not a real directory; "
+            "pass the skills directory that holds the real copy"
+        )
+    with tempfile.TemporaryDirectory(dir=skills_dir, prefix=".llm-bus-upgrade-") as scratch:
+        work = Path(scratch)
+        archive = work / "skill.tar"
+        _git(checkout, "archive", "--format=tar", "-o", str(archive), HEAD_REF, SKILL_SOURCE)
+        with tarfile.open(archive) as tar:
+            tar.extractall(work / "src", filter="data")
+        fresh = work / "src" / SKILL_SOURCE
+        if not (fresh / "SKILL.md").is_file():
+            raise BusError(f"HEAD has no {SKILL_SOURCE}/SKILL.md")
+        previous = work / "previous"
+        replaced = destination.exists()
+        if replaced:
+            destination.rename(previous)
+        try:
+            fresh.rename(destination)
+        except OSError as error:
+            if replaced:
+                previous.rename(destination)
+            raise BusError(f"Installing the skill into {destination} failed: {error}") from error
+    return {"path": str(destination), "replaced": replaced}
+
+
+def _finish(
+    checkout: Path, home: Path, package_id: str, skills_dir: Path | None
+) -> dict[str, object]:
+    """After verification: update the skill if asked, then prune older packages."""
+    skill: dict[str, object] = {}
+    if skills_dir is not None:
+        try:
+            skill = {"skill": _sync_skill(checkout, skills_dir)}
+        except BusError as error:
+            raise BusError(
+                f"llm-bus {package_id} is installed but the skill was not updated "
+                f"and nothing was pruned: {error}"
+            ) from error
+    return {
+        **_prune_old(checkout, home / PACKAGES_DIR, home / RELEASES_DIR, package_id),
+        **skill,
+    }
+
+
+def upgrade(start: Path, home: Path, skills_dir: Path | None = None) -> dict[str, object]:
+    """Install the checkout's HEAD, verify it, then prune older packages and releases.
+
+    With skills_dir, also replace skills_dir/llm-bus with the skill from the same HEAD
+    after verification and before pruning.
+    """
     uv = shutil.which("uv")
     if uv is None:
         raise BusError("uv is required to upgrade llm-bus")
     checkout = _checkout_root(start)
-    packages = home / ".local/share/llm-bus/packages"
-    releases = home / ".local/state/llm-bus/releases"
+    packages = home / PACKAGES_DIR
+    releases = home / RELEASES_DIR
     _require_prunable_placement(checkout, (packages, releases))
     _require_clean(checkout)
     package_id = _git(checkout, "rev-parse", HEAD_REF)[:8]
@@ -307,9 +368,8 @@ def upgrade(start: Path, home: Path) -> dict[str, object]:
     else:
         wheel, reinstalled = _build_wheel(uv, checkout, packages, target), True
         binary = _install_verified(uv, tools_dir, wheel, python, previous)
-    removed = _prune_old(checkout, packages, releases, package_id)
     return {
-        **removed,
+        **_finish(checkout, home, package_id, skills_dir),
         "package_id": package_id,
         "reinstalled": reinstalled,
         "wheel": str(wheel),

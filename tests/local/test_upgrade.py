@@ -39,6 +39,10 @@ def _make_checkout(repo: Path, name: str = "llm-bus") -> None:
     (repo / "pyproject.toml").write_text(f'[project]\nname = "{name}"\n')
     (repo / ".python-version").write_text("3.12\n")
     (repo / "tracked.txt").write_text("one\n")
+    skill = repo / "skills/llm-bus"
+    (skill / "references").mkdir(parents=True)
+    (skill / "SKILL.md").write_text("head skill\n")
+    (skill / "references/core.md").write_text("head core\n")
     _git(repo, "add", ".")
     _git(repo, "commit", "-q", "-m", "init")
 
@@ -140,8 +144,8 @@ def bus_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeBus:
     return FakeBus(tmp_path, monkeypatch)
 
 
-def _run(capsys: pytest.CaptureFixture[str]) -> tuple[int, str, str]:
-    code = main(["upgrade"])
+def _run(capsys: pytest.CaptureFixture[str], *extra: str) -> tuple[int, str, str]:
+    code = main(["upgrade", *extra])
     captured = capsys.readouterr()
     return code, captured.out, captured.err
 
@@ -179,6 +183,73 @@ def test_success_installs_head_and_prunes_only_owned_roots(
     next_step = str(result["next_step"])
     assert "llm-bus install" in next_step
     assert "llm-bus bridge" in next_step
+    assert "skill" not in result
+
+
+@pytest.mark.parametrize("existing", [True, False])
+def test_skills_dir_replaces_installed_skill_from_head(
+    bus: FakeBus, capsys: pytest.CaptureFixture[str], *, existing: bool
+) -> None:
+    skills = bus.home / ".agents/skills"
+    installed = skills / "llm-bus"
+    skills.mkdir(parents=True)
+    if existing:
+        (installed / "references").mkdir(parents=True)
+        (installed / "SKILL.md").write_text("old skill\n")
+        (installed / "stale.md").write_text("removed upstream\n")
+    (bus.repo / "skills/llm-bus/draft.md").write_text("untracked, not in HEAD\n")
+    code, out, _err = _run(capsys, "--skills-dir", str(skills))
+    result = cast("dict[str, object]", json.loads(out))
+    assert code == 0
+    assert result["skill"] == {"path": str(installed), "replaced": existing}
+    assert (installed / "SKILL.md").read_text() == "head skill\n"
+    assert (installed / "references/core.md").read_text() == "head core\n"
+    assert not (installed / "stale.md").exists()
+    assert not (installed / "draft.md").exists()
+    assert sorted(p.name for p in skills.iterdir()) == ["llm-bus"]
+    assert [p.name for p in bus.packages.iterdir()] == [bus.package_id]
+
+
+def _linked_skill(skills: Path) -> None:
+    real = skills.parent / "real-llm-bus"
+    real.mkdir()
+    (real / "SKILL.md").write_text("linked copy\n")
+    (skills / "llm-bus").symlink_to(real)
+
+
+def _file_skill(skills: Path) -> None:
+    (skills / "llm-bus").write_text("not a directory\n")
+
+
+@pytest.mark.parametrize("break_destination", [_linked_skill, _file_skill])
+def test_skills_dir_refuses_non_directory_destination_and_prunes_nothing(
+    bus: FakeBus,
+    capsys: pytest.CaptureFixture[str],
+    break_destination: Callable[[Path], None],
+) -> None:
+    skills = bus.home / ".agents/skills"
+    skills.mkdir(parents=True)
+    break_destination(skills)
+    code, _out, err = _run(capsys, "--skills-dir", str(skills))
+    assert code != 0
+    assert "is installed but the skill was not updated and nothing was pruned" in err
+    assert "not a real directory" in err
+    assert (bus.packages / "old1").is_dir()
+    destination = skills / "llm-bus"
+    if destination.is_symlink():
+        assert (destination / "SKILL.md").read_text() == "linked copy\n"
+    else:
+        assert destination.read_text() == "not a directory\n"
+    assert sorted(p.name for p in skills.iterdir()) == ["llm-bus"]
+
+
+def test_skills_dir_must_exist(bus: FakeBus, capsys: pytest.CaptureFixture[str]) -> None:
+    missing = bus.home / "no-such-skills"
+    code, _out, err = _run(capsys, "--skills-dir", str(missing))
+    assert code != 0
+    assert f"Skills directory {missing} does not exist" in err
+    assert not missing.exists()
+    assert (bus.packages / "old1").is_dir()
 
 
 def _binary_fails(bus: FakeBus) -> None:

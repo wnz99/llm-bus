@@ -27,6 +27,10 @@ NEXT_STEP = (
 STDERR_TAIL_LINES = 20
 HEAD_REF = "HEAD"
 PATH_VARIABLE = "PATH"
+SKILL_NAME = "llm-bus"
+SKILL_SOURCE = f"skills/{SKILL_NAME}"
+PACKAGES_DIR = ".local/share/llm-bus/packages"
+RELEASES_DIR = ".local/state/llm-bus/releases"
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,14 +288,98 @@ def _prune_old(
     return {"removed_packages": removed_packages, "removed_releases": removed_releases}
 
 
-def upgrade(start: Path, home: Path) -> dict[str, object]:
-    """Install the checkout's HEAD, verify it, then prune older packages and releases."""
+def _skill_destination(skills_dir: Path) -> Path:
+    if not skills_dir.is_dir():
+        raise BusError(f"Skills directory {skills_dir} does not exist")
+    if not shutil.rmtree.avoids_symlink_attacks:
+        raise BusError("Refusing to replace the skill: platform rmtree follows symlinks")
+    destination = skills_dir / SKILL_NAME
+    if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
+        raise BusError(
+            f"Refusing to replace {destination}: not a real directory; "
+            "pass the skills directory that holds the real copy"
+        )
+    return destination
+
+
+def _extract_skill(checkout: Path, work: Path) -> Path:
+    archive = work / "skill.tar"
+    _git(checkout, "archive", "--format=tar", "-o", str(archive), HEAD_REF, SKILL_SOURCE)
+    try:
+        with tarfile.open(archive) as tar:
+            tar.extractall(work / "src", filter="data")
+    except (OSError, tarfile.TarError) as error:
+        raise BusError(f"Extracting {SKILL_SOURCE} from HEAD failed: {error}") from error
+    fresh = work / "src" / SKILL_SOURCE
+    if not (fresh / "SKILL.md").is_file():
+        raise BusError(f"HEAD has no {SKILL_SOURCE}/SKILL.md")
+    return fresh
+
+
+def _swap_skill(fresh: Path, destination: Path, previous: Path) -> bool:
+    """Swap fresh in; on failure restore the old copy, or leave it at previous."""
+    replaced = destination.exists()
+    try:
+        if replaced:
+            destination.rename(previous)
+        fresh.rename(destination)
+    except OSError as error:
+        failure = f"Installing the skill into {destination} failed: {error}"
+        if replaced and previous.exists():
+            try:
+                previous.rename(destination)
+            except OSError:
+                raise BusError(f"{failure}; the previous copy is kept in {previous}") from error
+        raise BusError(failure) from error
+    return replaced
+
+
+def _sync_skill(checkout: Path, skills_dir: Path) -> dict[str, object]:
+    """Replace skills_dir/llm-bus with the skill from HEAD; never write through a link."""
+    destination = _skill_destination(skills_dir)
+    try:
+        work = Path(tempfile.mkdtemp(dir=skills_dir, prefix=".llm-bus-upgrade-"))
+    except OSError as error:
+        raise BusError(f"Cannot create a scratch folder in {skills_dir}: {error}") from error
+    previous = work / "previous"
+    try:
+        replaced = _swap_skill(_extract_skill(checkout, work), destination, previous)
+    except BusError:
+        if not previous.exists():
+            shutil.rmtree(work, ignore_errors=True)
+        raise
+    shutil.rmtree(work, ignore_errors=True)
+    return {"path": str(destination), "replaced": replaced}
+
+
+def _finish(
+    checkout: Path, roots: tuple[Path, Path], package_id: str, skills_dir: Path | None
+) -> dict[str, object]:
+    """After verification: update the skill if asked, then prune older packages."""
+    skill: dict[str, object] = {}
+    if skills_dir is not None:
+        try:
+            skill = {"skill": _sync_skill(checkout, skills_dir)}
+        except BusError as error:
+            raise BusError(
+                f"llm-bus {package_id} is installed but the skill was not updated "
+                f"and nothing was pruned: {error}"
+            ) from error
+    return {**_prune_old(checkout, *roots, package_id), **skill}
+
+
+def upgrade(start: Path, home: Path, skills_dir: Path | None = None) -> dict[str, object]:
+    """Install the checkout's HEAD, verify it, then prune older packages and releases.
+
+    With skills_dir, also replace skills_dir/llm-bus with the skill from the same HEAD
+    after verification and before pruning.
+    """
     uv = shutil.which("uv")
     if uv is None:
         raise BusError("uv is required to upgrade llm-bus")
     checkout = _checkout_root(start)
-    packages = home / ".local/share/llm-bus/packages"
-    releases = home / ".local/state/llm-bus/releases"
+    packages = home / PACKAGES_DIR
+    releases = home / RELEASES_DIR
     _require_prunable_placement(checkout, (packages, releases))
     _require_clean(checkout)
     package_id = _git(checkout, "rev-parse", HEAD_REF)[:8]
@@ -307,9 +395,8 @@ def upgrade(start: Path, home: Path) -> dict[str, object]:
     else:
         wheel, reinstalled = _build_wheel(uv, checkout, packages, target), True
         binary = _install_verified(uv, tools_dir, wheel, python, previous)
-    removed = _prune_old(checkout, packages, releases, package_id)
     return {
-        **removed,
+        **_finish(checkout, (packages, releases), package_id, skills_dir),
         "package_id": package_id,
         "reinstalled": reinstalled,
         "wheel": str(wheel),

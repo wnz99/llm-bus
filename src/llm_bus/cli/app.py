@@ -21,7 +21,7 @@ from llm_bus.collab.models import CollabError
 from llm_bus.coordination import approvals
 from llm_bus.coordination.setup import profile, run_activation_wizard, run_wizard
 from llm_bus.errors import BusError
-from llm_bus.hosts.processes import host_process
+from llm_bus.hosts.processes import GEMINI, host_process, nearest_host
 from llm_bus.hosts.sessions import require_main_agent
 from llm_bus.mailbox.connection import default_path
 from llm_bus.mailbox.models import SenderContext
@@ -30,6 +30,8 @@ from llm_bus.remote.bridge import run_bridge
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from llm_bus.hosts.processes import HostProcess
 
 CLAUDE_SESSION_ENV = "CLAUDE_CODE_SESSION_ID"
 
@@ -40,21 +42,67 @@ CODEX_THREAD_ENV = "CODEX_THREAD_ID"
 CODEX_SESSION_ENV = "CODEX_SESSION_ID"
 
 
+# Gemini CLI sets this in its shell tool's environment but exposes no session ID there.
+GEMINI_CLI_ENV = "GEMINI_CLI"
+# Antigravity puts the conversation ID its hooks receive as conversationId in its shell tools.
+AGY = "agy"
+AGY_CONVERSATION_ENV = "ANTIGRAVITY_CONVERSATION_ID"
+GEMINI_UNREGISTERED = (
+    "This Gemini session is not registered; run `llm-bus install`, restart Gemini CLI, then retry"
+)
+GEMINI_AMBIGUOUS = "Cannot identify the host process with GEMINI_CLI set"
+
+
 # Queued, not holding: `lock acquire NAME && use-resource` must not run the second command.
 LOCK_WAITING_EXIT = 3
 
 
-def host_identity(environment: dict[str, str]) -> tuple[str, str]:
-    """Read native session identity from Claude or Codex shell tools."""
+def host_identity(environment: dict[str, str], store: Store | None = None) -> tuple[str, str]:
+    """Read native session identity from Claude, Codex, Gemini or Antigravity shell tools.
+
+    Gemini's shell tool carries no session ID, and it inherits any ID of the session that
+    started Gemini. When the nearest host ancestor is Gemini, the session is the one its own
+    hook registered for that exact Gemini process.
+
+    Antigravity's shell tool carries its conversation ID but also inherits the IDs of a Claude
+    or Codex session that started it, and vice versa. Its ID wins unless the nearest host
+    ancestor is known to be another host. An Antigravity shell can use its conversation ID
+    when its sandbox blocks `ps` and no Gemini marker makes the identity ambiguous.
+    """
+    conversation = environment.get(AGY_CONVERSATION_ENV)
+    gemini = environment.get(GEMINI_CLI_ENV)
+    nearest = nearest_host() if gemini or conversation else None
+    if gemini and nearest is None:
+        raise BusError(GEMINI_AMBIGUOUS)
+    if conversation and (nearest is None or nearest[0] == AGY):
+        return AGY, conversation
     claude_id = environment.get(CLAUDE_SESSION_ENV)
     codex_id = environment.get(CODEX_THREAD_ENV) or environment.get(CODEX_SESSION_ENV)
+    if nearest is not None:
+        kind, process = nearest
+        if kind == GEMINI:
+            return GEMINI, _gemini_session(store, process)
+        claude_id = claude_id if kind == "claude" else None
+        codex_id = codex_id if kind == "codex" else None
     if claude_id and codex_id:
         raise BusError("Both Claude and Codex session IDs are set; cannot choose sender")
     if claude_id:
         return "claude", claude_id
     if codex_id:
         return "codex", codex_id
-    raise BusError("No host session ID found; run inside a Claude Code or Codex agent session")
+    raise BusError(
+        "No host session ID found; run inside a Claude Code, Codex, Gemini CLI or Antigravity "
+        "agent session"
+    )
+
+
+def _gemini_session(store: Store | None, host: HostProcess) -> str:
+    path = default_path()
+    reader = store if store is not None else Store.read_only(path) if path.exists() else None
+    found = reader.host_session(GEMINI, host) if reader is not None else None
+    if found is None:
+        raise BusError(GEMINI_UNREGISTERED)
+    return found.removeprefix(f"{GEMINI}:")
 
 
 def _optional_address() -> str | None:
@@ -151,7 +199,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912 - com
             if result is not None:
                 print(serialize(result, str(command), str(args["format"])))
             return 0
-        kind, session_id = host_identity(dict(os.environ))
+        kind, session_id = host_identity(dict(os.environ), store)
         require_main_agent(f"{kind}:{session_id}")
         project = str(Path.cwd().resolve())
         if command in {"coordinate", "join", "coordination"}:

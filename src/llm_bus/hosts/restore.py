@@ -7,11 +7,16 @@ from typing import TYPE_CHECKING, cast
 
 from llm_bus.hosts import files
 from llm_bus.hosts.hooks import (
+    AGY_ALLOW_RULE,
+    AGY_HOOK_NAME,
+    AGY_SETTINGS,
     CLAUDE_ALLOW_RULE,
-    EVENTS,
+    host_events,
     is_bus_handler,
     object_at,
-    update_claude_permission,
+    settings_kind,
+    update_agy_hooks,
+    update_allow_rule,
     update_hooks,
     without_bus_handler,
 )
@@ -39,19 +44,19 @@ def insertion_index(current: list[object], original: list[object], position: int
     return min(position, len(current))
 
 
-def restore_claude_permission(
-    current: dict[str, object], original: dict[str, object], path: Path
+def restore_allow_rule(
+    current: dict[str, object], original: dict[str, object], path: Path, rule: str
 ) -> dict[str, object]:
-    restored = update_claude_permission(current, path, install=False)
+    restored = update_allow_rule(current, path, rule, install=False)
     original_permissions = object_at(original, "permissions", path)
     original_allowed = cast("list[object]", original_permissions.get("allow", []))
-    if CLAUDE_ALLOW_RULE not in original_allowed:
+    if rule not in original_allowed:
         return restored
     current_permissions = object_at(restored, "permissions", path)
     current_allowed = cast("list[object]", current_permissions.get("allow", []))
-    original_position = original_allowed.index(CLAUDE_ALLOW_RULE)
+    original_position = original_allowed.index(rule)
     current_allowed.insert(
-        insertion_index(current_allowed, original_allowed, original_position), CLAUDE_ALLOW_RULE
+        insertion_index(current_allowed, original_allowed, original_position), rule
     )
     current_permissions["allow"] = current_allowed
     restored["permissions"] = current_permissions
@@ -79,10 +84,17 @@ def restore_hook_groups(
 def restore_bus_entries(
     current: dict[str, object], original: dict[str, object], path: Path, kind: str
 ) -> dict[str, object]:
+    if kind == "agy":
+        restored = update_agy_hooks(current, install=False)
+        if AGY_HOOK_NAME in original:
+            restored[AGY_HOOK_NAME] = original[AGY_HOOK_NAME]
+        return restored
+    if kind == AGY_SETTINGS:
+        return restore_allow_rule(current, original, path, AGY_ALLOW_RULE)
     restored = update_hooks(current, path, kind, install=False)
     hooks = object_at(restored, "hooks", path)
     original_hooks = object_at(original, "hooks", path)
-    for event in EVENTS:
+    for event in host_events(kind):
         groups = restore_hook_groups(
             cast("list[object]", hooks.get(event, [])),
             cast("list[object]", original_hooks.get(event, [])),
@@ -93,17 +105,17 @@ def restore_bus_entries(
     if hooks:
         restored["hooks"] = hooks
     if kind == "claude":
-        restored = restore_claude_permission(restored, original, path)
+        restored = restore_allow_rule(restored, original, path, CLAUDE_ALLOW_RULE)
     return restored
 
 
 def restore_bus_settings(snapshots: files.SettingsSnapshot) -> None:
     """Restore prior bus hooks into current settings after failed tool removal."""
-    for index, (path, original_content, _) in enumerate(snapshots):
+    for path, original_content, _ in snapshots:
         current_content = files.current_bytes(path)
         current = files.parse_settings(path, current_content)
         original = files.parse_settings(path, original_content)
-        kind = "codex" if index == 0 else "claude"
+        kind = settings_kind(path)
         restored = restore_bus_entries(current, original, path, kind)
         if restored != current:
             mode = stat.S_IMODE(path.stat().st_mode) if current_content is not None else 0o600

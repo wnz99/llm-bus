@@ -32,11 +32,11 @@ def _now() -> datetime:
 
 
 def _capability(store: Store, recipient: str) -> str:
-    return (
-        store.messaging_socket(recipient) or "no socket"
-        if recipient.startswith("claude:")
-        else shutil.which("codex") or "no binary"
-    )
+    if recipient.startswith("claude:"):
+        return store.messaging_socket(recipient) or "no socket"
+    if recipient.startswith("codex:"):
+        return shutil.which("codex") or "no binary"
+    return "no native wake"
 
 
 class Claim(NamedTuple):

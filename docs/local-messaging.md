@@ -187,6 +187,11 @@ draft. No terminal input is sent, no messaging tokens are stored, and
 `herdr agent prompt` is never used. Missing sockets and Windows named pipes
 return `unsupported`; unreachable sockets return `failed`.
 
+Gemini CLI and Antigravity (`agy`) report pending messages on the recipient's
+next turn. Sends store the message and return `wake.status: unsupported`. This
+also applies inside Herdr, where prompt submission targets a pane that can
+change sessions and can submit an unfinished prompt.
+
 The wake notice contains the bus message ID and sender address, never its body.
 Claude may label its approval dialog “Another Claude session”; that label does
 not identify the sender. `requested` means the frame was written to the socket,
@@ -218,8 +223,10 @@ See [inbound setting precedence](https://code.claude.com/docs/en/settings-refere
 ### Stale notices and sub-agents
 
 Acknowledgement does not cancel an already queued notice. With the trusted
-Codex UserPromptSubmit hook enabled, an exact bus wake matching an acknowledged
-message's ID, sender, and recipient gets no-op context if the inbox is empty.
+Codex UserPromptSubmit hook, the Gemini BeforeAgent hook or the Antigravity
+PreInvocation hook enabled, an exact bus
+wake matching an acknowledged message's ID, sender, and recipient gets no-op
+context if the inbox is empty.
 The hook allows the prompt, avoiding repeated rejections; Codex may still show
 it and run a redundant turn. Pending-work notices and Claude wakes are unchanged.
 

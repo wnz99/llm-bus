@@ -22,6 +22,7 @@ CLAUDE_WAKE_REASON = (
 )
 CLAUDE_WAKE_VIA = "Claude inbox socket"
 CLAUDE_SOCKET_FAILURE_REASON = "Claude inbox socket could not be reached; message remains pending"
+HOOK_WAKE_REASON = "Pending messages are reported by the next turn hook"
 WAKE_NOTICE = re.compile(
     r"llm-bus message #([1-9][0-9]{0,18}) from (\S+)\. "
     r"Read and handle it with `llm-bus inbox`\."
@@ -170,4 +171,6 @@ def wake(
         return _wake_codex(session_id, notice)
     if kind == "claude":
         return _wake_claude(session_id, notice, claude_socket)
+    if kind in {"gemini", "agy"}:
+        return {"status": "unsupported", "via": "none", "reason": HOOK_WAKE_REASON}
     return {"status": "unsupported", "via": "none", "reason": "Unknown recipient kind"}

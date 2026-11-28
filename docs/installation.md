@@ -45,6 +45,32 @@ settings files; use your dotfile manager to edit their targets.
 | --- | --- | --- |
 | Codex | `~/.codex/hooks.json` | Set `CODEX_HOME` before installation and before starting Codex. |
 | Claude Code | `~/.claude/settings.json` | Set `CLAUDE_CONFIG_DIR` before installation and before starting Claude Code. |
+| Gemini CLI | `~/.gemini/settings.json` | Set `GEMINI_CLI_HOME` before installation and before starting Gemini CLI. |
+| Antigravity (`agy`) | `~/.gemini/config/hooks.json`, plus an allow rule in `~/.gemini/antigravity-cli/settings.json` | None. |
+
+Gemini CLI hooks are installed only when Gemini's `.gemini` folder already
+exists; the installer never creates it. If you start using Gemini CLI after
+installing the bus, run `reinstall`. Gemini hooks run SessionStart, BeforeAgent
+(Gemini's prompt-submission event) and SessionEnd.
+The shell identity depends on finding the Gemini process that the hook
+registered. If the bus cannot identify that host process, it rejects the command.
+
+Antigravity hooks are installed only when Antigravity has created
+`~/.gemini/config`; the allow rule only when it has created
+`~/.gemini/antigravity-cli`. The bus owns the `llm-bus` entry of the shared
+`hooks.json` and runs it on SessionStart and PreInvocation. Antigravity runs
+PreInvocation before every model call; the hook acts only on the first call of
+each user turn (`invocationNum` 0) and returns `{}` for the rest. Antigravity
+has no session-end event, so an exited Antigravity session can stay listed
+until the inactivity cutoff. The first prompt in a resumed conversation
+registers it. If you start using Antigravity after installing the bus, run
+`reinstall` to add the hooks and allow rule.
+
+Two Antigravity behaviors are unverified. The hooks file sits in
+`~/.gemini/config`, outside the CLI's own folder, so the Antigravity app or IDE
+may also read it, run the bus hooks and register its sessions as `agy:` peers. Whether Antigravity subagents run hooks under their own
+conversation IDs, and so register as separate peers instead of staying off the
+bus, is also untested. Check `llm-bus list` after using either.
 
 The installer discovers `llm-bus` on its process's `PATH` and writes an absolute,
 shell-quoted executable path. These paths belong to that machine; do not copy
@@ -64,9 +90,20 @@ that `/hooks` marks modified. See the [Codex](https://learn.chatgpt.com/docs/hoo
 and [Claude Code](https://code.claude.com/docs/en/hooks) hook guides.
 
 Inside each main agent's shell tool, run `llm-bus whoami`. It returns an address
-such as `codex:SESSION_ID` or `claude:SESSION_ID`; use the actual address when
-sending. Claude registers at launch; a new Codex session may register only on
-its first turn.
+such as `codex:SESSION_ID`, `claude:SESSION_ID`, `gemini:SESSION_ID` or
+`agy:CONVERSATION_ID`; use the
+actual address when sending. Claude and Gemini register at launch; a new Codex
+session may register only on its first turn.
+
+Gemini CLI gives its shell tool no session ID. Its SessionStart hook records the
+session against the Gemini process, and a bus command run from Gemini's shell
+uses the session registered for its nearest Gemini ancestor process. A command
+run before that hook has registered the session fails rather than guessing.
+
+Antigravity puts its conversation ID in its shell tools' environment as
+`ANTIGRAVITY_CONVERSATION_ID`, the same ID its hooks receive. It wins over a
+Claude or Codex session ID that Antigravity inherited from the shell that
+started it, unless the nearest host ancestor process is another host.
 
 ### Custom Codex homes
 
@@ -449,6 +486,31 @@ responses; delivery takes precedence over unreceived expiry.
 Claude's installed allow rule covers direct bus commands. Pipelines and other
 commands may still prompt, and managed or explicit deny rules can override it.
 See [Claude Code permissions](https://code.claude.com/docs/en/permissions).
+
+Gemini CLI asks before running each shell command unless a rule allows it. The
+installer adds none, because Gemini deprecates `tools.allowed`. To allow bus
+commands, add a Policy Engine rule such as this to `~/.gemini/policies/llm-bus.toml`:
+
+```toml
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = "llm-bus"
+decision = "allow"
+priority = 100
+```
+
+See [Gemini CLI policy engine](https://geminicli.com/docs/core/policy-engine/).
+
+Antigravity runs agent commands in a terminal sandbox that cannot see the
+mailbox, so bus commands fail there. The installer adds the allow rule
+`command(llm-bus)` to `permissions.allow` in `~/.gemini/antigravity-cli/settings.json`.
+A `command` allow rule runs matching commands, by token prefix, without
+prompting and outside the sandbox. Uninstall removes it. Deny and ask rules,
+and an organization's admin policy, take precedence. The rule matches a command
+line that starts with `llm-bus`, so a pipe or heredoc into `llm-bus send` still
+asks for approval, and headless `agy -p` runs deny it. Agents can pass the
+message with `--body` instead. See
+[Antigravity permissions](https://antigravity.google/docs/permissions).
 
 For Codex, an allow rule in `~/.codex/rules/*.rules` can use
 `prefix_rule(pattern=["llm-bus"], decision="allow")`. Without that rule or a

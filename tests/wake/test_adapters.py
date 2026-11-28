@@ -14,31 +14,19 @@ import pytest
 import llm_bus.wake.adapters
 
 
-def test_claude_wake_never_sends_terminal_input(monkeypatch: pytest.MonkeyPatch) -> None:
-    commands: list[list[str]] = []
-
+@pytest.mark.parametrize("recipient", ["claude:target", "gemini:target", "agy:target"])
+def test_wake_never_falls_back_to_terminal_input(
+    monkeypatch: pytest.MonkeyPatch, recipient: str
+) -> None:
     def herdr_path(_name: str) -> str:
         return "/bin/herdr"
 
-    def run(command: list[str]) -> subprocess.CompletedProcess[str]:
-        commands.append(command)
-        agents = {
-            "result": {
-                "agents": [
-                    {
-                        "agent": "claude",
-                        "pane_id": "w1:p1",
-                        "agent_session": {"kind": "id", "value": "target"},
-                    }
-                ]
-            }
-        }
-        return subprocess.CompletedProcess(command, 0, json.dumps(agents), "")
+    def forbid_terminal(_command: list[str]) -> subprocess.CompletedProcess[str]:
+        pytest.fail("Wake must never write terminal input")
 
     monkeypatch.setattr(shutil, "which", herdr_path)
-    monkeypatch.setattr(llm_bus.wake.adapters, "_run", run)
-    result = llm_bus.wake.adapters.wake("claude:target", 7, "codex:source")
-    assert commands == []
+    monkeypatch.setattr(llm_bus.wake.adapters, "_run", forbid_terminal)
+    result = llm_bus.wake.adapters.wake(recipient, 7, "codex:source")
     assert result["status"] == "unsupported"
     assert result["via"] == "none"
     assert "next turn hook" in result.get("reason", "")
